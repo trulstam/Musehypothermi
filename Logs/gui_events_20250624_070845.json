@@ -1,0 +1,17 @@
+{
+    "metadata": {},
+    "events": [
+        {
+            "timestamp": "2025-06-24 07:08:55",
+            "event": "Connected to COM5"
+        },
+        {
+            "timestamp": "2025-06-24 07:09:11",
+            "event": "Autotune started: step response (21% PWM)"
+        },
+        {
+            "timestamp": "2025-06-24 07:11:42",
+            "event": "Autotune complete: new PID parameters calculated"
+        }
+    ]
+}

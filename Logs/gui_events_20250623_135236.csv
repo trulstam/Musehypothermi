@@ -1,0 +1,4 @@
+timestamp,event
+2025-06-23 13:52:46,Connected to COM5
+2025-06-23 13:53:04,CMD: panic triggered
+2025-06-23 13:53:23,Disconnected

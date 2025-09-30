@@ -23,6 +23,7 @@ public:
 
 private:
     void handleCommand(const String &jsonString);
+    void parseProfile(JsonArray arr);
 
     Stream *serial;
     String buffer;

@@ -86,9 +86,16 @@ void ProfileManager::updateRamp() {
   uint32_t now = millis();
   uint32_t elapsed = now - stepStartTime;
 
+  if (step.ramp_time_ms == 0) {
+    // Ingen rampetid angitt – hopp umiddelbart til sluttverdien.
+    currentTarget = step.plate_end_temp;
+    pid.setTargetTemp(currentTarget);
+    return;
+  }
+
   if (elapsed <= step.ramp_time_ms) {
     float fraction = (float)elapsed / (float)step.ramp_time_ms;
-    currentTarget = step.plate_start_temp + 
+    currentTarget = step.plate_start_temp +
       (step.plate_end_temp - step.plate_start_temp) * fraction;
   } else {
     currentTarget = step.plate_end_temp;

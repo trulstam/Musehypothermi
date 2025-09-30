@@ -178,10 +178,81 @@ void CommAPI::handleCommand(const String &jsonString) {
             eeprom.saveFailsafeTimeout(value);
             sendResponse("Failsafe timeout updated");
 
+        } else if (variable == "profile") {
+            JsonVariant value = set["value"];
+            if (!value.is<JsonArray>()) {
+                sendResponse("Invalid profile payload");
+            } else {
+                parseProfile(value.as<JsonArray>());
+            }
+
         } else {
             sendResponse("Unknown SET variable");
         }
     }
+}
+
+void CommAPI::parseProfile(JsonArray arr) {
+    const size_t profileLen = arr.size();
+
+    if (profileLen == 0) {
+        sendResponse("Profile empty");
+        return;
+    }
+
+    if (profileLen > 10) {
+        sendResponse("Profile too long");
+        return;
+    }
+
+    ProfileManager::ProfileStep steps[10];
+
+    for (size_t i = 0; i < profileLen; i++) {
+        JsonVariant stepVariant = arr[i];
+        if (!stepVariant.is<JsonObject>()) {
+            sendResponse("Profile step malformed");
+            return;
+        }
+
+        JsonObject step = stepVariant.as<JsonObject>();
+
+        if (!step.containsKey("plate_start_temp") ||
+            !step.containsKey("plate_end_temp") ||
+            !step.containsKey("total_step_time_ms")) {
+            sendResponse("Profile step missing fields");
+            return;
+        }
+
+        float startTemp = step["plate_start_temp"];
+        float endTemp = step["plate_end_temp"];
+        uint32_t rampTime = step.containsKey("ramp_time_ms") ? step["ramp_time_ms"].as<uint32_t>() : 0;
+        float rectalOverride = step.containsKey("rectal_override_target") ? step["rectal_override_target"].as<float>() : -1000.0f;
+        uint32_t totalStepTime = step["total_step_time_ms"].as<uint32_t>();
+
+        if (totalStepTime == 0) {
+            sendResponse("Profile step duration invalid");
+            return;
+        }
+
+        if (rampTime > totalStepTime) {
+            rampTime = totalStepTime;
+        }
+
+        if (startTemp < -50.0f || startTemp > 80.0f ||
+            endTemp < -50.0f || endTemp > 80.0f) {
+            sendResponse("Profile temperature out of range");
+            return;
+        }
+
+        steps[i].plate_start_temp = startTemp;
+        steps[i].plate_end_temp = endTemp;
+        steps[i].ramp_time_ms = rampTime;
+        steps[i].rectal_override_target = rectalOverride;
+        steps[i].total_step_time_ms = totalStepTime;
+    }
+
+    profileManager.loadProfile(steps, static_cast<uint8_t>(profileLen));
+    sendResponse("Profile loaded");
 }
 
 void CommAPI::sendResponse(const String &message) {

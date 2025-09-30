@@ -2,6 +2,7 @@ import sys
 import json
 import time
 import csv
+from pathlib import Path
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QPushButton, QLabel,
     QVBoxLayout, QWidget, QFileDialog, QHBoxLayout,
@@ -192,23 +193,37 @@ class MainWindow(QMainWindow):
         if not data:
             return
 
-        now = time.time()
-        self.graph_data["time"].append(now)
-        self.graph_data["plate_temp"].append(data.get("cooling_plate_temp", self.graph_data["plate_temp"][-1] if self.graph_data["plate_temp"] else 0))
-        self.graph_data["rectal_temp"].append(data.get("anal_probe_temp", self.graph_data["rectal_temp"][-1] if self.graph_data["rectal_temp"] else 0))
-        self.graph_data["pid_output"].append(data.get("pid_output", self.graph_data["pid_output"][-1] if self.graph_data["pid_output"] else 0))
-        self.graph_data["breath_rate"].append(data.get("breath_freq_bpm", self.graph_data["breath_rate"][-1] if self.graph_data["breath_rate"] else 0))
-        self.graph_data["target_temp"].append(data.get("plate_target_active", self.graph_data["target_temp"][-1] if self.graph_data["target_temp"] else 0))
+        if "response" in data:
+            self.log(f"✅ Controller ACK: {data['response']}")
 
-        for key in self.graph_data:
-            if len(self.graph_data[key]) > 200:
-                self.graph_data[key] = self.graph_data[key][-200:]
+        telemetry_keys = (
+            "cooling_plate_temp",
+            "anal_probe_temp",
+            "pid_output",
+            "breath_freq_bpm",
+            "plate_target_active",
+        )
 
-        self.temp_plot_plate.setData(self.graph_data["time"], self.graph_data["plate_temp"])
-        self.temp_plot_rectal.setData(self.graph_data["time"], self.graph_data["rectal_temp"])
-        self.temp_plot_target.setData(self.graph_data["time"], self.graph_data["target_temp"])
-        self.pid_plot.setData(self.graph_data["time"], self.graph_data["pid_output"])
-        self.breath_plot.setData(self.graph_data["time"], self.graph_data["breath_rate"])
+        if any(key in data for key in telemetry_keys):
+            now = time.time()
+            last_or_default = lambda series, default=0: series[-1] if series else default
+
+            self.graph_data["time"].append(now)
+            self.graph_data["plate_temp"].append(data.get("cooling_plate_temp", last_or_default(self.graph_data["plate_temp"])))
+            self.graph_data["rectal_temp"].append(data.get("anal_probe_temp", last_or_default(self.graph_data["rectal_temp"])))
+            self.graph_data["pid_output"].append(data.get("pid_output", last_or_default(self.graph_data["pid_output"])))
+            self.graph_data["breath_rate"].append(data.get("breath_freq_bpm", last_or_default(self.graph_data["breath_rate"])))
+            self.graph_data["target_temp"].append(data.get("plate_target_active", last_or_default(self.graph_data["target_temp"])))
+
+            for key in self.graph_data:
+                if len(self.graph_data[key]) > 200:
+                    self.graph_data[key] = self.graph_data[key][-200:]
+
+            self.temp_plot_plate.setData(self.graph_data["time"], self.graph_data["plate_temp"])
+            self.temp_plot_rectal.setData(self.graph_data["time"], self.graph_data["rectal_temp"])
+            self.temp_plot_target.setData(self.graph_data["time"], self.graph_data["target_temp"])
+            self.pid_plot.setData(self.graph_data["time"], self.graph_data["pid_output"])
+            self.breath_plot.setData(self.graph_data["time"], self.graph_data["breath_rate"])
 
         if "event" in data:
             event_msg = data["event"]
@@ -230,29 +245,152 @@ class MainWindow(QMainWindow):
     def load_profile(self):
         file_name, _ = QFileDialog.getOpenFileName(self, "Open Profile", "", "JSON Files (*.json);;CSV Files (*.csv)")
         if file_name:
+            try:
+                steps, profile_points = self.parse_profile_file(file_name)
+            except ValueError as exc:
+                QMessageBox.warning(self, "Load Error", str(exc))
+                return
+
+            self.profile_data = profile_points
             self.log(f"Loaded profile: {file_name}")
-            self.serial_manager.sendSET("profile", file_name)
-            self.parse_profile_file(file_name)
+
+            if steps:
+                self.serial_manager.sendSET("profile", steps)
+                self.log(f"📤 Uploaded {len(steps)} profile steps to controller")
+            else:
+                self.log("⚠️ Profile did not contain structured steps; upload skipped")
 
     def parse_profile_file(self, path):
-        self.profile_data = []
         try:
-            if path.endswith(".json"):
-                with open(path, 'r') as f:
-                    self.profile_data = json.load(f)
-            elif path.endswith(".csv"):
-                with open(path, newline='') as f:
-                    reader = csv.reader(f)
-                    next(reader)
-                    for row in reader:
-                        if len(row) >= 3:
-                            self.profile_data.append({
-                                "time": float(row[0]),
-                                "temp": float(row[1]),
-                                "actualPlateTarget": float(row[2])
-                            })
-        except Exception as e:
-            QMessageBox.warning(self, "Load Error", f"Failed to load profile file: {e}")
+            suffix = Path(path).suffix.lower()
+            if suffix == ".json":
+                return self._parse_json_profile(path)
+            if suffix == ".csv":
+                return self._parse_csv_profile(path)
+            raise ValueError("Unsupported profile format. Use JSON or CSV.")
+        except OSError as exc:
+            raise ValueError(f"Failed to load profile file: {exc}") from exc
+
+    def _parse_json_profile(self, path):
+        with open(path, "r", encoding="utf-8") as file:
+            raw_data = json.load(file)
+
+        if not isinstance(raw_data, list):
+            raise ValueError("Profile JSON must be a list of steps")
+
+        steps = []
+        for index, entry in enumerate(raw_data, start=1):
+            if not isinstance(entry, dict):
+                raise ValueError(f"Profile step #{index} is not an object")
+
+            try:
+                start_temp = float(entry["plate_start_temp"])
+                end_temp = float(entry["plate_end_temp"])
+                total_ms = int(float(entry["total_step_time_ms"]))
+            except KeyError as exc:
+                raise ValueError(f"Profile step #{index} missing field: {exc}") from exc
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"Profile step #{index} has invalid numeric value") from exc
+
+            ramp_ms = int(float(entry.get("ramp_time_ms", 0)))
+            rectal_override = float(entry.get("rectal_override_target", -1000.0))
+
+            if total_ms <= 0:
+                raise ValueError(f"Profile step #{index} duration must be positive")
+
+            ramp_ms = max(0, min(ramp_ms, total_ms))
+
+            steps.append({
+                "plate_start_temp": start_temp,
+                "plate_end_temp": end_temp,
+                "ramp_time_ms": ramp_ms,
+                "rectal_override_target": rectal_override,
+                "total_step_time_ms": total_ms,
+            })
+
+        if len(steps) > 10:
+            raise ValueError("Profile may contain at most 10 steps")
+
+        graph_points = self._steps_to_graph_points(steps)
+        return steps, graph_points
+
+    def _parse_csv_profile(self, path):
+        rows = []
+        with open(path, newline="", encoding="utf-8") as file:
+            reader = csv.reader(file)
+            for row in reader:
+                if not row:
+                    continue
+                if row[0].startswith("#"):
+                    continue
+                try:
+                    time_min = float(row[0])
+                    temp_c = float(row[1])
+                    ramp_min = float(row[2]) if len(row) > 2 else 0.0
+                except (ValueError, IndexError):
+                    continue
+                rows.append((time_min, temp_c, ramp_min))
+
+        if len(rows) < 2:
+            raise ValueError("CSV profile must contain at least two rows of data")
+
+        steps = []
+        for idx in range(1, len(rows)):
+            prev_time, prev_temp, _ = rows[idx - 1]
+            current_time, current_temp, ramp_min = rows[idx]
+
+            duration_min = max(current_time - prev_time, 0)
+            total_ms = int(duration_min * 60000)
+            if total_ms <= 0:
+                raise ValueError(f"Row {idx + 1} time must be greater than previous row")
+
+            ramp_ms = int(max(0.0, min(ramp_min, duration_min)) * 60000)
+
+            steps.append({
+                "plate_start_temp": prev_temp,
+                "plate_end_temp": current_temp,
+                "ramp_time_ms": ramp_ms,
+                "rectal_override_target": -1000.0,
+                "total_step_time_ms": total_ms,
+            })
+
+        if len(steps) > 10:
+            raise ValueError("Profile may contain at most 10 steps")
+
+        graph_points = [
+            {
+                "time": time_min * 60.0,
+                "temp": temp_c,
+                "actualPlateTarget": temp_c,
+            }
+            for time_min, temp_c, _ in rows
+        ]
+
+        return steps, graph_points
+
+    def _steps_to_graph_points(self, steps):
+        cumulative_time = 0.0
+        graph_points = []
+
+        for step in steps:
+            start_temp = float(step["plate_start_temp"])
+            end_temp = float(step["plate_end_temp"])
+            total_time_s = float(step["total_step_time_ms"]) / 1000.0
+
+            graph_points.append({
+                "time": cumulative_time,
+                "temp": start_temp,
+                "actualPlateTarget": start_temp,
+            })
+
+            cumulative_time += total_time_s
+            graph_points.append({
+                "time": cumulative_time,
+                "temp": end_temp,
+                "actualPlateTarget": end_temp,
+            })
+
+        return graph_points
 
     def request_status(self):
         self.serial_manager.sendCMD("get", "status")

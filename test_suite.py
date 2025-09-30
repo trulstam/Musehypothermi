@@ -10,15 +10,32 @@ import argparse
 import sys
 
 class TestSuite:
-    def __init__(self, port="COM3"):
+    def __init__(self, port="COM3", connect=True):
         print(f"🛠️ Initializing Test Suite on port {port}...")
-        self.serial = SerialManager(port)
+        self.serial = SerialManager()
         self.logger = Logger("test_run")
         self.event_logger = EventLogger("test_events")
         self.profile_loader = ProfileLoader()
         self.test_results = []
+        self.connected = False
+
+        if connect:
+            try:
+                self.connected = self.serial.connect(port)
+            except Exception as exc:
+                print(f"❌ Failed to establish serial connection on {port}: {exc}")
+                self.connected = False
+            if not self.connected:
+                print("⚠️ Serial connection not established. Serial-dependent tests will be skipped.")
+        else:
+            print("⏭️ Serial connection skipped by user request.")
 
     def run_pid_test(self, iterations=10):
+        if not self.connected:
+            print("⏭️ Skipping PID Test because serial connection is unavailable.")
+            self.test_results.append(("PID Test", "SKIPPED"))
+            self.event_logger.log_event("PID test skipped due to unavailable serial connection.")
+            return
         print("\n▶️ Running PID Test")
         self.serial.sendCMD("pid", "start")
         time.sleep(1)
@@ -63,6 +80,11 @@ class TestSuite:
             self.event_logger.log_event("Profile load failed.")
 
     def run_heartbeat_test(self, duration=10):
+        if not self.connected:
+            print("⏭️ Skipping Heartbeat Test because serial connection is unavailable.")
+            self.test_results.append(("Heartbeat Test", "SKIPPED"))
+            self.event_logger.log_event("Heartbeat test skipped due to unavailable serial connection.")
+            return
         print(f"\n▶️ Running Heartbeat Test for {duration} seconds...")
         self.event_logger.log_event("Heartbeat test started.")
 
@@ -91,14 +113,16 @@ class TestSuite:
         print("  📝 TEST SUMMARY")
         print("=====================")
         for test, result in self.test_results:
-            status = "✅" if result == "PASS" else "❌"
+            status_map = {"PASS": "✅", "FAIL": "❌", "SKIPPED": "⏭️"}
+            status = status_map.get(result, "❔")
             print(f"{status} {test}: {result}")
 
     def close(self):
         print("\n🔒 Closing resources...")
         self.logger.close()
         self.event_logger.close()
-        self.serial.close()
+        if self.serial:
+            self.serial.close()
         print("✅ All resources closed.")
 
 if __name__ == "__main__":
@@ -108,13 +132,14 @@ if __name__ == "__main__":
     parser.add_argument("--iterations", type=int, default=10, help="PID test iterations")
     parser.add_argument("--heartbeat", type=int, default=0, help="Run heartbeat test (seconds)")
     parser.add_argument("--summary", action='store_true', help="Only show summary without running tests")
+    parser.add_argument("--skip-serial-tests", action='store_true', help="Skip tests that require a serial connection")
 
     args = parser.parse_args()
 
     test_suite = None
 
     try:
-        test_suite = TestSuite(port=args.port)
+        test_suite = TestSuite(port=args.port, connect=not args.skip_serial_tests)
 
         if args.summary:
             test_suite.summary()

@@ -255,7 +255,7 @@ float PIDModule::getActivePlateTarget() { return actualPlateTarget; }
 float PIDModule::getMaxOutputPercent() { return maxOutputPercent; }
 float PIDModule::getOutput() { return Output; }
 float PIDModule::getCurrentInput() { return Input; }
-float PIDModule::getPwmOutput() { return Output; }
+float PIDModule::getPwmOutput() { return currentPwmOutput; }
 
 void PIDModule::applyOutputLimit() {
     int pwmMax = MAX_PWM * (maxOutputPercent / 100.0);
@@ -268,15 +268,19 @@ void PIDModule::applyPIDOutput() {
 }
 
 void PIDModule::setPeltierOutput(double outVal) {
-    int pwmVal = constrain((int)abs(outVal), 0, MAX_PWM);
-    currentPwmOutput = (outVal < 0) ? -pwmVal : pwmVal;  // Lagre med fortegn
-    
-    comm.sendStatus("pwm_applied", pwmVal);
+    int pwmMax = MAX_PWM * (maxOutputPercent / 100.0f);
+    pwmMax = constrain(pwmMax, 0, MAX_PWM);
 
-    if (outVal > 0) {
+    double limitedOut = constrain(outVal, -pwmMax, pwmMax);
+    int pwmVal = constrain(static_cast<int>(abs(limitedOut)), 0, pwmMax);
+    currentPwmOutput = (limitedOut < 0) ? -pwmVal : pwmVal;  // Lagre med fortegn
+
+    comm.sendStatus("pwm_applied", currentPwmOutput);
+
+    if (currentPwmOutput > 0) {
         digitalWrite(8, LOW);
         digitalWrite(7, HIGH);
-    } else if (outVal < 0) {
+    } else if (currentPwmOutput < 0) {
         digitalWrite(8, HIGH);
         digitalWrite(7, LOW);
     } else {
@@ -284,7 +288,7 @@ void PIDModule::setPeltierOutput(double outVal) {
         digitalWrite(7, LOW);
     }
 
-    pwm.setDutyCycle(pwmVal);
+    pwm.setDutyCycle(abs(currentPwmOutput));
 }
 
 void PIDModule::loadProfile(ProfileStep* steps, int length) {}

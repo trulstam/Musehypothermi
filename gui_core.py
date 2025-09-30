@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
     QFormLayout, QLineEdit, QSplitter, QInputDialog,
     QProgressBar, QCheckBox, QSpinBox, QGridLayout
 )
-from PySide6.QtCore import QTimer, Qt, Signal
+from PySide6.QtCore import QTimer, Qt, Slot
 from PySide6.QtGui import QFont, QPalette, QColor
 import pyqtgraph as pg
 from serial_comm import SerialManager
@@ -29,7 +29,7 @@ class MainWindow(QMainWindow):
 
         # Initialize managers after UI
         self.serial_manager = SerialManager()
-        self.serial_manager.on_data_received = self.process_incoming_data
+        self.serial_manager.data_received.connect(self.process_incoming_data)
 
         self.event_logger = EventLogger("gui_events")
         self.profile_loader = ProfileLoader(event_logger=self.event_logger)
@@ -841,6 +841,7 @@ class MainWindow(QMainWindow):
         
         print(f"LOG: {message}")
 
+    @Slot(dict)
     def process_incoming_data(self, data):
         """Enhanced data processing - ONLY UPDATE GRAPHS FROM ARDUINO DATA"""
         if not data:

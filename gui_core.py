@@ -41,6 +41,9 @@ class MainWindow(QMainWindow):
 
         # Data storage
         self.profile_data = []
+        self.profile_steps = []
+        self.profile_ready = False
+        self.profile_upload_pending = False
         self.last_data_time = time.time()
 
         # State tracking
@@ -909,6 +912,23 @@ class MainWindow(QMainWindow):
                 response_msg = data["response"]
                 self.log(f"📥 RESPONSE: {response_msg}")
 
+                if isinstance(response_msg, str) and self.profile_upload_pending and response_msg.lower().startswith("profile"):
+                    self.profile_upload_pending = False
+
+                    if response_msg.lower() == "profile loaded":
+                        self.profile_ready = True
+                        self._update_profile_button_states()
+                        success_message = "Profile upload confirmed by controller"
+                        self.log(f"✅ {success_message}", "success")
+                        self.event_logger.log_event(success_message)
+                    else:
+                        self.profile_ready = False
+                        self._update_profile_button_states()
+                        failure_message = f"Profile upload failed: {response_msg}"
+                        self.log(f"❌ {failure_message}", "error")
+                        self.event_logger.log_event(failure_message)
+                        QMessageBox.warning(self, "Profile Upload Failed", response_msg)
+
             self.last_data_time = time.time()
 
         except Exception as e:
@@ -1190,26 +1210,95 @@ class MainWindow(QMainWindow):
         """Set manual temperature setpoint with validation"""
         try:
             value = float(self.setpointInput.text())
-            
+
             # Validation
             if not (-10 <= value <= 50):
                 raise ValueError("Temperature must be between -10°C and 50°C")
-            
+
             self.serial_manager.sendSET("target_temp", value)
             self.event_logger.log_event(f"SET: target_temp → {value:.2f} °C")
             self.log(f"✅ Target temperature SET: {value:.2f} °C", "success")
-            
+
         except ValueError as e:
             QMessageBox.warning(self, "Invalid Input", f"Error in temperature: {e}")
             self.log(f"❌ Invalid temperature input: {e}", "error")
         except Exception as e:
             self.log(f"❌ Error setting setpoint: {e}", "error")
 
+    def _convert_profile_points_to_steps(self, profile_points):
+        """Convert loader data into firmware profile steps.
+
+        Mirrors the transformation used by ``profile_graph_popup.ProfileGraphPopup``
+        so both UIs validate profiles consistently.
+        """
+        if not profile_points:
+            raise ValueError("Loaded profile is empty")
+
+        if len(profile_points) < 2:
+            raise ValueError("Profile must contain at least two time points")
+
+        try:
+            ordered_points = sorted(
+                profile_points,
+                key=lambda entry: float(entry["time_min"])
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError("Profile entries must include valid 'time_min' values") from exc
+
+        steps = []
+
+        for index in range(1, len(ordered_points)):
+            previous = ordered_points[index - 1]
+            current = ordered_points[index]
+
+            try:
+                previous_temp = float(previous["temp_c"])
+                current_temp = float(current["temp_c"])
+                previous_time = float(previous["time_min"])
+                current_time = float(current["time_min"])
+                ramp_minutes = float(current.get("ramp_min", 0.0))
+            except (KeyError, TypeError, ValueError) as exc:
+                raise ValueError(f"Invalid profile entry at position {index + 1}") from exc
+
+            duration_minutes = current_time - previous_time
+            if duration_minutes <= 0:
+                raise ValueError(
+                    f"Profile time at step {index + 1} must be greater than previous step"
+                )
+
+            total_step_time_ms = int(duration_minutes * 60000)
+            ramp_minutes = max(0.0, min(ramp_minutes, duration_minutes))
+            ramp_time_ms = int(ramp_minutes * 60000)
+
+            steps.append({
+                "plate_start_temp": previous_temp,
+                "plate_end_temp": current_temp,
+                "ramp_time_ms": ramp_time_ms,
+                "rectal_override_target": -1000.0,
+                "total_step_time_ms": total_step_time_ms,
+            })
+
+        if len(steps) > 10:
+            raise ValueError("Profile may contain at most 10 steps")
+
+        return steps
+
+    def _update_profile_button_states(self):
+        """Enable/disable profile control buttons based on upload status."""
+        connected = self.serial_manager.is_connected()
+        uploading = self.profile_upload_pending
+        ready = self.profile_ready and not uploading and connected
+
+        self.startProfileButton.setEnabled(ready)
+        self.pauseProfileButton.setEnabled(ready)
+        self.resumeProfileButton.setEnabled(False)
+        self.stopProfileButton.setEnabled(False)
+
     def load_profile(self):
         """Load temperature profile with proper error handling"""
         try:
             file_name, _ = QFileDialog.getOpenFileName(
-                self, "Load Temperature Profile", "", 
+                self, "Load Temperature Profile", "",
                 "JSON Files (*.json);;CSV Files (*.csv);;All Files (*)"
             )
             
@@ -1225,17 +1314,59 @@ class MainWindow(QMainWindow):
                     filename = os.path.basename(file_name)
                     self.profileFileLabel.setText(f"Loaded: {filename}")
                     self.profileFileLabel.setStyleSheet("color: green; font-weight: bold;")
-                    
-                    self.startProfileButton.setEnabled(True)
-                    
+
+                    try:
+                        self.profile_steps = self._convert_profile_points_to_steps(self.profile_data)
+                    except ValueError as exc:
+                        self.profile_steps = []
+                        self.profile_ready = False
+                        self.profile_upload_pending = False
+                        self._update_profile_button_states()
+                        error_message = f"Profile conversion error: {exc}"
+                        self.log(f"❌ {error_message}", "error")
+                        QMessageBox.warning(self, "Profile Error", error_message)
+                        return
+
+                    if not self.profile_steps:
+                        self.profile_ready = False
+                        self.profile_upload_pending = False
+                        self._update_profile_button_states()
+                        self.log("❌ Profile did not produce any steps", "error")
+                        QMessageBox.warning(
+                            self,
+                            "Profile Error",
+                            "The loaded profile did not produce any controller steps."
+                        )
+                        return
+
+                    self.profile_ready = False
+                    self.profile_upload_pending = False
+                    self._update_profile_button_states()
+
                     self.log(f"✅ Profile loaded: {filename}", "success")
                     self.event_logger.log_event(f"Profile loaded: {file_name}")
-                    self.log("ℹ️ Profile ready (Arduino profile system pending)", "warning")
-                    
+
+                    if self.serial_manager.is_connected():
+                        self.serial_manager.sendSET("profile", self.profile_steps)
+                        self.profile_upload_pending = True
+                        self._update_profile_button_states()
+                        self.log(
+                            f"📤 Uploading {len(self.profile_steps)} profile steps to controller...",
+                            "info",
+                        )
+                        self.event_logger.log_event(
+                            f"Profile upload requested: {len(self.profile_steps)} steps"
+                        )
+                    else:
+                        self.log(
+                            "⚠️ Connect to the controller to upload the loaded profile.",
+                            "warning",
+                        )
+
                 else:
                     self.log(f"❌ Failed to load profile: {file_name}", "error")
                     QMessageBox.warning(self, "Load Error", "Failed to load the selected profile file.")
-                    
+
         except Exception as e:
             self.log(f"❌ Error loading profile: {e}", "error")
             QMessageBox.critical(self, "Error", f"An error occurred while loading the profile:\n{e}")
@@ -1315,9 +1446,8 @@ class MainWindow(QMainWindow):
         
         for control in controls:
             control.setEnabled(True)
-            
-        if self.profile_data:
-            self.startProfileButton.setEnabled(True)
+
+        self._update_profile_button_states()
 
     def disable_connection_dependent_controls(self):
         """Disable controls that require active connection"""
@@ -1331,6 +1461,9 @@ class MainWindow(QMainWindow):
         
         for control in controls:
             control.setEnabled(False)
+
+        self.profile_ready = False
+        self.profile_upload_pending = False
 
     def clear_graphs(self):
         """Clear all graph data and reset timing"""

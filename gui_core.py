@@ -571,306 +571,41 @@ class MainWindow(QMainWindow):
     def create_graph_panel(self):
         graph_group = QGroupBox("Live Data Monitoring")
         graph_layout = QVBoxLayout()
-        
-        # Control buttons for graphs
-        graph_control_layout = QHBoxLayout()
-        
-        self.generateTestDataButton = QPushButton("Generate Test Data")
-        self.generateTestDataButton.clicked.connect(self.generate_test_data)
-        self.generateTestDataButton.setFixedHeight(30)
-        self.generateTestDataButton.setStyleSheet("QPushButton { background-color: #2196F3; color: white; }")
-        
-        self.clearGraphsButton = QPushButton("Clear Graphs")
-        self.clearGraphsButton.clicked.connect(self.clear_graphs)
-        self.clearGraphsButton.setFixedHeight(30)
-        self.clearGraphsButton.setStyleSheet("QPushButton { background-color: #FF9800; color: white; }")
-        
-        self.autoScaleButton = QPushButton("Auto Scale")
-        self.autoScaleButton.clicked.connect(self.auto_scale_graphs)
-        self.autoScaleButton.setFixedHeight(30)
-        
-        self.resetScaleButton = QPushButton("Reset Scale")
-        self.resetScaleButton.clicked.connect(self.reset_graph_scales)
-        self.resetScaleButton.setFixedHeight(30)
-        
-        # NEW: Test basic plot button
-        self.testBasicPlotButton = QPushButton("Test Basic Plot")
-        self.testBasicPlotButton.clicked.connect(self.test_basic_plot)
-        self.testBasicPlotButton.setFixedHeight(30)
-        self.testBasicPlotButton.setStyleSheet("QPushButton { background-color: #E91E63; color: white; }")
-        
-        graph_control_layout.addWidget(self.generateTestDataButton)
-        graph_control_layout.addWidget(self.clearGraphsButton)
-        graph_control_layout.addWidget(self.autoScaleButton)
-        graph_control_layout.addWidget(self.resetScaleButton)
-        graph_control_layout.addWidget(self.testBasicPlotButton)
-        graph_control_layout.addStretch()
-        
-        # Create graph widgets with EXPLICIT pen configuration
-        self.tempGraphWidget = pg.PlotWidget(title="Temperatures (°C)")
-        self.tempGraphWidget.addLegend()
-        self.tempGraphWidget.setLabel('bottom', 'Time (seconds)')
-        self.tempGraphWidget.setLabel('left', 'Temperature (°C)')
-        self.tempGraphWidget.showGrid(x=True, y=True, alpha=0.3)
-        self.tempGraphWidget.setYRange(10, 45)
-        self.tempGraphWidget.setXRange(0, 60)
-        self.tempGraphWidget.setBackground('w')
-        
-        # Temperature plots with EXPLICIT pen styling - FIXED VERSION
-        print("Creating temperature plots with explicit pen configuration...")
-        self.temp_plot_plate = self.tempGraphWidget.plot(
-            pen={'color': (255, 107, 107), 'width': 3}, 
-            name="Cooling Plate",
-            symbol='o', symbolSize=4, symbolBrush='r'
-        )
-        print(f"temp_plot_plate created: {self.temp_plot_plate}")
-        
-        self.temp_plot_rectal = self.tempGraphWidget.plot(
-            pen={'color': (78, 205, 196), 'width': 3}, 
-            name="Rectal Probe",
-            symbol='s', symbolSize=4, symbolBrush='g'
-        )
-        print(f"temp_plot_rectal created: {self.temp_plot_rectal}")
-        
-        self.temp_plot_target = self.tempGraphWidget.plot(
-            pen={'color': (69, 183, 209), 'width': 2, 'style': Qt.DashLine}, 
-            name="Target"
-        )
-        print(f"temp_plot_target created: {self.temp_plot_target}")
-        
-        self.pidGraphWidget = pg.PlotWidget(title="PID Output")
-        self.pidGraphWidget.addLegend()
-        self.pidGraphWidget.setLabel('bottom', 'Time (seconds)')
-        self.pidGraphWidget.setLabel('left', 'PID Output')
-        self.pidGraphWidget.showGrid(x=True, y=True, alpha=0.3)
-        self.pidGraphWidget.setYRange(-100, 100)
-        self.pidGraphWidget.setXRange(0, 60)
-        self.pidGraphWidget.setBackground('w')
-        
-        self.pid_plot = self.pidGraphWidget.plot(
-            pen={'color': (155, 89, 182), 'width': 3}, 
-            name="PID Output",
-            symbol='t', symbolSize=4, symbolBrush='purple'
-        )
-        print(f"pid_plot created: {self.pid_plot}")
-        
-        self.breathGraphWidget = pg.PlotWidget(title="Breath Frequency (BPM)")
-        self.breathGraphWidget.addLegend()
-        self.breathGraphWidget.setLabel('bottom', 'Time (seconds)')
-        self.breathGraphWidget.setLabel('left', 'Breaths per Minute')
-        self.breathGraphWidget.showGrid(x=True, y=True, alpha=0.3)
-        self.breathGraphWidget.setYRange(0, 160)
-        self.breathGraphWidget.setXRange(0, 60)
-        self.breathGraphWidget.setBackground('w')
-        
-        self.breath_plot = self.breathGraphWidget.plot(
-            pen={'color': (243, 156, 18), 'width': 3}, 
-            name="Breath Rate",
-            symbol='d', symbolSize=4, symbolBrush='orange'
-        )
-        print(f"breath_plot created: {self.breath_plot}")
-        
-        # Set minimum heights for graphs
-        self.tempGraphWidget.setMinimumHeight(200)
-        self.pidGraphWidget.setMinimumHeight(200)
-        self.breathGraphWidget.setMinimumHeight(200)
-        
-        # Add graphs to layout
-        graph_layout.addLayout(graph_control_layout)
-        graph_layout.addWidget(self.tempGraphWidget)
-        graph_layout.addWidget(self.pidGraphWidget)
-        graph_layout.addWidget(self.breathGraphWidget)
-        
-    def test_basic_plot(self):
-        """Test absolute basic plotting to isolate the problem"""
-        try:
-            self.log("🧪 Testing basic plot functionality...", "info")
-            print("=" * 60)
-            print("BASIC PLOT TEST")
-            print("=" * 60)
-            
-            # Extremely simple test data
-            x_data = [0, 1, 2, 3, 4, 5]
-            y_data = [20, 25, 30, 35, 40, 45]
-            
-            print(f"Test data: x={x_data}, y={y_data}")
-            
-            # Clear all existing data first
-            try:
-                self.temp_plot_plate.clear()
-                self.temp_plot_rectal.clear()
-                self.temp_plot_target.clear()
-                self.pid_plot.clear()
-                self.breath_plot.clear()
-                print("✅ Cleared all existing plot data")
-            except Exception as e:
-                print(f"❌ Error clearing plots: {e}")
-            
-            # Test plot with explicit red pen
-            try:
-                print("Testing temp_plot_plate with explicit red pen...")
-                self.temp_plot_plate.setData(x_data, y_data, pen='r', symbol='o', symbolBrush='r')
-                print("✅ temp_plot_plate.setData() with red pen - SUCCESS")
-            except Exception as e:
-                print(f"❌ temp_plot_plate.setData() with red pen - ERROR: {e}")
-            
-            # Force graph to show the data range
-            try:
-                self.tempGraphWidget.setXRange(0, 6)
-                self.tempGraphWidget.setYRange(15, 50)
-                print("✅ Set explicit ranges for visibility")
-            except Exception as e:
-                print(f"❌ Error setting ranges: {e}")
-            
-            # Force update and repaint
-            try:
-                self.tempGraphWidget.getPlotItem().getViewBox().updateAutoRange()
-                self.tempGraphWidget.update()
-                self.tempGraphWidget.repaint()
-                print("✅ Forced graph update and repaint")
-            except Exception as e:
-                print(f"❌ Error forcing update: {e}")
-            
-            # Test if we can get the data back
-            try:
-                plot_data = self.temp_plot_plate.getData()
-                if plot_data is not None:
-                    x_back, y_back = plot_data
-                    print(f"✅ Data retrieved: x={list(x_back) if x_back is not None else None}, y={list(y_back) if y_back is not None else None}")
-                else:
-                    print("❌ No data retrieved from plot")
-            except Exception as e:
-                print(f"❌ Error getting data back: {e}")
-            
-            # Check plot item properties
-            try:
-                plot_item = self.tempGraphWidget.getPlotItem()
-                data_items = plot_item.listDataItems()
-                print(f"Plot has {len(data_items)} data items")
-                for i, item in enumerate(data_items):
-                    print(f"  Item {i}: {type(item).__name__}")
-            except Exception as e:
-                print(f"❌ Error checking plot items: {e}")
-                
-    def test_basic_plot(self):
-        """Test absolute basic plotting to isolate the problem"""
-        try:
-            self.log("🧪 Testing basic plot functionality...", "info")
-            print("=" * 60)
-            print("BASIC PLOT TEST")
-            print("=" * 60)
-            
-            # Extremely simple test data
-            x_data = [0, 1, 2, 3, 4, 5]
-            y_data = [20, 25, 30, 35, 40, 45]
-            
-            print(f"Test data: x={x_data}, y={y_data}")
-            
-            # Clear all existing data first
-            try:
-                self.temp_plot_plate.clear()
-                self.temp_plot_rectal.clear()
-                self.temp_plot_target.clear()
-                self.pid_plot.clear()
-                self.breath_plot.clear()
-                print("✅ Cleared all existing plot data")
-            except Exception as e:
-                print(f"❌ Error clearing plots: {e}")
-            
-            # Test plot with explicit red pen
-            try:
-                print("Testing temp_plot_plate with explicit red pen...")
-                self.temp_plot_plate.setData(x_data, y_data, pen='r', symbol='o', symbolBrush='r')
-                print("✅ temp_plot_plate.setData() with red pen - SUCCESS")
-            except Exception as e:
-                print(f"❌ temp_plot_plate.setData() with red pen - ERROR: {e}")
-            
-            # Force graph to show the data range
-            try:
-                self.tempGraphWidget.setXRange(0, 6)
-                self.tempGraphWidget.setYRange(15, 50)
-                print("✅ Set explicit ranges for visibility")
-            except Exception as e:
-                print(f"❌ Error setting ranges: {e}")
-            
-            # Force update and repaint
-            try:
-                self.tempGraphWidget.getPlotItem().getViewBox().updateAutoRange()
-                self.tempGraphWidget.update()
-                self.tempGraphWidget.repaint()
-                print("✅ Forced graph update and repaint")
-            except Exception as e:
-                print(f"❌ Error forcing update: {e}")
-            
-            # Test if we can get the data back
-            try:
-                plot_data = self.temp_plot_plate.getData()
-                if plot_data is not None:
-                    x_back, y_back = plot_data
-                    print(f"✅ Data retrieved: x={list(x_back) if x_back is not None else None}, y={list(y_back) if y_back is not None else None}")
-                else:
-                    print("❌ No data retrieved from plot")
-            except Exception as e:
-                print(f"❌ Error getting data back: {e}")
-            
-            # Check plot item properties
-            try:
-                plot_item = self.tempGraphWidget.getPlotItem()
-                data_items = plot_item.listDataItems()
-                print(f"Plot has {len(data_items)} data items")
-                for i, item in enumerate(data_items):
-                    print(f"  Item {i}: {type(item).__name__}")
-            except Exception as e:
-                print(f"❌ Error checking plot items: {e}")
-                
-            print("=" * 60)
-            self.log("✅ Basic plot test complete - check console for details", "success")
-            
-        except Exception as e:
-            self.log(f"❌ Error in basic plot test: {e}", "error")
-            print(f"BASIC PLOT ERROR: {e}")
-            import traceback
-            traceback.print_exc()
 
-    def create_graph_panel(self):
-        graph_group = QGroupBox("Live Data Monitoring")
-        graph_layout = QVBoxLayout()
-        
         # Control buttons for graphs
         graph_control_layout = QHBoxLayout()
-        
+
         self.generateTestDataButton = QPushButton("Generate Test Data")
         self.generateTestDataButton.clicked.connect(self.generate_test_data)
         self.generateTestDataButton.setFixedHeight(30)
         self.generateTestDataButton.setStyleSheet("QPushButton { background-color: #2196F3; color: white; }")
-        
+
         self.clearGraphsButton = QPushButton("Clear Graphs")
         self.clearGraphsButton.clicked.connect(self.clear_graphs)
         self.clearGraphsButton.setFixedHeight(30)
         self.clearGraphsButton.setStyleSheet("QPushButton { background-color: #FF9800; color: white; }")
-        
+
         self.autoScaleButton = QPushButton("Auto Scale")
         self.autoScaleButton.clicked.connect(self.auto_scale_graphs)
         self.autoScaleButton.setFixedHeight(30)
-        
+
         self.resetScaleButton = QPushButton("Reset Scale")
         self.resetScaleButton.clicked.connect(self.reset_graph_scales)
         self.resetScaleButton.setFixedHeight(30)
-        
-        # NEW: Test basic plot button
+
         self.testBasicPlotButton = QPushButton("Test Basic Plot")
         self.testBasicPlotButton.clicked.connect(self.test_basic_plot)
         self.testBasicPlotButton.setFixedHeight(30)
         self.testBasicPlotButton.setStyleSheet("QPushButton { background-color: #E91E63; color: white; }")
-        
+
         graph_control_layout.addWidget(self.generateTestDataButton)
         graph_control_layout.addWidget(self.clearGraphsButton)
         graph_control_layout.addWidget(self.autoScaleButton)
         graph_control_layout.addWidget(self.resetScaleButton)
         graph_control_layout.addWidget(self.testBasicPlotButton)
         graph_control_layout.addStretch()
-        
-        # Create graph widgets with EXPLICIT pen configuration
+
+        # Create graph widgets with explicit pen configuration
         self.tempGraphWidget = pg.PlotWidget(title="Temperatures (°C)")
         self.tempGraphWidget.addLegend()
         self.tempGraphWidget.setLabel('bottom', 'Time (seconds)')
@@ -879,29 +614,24 @@ class MainWindow(QMainWindow):
         self.tempGraphWidget.setYRange(10, 45)
         self.tempGraphWidget.setXRange(0, 60)
         self.tempGraphWidget.setBackground('w')
-        
-        # Temperature plots with EXPLICIT pen styling - FIXED VERSION
-        print("Creating temperature plots with explicit pen configuration...")
+
         self.temp_plot_plate = self.tempGraphWidget.plot(
-            pen={'color': (255, 107, 107), 'width': 3}, 
+            pen={'color': (255, 107, 107), 'width': 3},
             name="Cooling Plate",
             symbol='o', symbolSize=4, symbolBrush='r'
         )
-        print(f"temp_plot_plate created: {self.temp_plot_plate}")
-        
+
         self.temp_plot_rectal = self.tempGraphWidget.plot(
-            pen={'color': (78, 205, 196), 'width': 3}, 
+            pen={'color': (78, 205, 196), 'width': 3},
             name="Rectal Probe",
             symbol='s', symbolSize=4, symbolBrush='g'
         )
-        print(f"temp_plot_rectal created: {self.temp_plot_rectal}")
-        
+
         self.temp_plot_target = self.tempGraphWidget.plot(
-            pen={'color': (69, 183, 209), 'width': 2, 'style': Qt.DashLine}, 
+            pen={'color': (69, 183, 209), 'width': 2, 'style': Qt.DashLine},
             name="Target"
         )
-        print(f"temp_plot_target created: {self.temp_plot_target}")
-        
+
         self.pidGraphWidget = pg.PlotWidget(title="PID Output")
         self.pidGraphWidget.addLegend()
         self.pidGraphWidget.setLabel('bottom', 'Time (seconds)')
@@ -910,14 +640,13 @@ class MainWindow(QMainWindow):
         self.pidGraphWidget.setYRange(-100, 100)
         self.pidGraphWidget.setXRange(0, 60)
         self.pidGraphWidget.setBackground('w')
-        
+
         self.pid_plot = self.pidGraphWidget.plot(
-            pen={'color': (155, 89, 182), 'width': 3}, 
+            pen={'color': (155, 89, 182), 'width': 3},
             name="PID Output",
             symbol='t', symbolSize=4, symbolBrush='purple'
         )
-        print(f"pid_plot created: {self.pid_plot}")
-        
+
         self.breathGraphWidget = pg.PlotWidget(title="Breath Frequency (BPM)")
         self.breathGraphWidget.addLegend()
         self.breathGraphWidget.setLabel('bottom', 'Time (seconds)')
@@ -926,27 +655,89 @@ class MainWindow(QMainWindow):
         self.breathGraphWidget.setYRange(0, 160)
         self.breathGraphWidget.setXRange(0, 60)
         self.breathGraphWidget.setBackground('w')
-        
+
         self.breath_plot = self.breathGraphWidget.plot(
-            pen={'color': (243, 156, 18), 'width': 3}, 
+            pen={'color': (243, 156, 18), 'width': 3},
             name="Breath Rate",
             symbol='d', symbolSize=4, symbolBrush='orange'
         )
-        print(f"breath_plot created: {self.breath_plot}")
-        
+
         # Set minimum heights for graphs
         self.tempGraphWidget.setMinimumHeight(200)
         self.pidGraphWidget.setMinimumHeight(200)
         self.breathGraphWidget.setMinimumHeight(200)
-        
+
         # Add graphs to layout
         graph_layout.addLayout(graph_control_layout)
         graph_layout.addWidget(self.tempGraphWidget)
         graph_layout.addWidget(self.pidGraphWidget)
         graph_layout.addWidget(self.breathGraphWidget)
-        
+
         graph_group.setLayout(graph_layout)
         return graph_group
+
+    def test_basic_plot(self):
+        """Test absolute basic plotting to isolate the problem"""
+        try:
+            self.log("🧪 Testing basic plot functionality...", "info")
+
+            x_data = [0, 1, 2, 3, 4, 5]
+            y_data = [20, 25, 30, 35, 40, 45]
+
+            # Clear all existing data first
+            for plot_item in (
+                self.temp_plot_plate,
+                self.temp_plot_rectal,
+                self.temp_plot_target,
+                self.pid_plot,
+                self.breath_plot,
+            ):
+                plot_item.clear()
+
+            self.log("✅ Cleared existing plot data", "success")
+
+            # Test plot with explicit red pen
+            self.temp_plot_plate.setData(
+                x_data,
+                y_data,
+                pen='r',
+                symbol='o',
+                symbolBrush='r'
+            )
+
+            # Force graph to show the data range
+            self.tempGraphWidget.setXRange(0, 6)
+            self.tempGraphWidget.setYRange(15, 50)
+
+            # Force update and repaint
+            self.tempGraphWidget.getPlotItem().getViewBox().updateAutoRange()
+            self.tempGraphWidget.update()
+            self.tempGraphWidget.repaint()
+
+            # Test if we can get the data back
+            plot_data = self.temp_plot_plate.getData()
+            if plot_data is not None:
+                x_back, y_back = plot_data
+                self.log(
+                    f"Retrieved data points: x={list(x_back)}, y={list(y_back)}",
+                    "info",
+                )
+            else:
+                self.log("❌ No data retrieved from plot", "error")
+
+            # Check plot item properties
+            plot_item = self.tempGraphWidget.getPlotItem()
+            data_items = plot_item.listDataItems()
+            self.log(f"Plot has {len(data_items)} data items", "info")
+            for index, item in enumerate(data_items):
+                self.log(f"  Item {index}: {type(item).__name__}", "info")
+
+            self.log("✅ Basic plot test complete - check log for details", "success")
+
+        except Exception as e:
+            self.log(f"❌ Error in basic plot test: {e}", "error")
+            import traceback
+            traceback.print_exc()
 
     def send_and_log_cmd(self, action, state):
         """Send command with proper error handling and logging"""
@@ -1007,7 +798,6 @@ class MainWindow(QMainWindow):
                 current_value, 0.0, 100.0, 1
             )
             if ok:
-                print(f"DEBUG: Sending SET pid_max_output = {value}")
                 self.serial_manager.sendSET("pid_max_output", value)
                 self.event_logger.log_event(f"SET: pid_max_output → {value:.1f}%")
                 self.log(f"⚙️ Max output limit set to {value:.1f}%")

@@ -12,7 +12,7 @@ from PySide6.QtCore import QTimer, Qt
 import pyqtgraph as pg
 from serial_comm import SerialManager
 from event_logger import EventLogger
-from profile_graph_popup import ProfileGraphPopup
+from profile_graph_widget import ProfileGraphPopup
 
 class MainWindow(QMainWindow):
     def __init__(self):

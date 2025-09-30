@@ -8,9 +8,10 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QWidget, QFileDialog, QHBoxLayout,
     QTextEdit, QComboBox, QMessageBox, QGroupBox,
     QFormLayout, QLineEdit, QSplitter, QInputDialog,
-    QProgressBar, QCheckBox, QSpinBox, QGridLayout
+    QProgressBar, QCheckBox, QSpinBox, QGridLayout,
+    QToolButton, QFrame
 )
-from PySide6.QtCore import QTimer, Qt, Slot
+from PySide6.QtCore import QTimer, Qt, Slot, QSettings
 from PySide6.QtGui import QFont, QPalette, QColor
 import pyqtgraph as pg
 from serial_comm import SerialManager
@@ -26,6 +27,10 @@ class MainWindow(QMainWindow):
 
         # Initialize UI first
         self.init_ui()
+
+        # Restore persisted UI state
+        self.settings = QSettings("Musehypothermi", "MainWindow")
+        self.restore_splitter_states()
 
         # Initialize managers after UI
         self.serial_manager = SerialManager()
@@ -74,31 +79,40 @@ class MainWindow(QMainWindow):
 
     def init_ui(self):
         # Main layout with splitter
-        main_splitter = QSplitter(Qt.Horizontal)
-        
+        self.main_splitter = QSplitter(Qt.Horizontal)
+
         # Left panel
         left_widget = self.create_left_panel()
         left_widget.setMinimumWidth(500)
-        main_splitter.addWidget(left_widget)
-        
+        self.main_splitter.addWidget(left_widget)
+
         # Right panel
         right_widget = self.create_right_panel()
         right_widget.setMinimumWidth(350)
-        main_splitter.addWidget(right_widget)
-        
+        self.main_splitter.addWidget(right_widget)
+
         # Set splitter proportions
-        main_splitter.setSizes([700, 450])
-        
+        self.main_splitter.setSizes([700, 450])
+
         # Graph panel
         graph_widget = self.create_graph_panel()
-        
+
+        # Vertical splitter between controls/logs and graphs
+        self.vertical_splitter = QSplitter(Qt.Vertical)
+        self.vertical_splitter.addWidget(self.main_splitter)
+        self.vertical_splitter.addWidget(graph_widget)
+        self.vertical_splitter.setChildrenCollapsible(False)
+        self.vertical_splitter.setStretchFactor(0, 3)
+        self.vertical_splitter.setStretchFactor(1, 2)
+        self.vertical_splitter.setSizes([650, 350])
+
         # Main container
         container = QWidget()
         container_layout = QVBoxLayout()
-        container_layout.addWidget(main_splitter, 2)
-        container_layout.addWidget(graph_widget, 1)
+        container_layout.setContentsMargins(0, 0, 0, 0)
+        container_layout.addWidget(self.vertical_splitter)
         container.setLayout(container_layout)
-        
+
         self.setCentralWidget(container)
 
     def create_left_panel(self):
@@ -575,38 +589,62 @@ class MainWindow(QMainWindow):
         graph_group = QGroupBox("Live Data Monitoring")
         graph_layout = QVBoxLayout()
 
-        # Control buttons for graphs
-        graph_control_layout = QHBoxLayout()
+        # Collapsible graph control toolbar
+        toggle_layout = QHBoxLayout()
+        toggle_layout.setContentsMargins(0, 0, 0, 0)
+
+        self.graphControlsToggle = QToolButton()
+        self.graphControlsToggle.setText("Graph Controls")
+        self.graphControlsToggle.setCheckable(True)
+        self.graphControlsToggle.setChecked(False)
+        self.graphControlsToggle.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self.graphControlsToggle.setArrowType(Qt.RightArrow)
+        self.graphControlsToggle.toggled.connect(self.toggle_graph_controls)
+
+        toggle_layout.addWidget(self.graphControlsToggle, alignment=Qt.AlignLeft)
+        toggle_layout.addStretch()
+
+        self.graph_controls_container = QFrame()
+        self.graph_controls_container.setFrameShape(QFrame.StyledPanel)
+        controls_layout = QVBoxLayout()
+        controls_layout.setSpacing(6)
+        controls_layout.setContentsMargins(8, 8, 8, 8)
 
         self.generateTestDataButton = QPushButton("Generate Test Data")
         self.generateTestDataButton.clicked.connect(self.generate_test_data)
-        self.generateTestDataButton.setFixedHeight(30)
         self.generateTestDataButton.setStyleSheet("QPushButton { background-color: #2196F3; color: white; }")
 
         self.clearGraphsButton = QPushButton("Clear Graphs")
         self.clearGraphsButton.clicked.connect(self.clear_graphs)
-        self.clearGraphsButton.setFixedHeight(30)
         self.clearGraphsButton.setStyleSheet("QPushButton { background-color: #FF9800; color: white; }")
 
         self.autoScaleButton = QPushButton("Auto Scale")
         self.autoScaleButton.clicked.connect(self.auto_scale_graphs)
-        self.autoScaleButton.setFixedHeight(30)
 
         self.resetScaleButton = QPushButton("Reset Scale")
         self.resetScaleButton.clicked.connect(self.reset_graph_scales)
-        self.resetScaleButton.setFixedHeight(30)
 
         self.testBasicPlotButton = QPushButton("Test Basic Plot")
         self.testBasicPlotButton.clicked.connect(self.test_basic_plot)
-        self.testBasicPlotButton.setFixedHeight(30)
         self.testBasicPlotButton.setStyleSheet("QPushButton { background-color: #E91E63; color: white; }")
 
-        graph_control_layout.addWidget(self.generateTestDataButton)
-        graph_control_layout.addWidget(self.clearGraphsButton)
-        graph_control_layout.addWidget(self.autoScaleButton)
-        graph_control_layout.addWidget(self.resetScaleButton)
-        graph_control_layout.addWidget(self.testBasicPlotButton)
-        graph_control_layout.addStretch()
+        for button in (
+            self.generateTestDataButton,
+            self.clearGraphsButton,
+            self.autoScaleButton,
+            self.resetScaleButton,
+            self.testBasicPlotButton,
+        ):
+            button.setMinimumHeight(30)
+            button.setCursor(Qt.PointingHandCursor)
+            controls_layout.addWidget(button)
+
+        controls_layout.addStretch()
+        self.graph_controls_container.setLayout(controls_layout)
+
+        graph_layout.addLayout(toggle_layout)
+        graph_layout.addWidget(self.graph_controls_container)
+        self.graph_controls_container.setVisible(False)
 
         # Create graph widgets with explicit pen configuration
         self.tempGraphWidget = pg.PlotWidget(title="Temperatures (°C)")
@@ -665,19 +703,36 @@ class MainWindow(QMainWindow):
             symbol='d', symbolSize=4, symbolBrush='orange'
         )
 
-        # Set minimum heights for graphs
-        self.tempGraphWidget.setMinimumHeight(200)
-        self.pidGraphWidget.setMinimumHeight(200)
-        self.breathGraphWidget.setMinimumHeight(200)
-
         # Add graphs to layout
-        graph_layout.addLayout(graph_control_layout)
         graph_layout.addWidget(self.tempGraphWidget)
         graph_layout.addWidget(self.pidGraphWidget)
         graph_layout.addWidget(self.breathGraphWidget)
 
         graph_group.setLayout(graph_layout)
         return graph_group
+
+    def toggle_graph_controls(self, checked):
+        """Show or hide the graph control panel"""
+        self.graph_controls_container.setVisible(checked)
+        self.graphControlsToggle.setArrowType(Qt.DownArrow if checked else Qt.RightArrow)
+
+    def restore_splitter_states(self):
+        """Restore splitter sizes from previous session if available"""
+        try:
+            vertical_sizes = self.settings.value("splitters/vertical", type=list)
+            if vertical_sizes:
+                if isinstance(vertical_sizes, str):
+                    vertical_sizes = json.loads(vertical_sizes)
+                self.vertical_splitter.setSizes([int(size) for size in vertical_sizes])
+
+            horizontal_sizes = self.settings.value("splitters/horizontal", type=list)
+            if horizontal_sizes:
+                if isinstance(horizontal_sizes, str):
+                    horizontal_sizes = json.loads(horizontal_sizes)
+                self.main_splitter.setSizes([int(size) for size in horizontal_sizes])
+        except Exception:
+            # Ignore restoration errors to avoid impacting startup
+            pass
 
     def test_basic_plot(self):
         """Test absolute basic plotting to isolate the problem"""
@@ -1703,12 +1758,16 @@ class MainWindow(QMainWindow):
             
             # Close loggers
             self.event_logger.close()
-            
+
             self.log("👋 Application closing...")
-            
+
+            if hasattr(self, 'settings'):
+                self.settings.setValue("splitters/vertical", self.vertical_splitter.sizes())
+                self.settings.setValue("splitters/horizontal", self.main_splitter.sizes())
+
         except Exception as e:
             print(f"Error during shutdown: {e}")
-        
+
         event.accept()
 
 def main():

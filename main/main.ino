@@ -19,13 +19,21 @@ void setup() {
     Serial.begin(115200);
     delay(200);  // Stabiliser USB/Serial tilkobling (valgfritt)
 
+    bool resetOccurred = eeprom.begin();
+
     // Start Sensorer, Pustemonitor, PID-regulering
     sensors.begin();
     pressure.begin();
     pid.begin(eeprom);
 
-    // Start kommunikasjonsgrensesnitt + EEPROM factory reset-sjekk + events
+    // Start kommunikasjonsgrensesnitt (EEPROM-status sendes under)
     comm.begin(Serial);
+
+    if (resetOccurred) {
+        comm.sendEvent("\u26a0\ufe0f EEPROM invalid - factory reset performed on boot");
+    } else {
+        comm.sendEvent("\u2705 EEPROM validated - no reset required");
+    }
 
     // Init system tasks (heartbeat, failsafe, etc.)
     initTasks();

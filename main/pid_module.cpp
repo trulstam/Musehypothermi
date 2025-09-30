@@ -35,12 +35,14 @@ void PIDModule::begin(EEPROMManager &eepromManager) {
     eeprom->loadTargetTemp(tTemp);
     setTargetTemp(tTemp);
 
+    float maxOutput;
+    eeprom->loadMaxOutput(maxOutput);
+    setMaxOutputPercent(maxOutput);
+
     pwm.begin();
 
     pid.SetSampleTime(100);
     pid.SetMode(MANUAL);
-
-    applyOutputLimit();
 }
 
 void PIDModule::update(double currentTemp) {

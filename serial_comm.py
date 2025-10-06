@@ -4,7 +4,11 @@ import json
 import threading
 import time
 
-from PySide6.QtCore import QObject, Signal, Slot, Qt, QMetaObject, Q_ARG
+from PySide6.QtCore import QObject, Signal, Slot, Qt, QMetaObject, Q_ARG, QMetaType
+
+
+# Ensure Qt knows how to marshal Python dict objects between threads
+QMetaType.registerType('dict')
 
 class SerialManager(QObject):
     data_received = Signal(dict)
@@ -159,10 +163,10 @@ class SerialManager(QObject):
             self,
             "_emit_data_received",
             Qt.QueuedConnection,
-            Q_ARG(object, dict(payload))
+            Q_ARG(dict, dict(payload))
         )
 
-    @Slot(object)
+    @Slot(dict)
     def _emit_data_received(self, payload):
         if not isinstance(payload, dict):
             print("⚠️ Ignoring non-dict payload during emit")

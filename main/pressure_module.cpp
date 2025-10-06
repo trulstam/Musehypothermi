@@ -33,14 +33,18 @@ void PressureModule::update() {
       double scale = (rectalTemp - tempMin) / (tempThreshold - tempMin);
       breathsPerMinute = 1.5 * scale * scale;
   } else {
-      breathsPerMinute = map(rectalTemp, tempThreshold, 37.0, 1.5, 150.0);
+      double scale = (rectalTemp - tempThreshold) / (37.0 - tempThreshold);
+      breathsPerMinute = 1.5 + scale * (150.0 - 1.5);
   }
 
   int adcNoiseRaw = analogRead(A4);
-  double noise = map(adcNoiseRaw, 0, 16383, -0.5, 0.5);
+  double noise = ((static_cast<double>(adcNoiseRaw) / 16383.0) * 1.0) - 0.5;
 
   breathsPerMinute += noise;
-  breathsPerMinute = constrain(breathsPerMinute, 0.0, 150.0);
+  if (breathsPerMinute < 0.1) {
+      breathsPerMinute = 0.1;
+  }
+  breathsPerMinute = constrain(breathsPerMinute, 0.1, 150.0);
 }
 
 float PressureModule::getBreathRate() {

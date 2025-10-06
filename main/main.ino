@@ -1,13 +1,13 @@
 #include <Arduino.h>
 #include "comm_api.h"
 #include "task_scheduler.h"
-#include "pid_module.h"
+#include "pid_module_asymmetric.h"  // Changed from pid_module.h
 #include "sensor_module.h"
 #include "pressure_module.h"
 #include "eeprom_manager.h"
 
 // === Eksterne moduler ===
-PIDModule pid;
+AsymmetricPIDModule pid;  // Changed from PIDModule
 SensorModule sensors;
 PressureModule pressure;
 EEPROMManager eeprom;
@@ -39,7 +39,7 @@ void setup() {
     initTasks();
 
     // Send ferdig event til GUI
-    comm.sendEvent("✅ Musehypothermi system initialized");
+    comm.sendEvent("✅ Musehypothermi system initialized with Asymmetric PID");
 }
 
 // === LOOP ===

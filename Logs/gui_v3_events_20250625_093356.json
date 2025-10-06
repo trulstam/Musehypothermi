@@ -1,0 +1,25 @@
+{
+    "metadata": {},
+    "events": [
+        {
+            "timestamp": "2025-06-25 09:34:10",
+            "event": "Connected to COM5"
+        },
+        {
+            "timestamp": "2025-06-25 09:34:29",
+            "event": "Autotune started: step response (21% PWM)"
+        },
+        {
+            "timestamp": "2025-06-25 09:36:15",
+            "event": "Autotune aborted"
+        },
+        {
+            "timestamp": "2025-06-25 09:36:36",
+            "event": "Autotune started: step response (21% PWM)"
+        },
+        {
+            "timestamp": "2025-06-25 09:37:34",
+            "event": "Autotune aborted"
+        }
+    ]
+}

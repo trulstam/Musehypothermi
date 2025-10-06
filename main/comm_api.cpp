@@ -2,7 +2,7 @@
 // File: comm_api.cpp
 
 #include "comm_api.h"
-#include "pid_module.h"
+#include "pid_module_asymmetric.h"  // CHANGED: was "pid_module.h"
 #include "sensor_module.h"
 #include "pressure_module.h"
 #include "eeprom_manager.h"
@@ -11,7 +11,7 @@
 
 #include <ArduinoJson.h>
 
-extern PIDModule pid;
+extern AsymmetricPIDModule pid;  // CHANGED: was PIDModule pid;
 extern SensorModule sensors;
 extern PressureModule pressure;
 extern EEPROMManager eeprom;
@@ -119,7 +119,47 @@ void CommAPI::handleCommand(const String &jsonString) {
             } else {
                 sendResponse("\u274c EEPROM factory reset failed");
             }
+        } else if (action == "set_cooling_pid") {
+            // JsonObject params = cmd["params"];
+            // float kp = params["kp"];
+            // float ki = params["ki"];
+            // float kd = params["kd"];
+            // pid.setCoolingPID(kp, ki, kd);
+            sendResponse("Cooling PID command received (not implemented yet)");
 
+        } else if (action == "set_heating_pid") {
+            // JsonObject params = cmd["params"];
+            // float kp = params["kp"];
+            // float ki = params["ki"];
+            // float kd = params["kd"];
+            // pid.setHeatingPID(kp, ki, kd);
+            sendResponse("Heating PID command received (not implemented yet)");
+
+        } else if (action == "emergency_stop") {
+            // JsonObject params = cmd["params"];
+            // bool enabled = params["enabled"];
+            // pid.setEmergencyStop(enabled);
+            sendResponse("Emergency stop command received (not implemented yet)");
+
+        } else if (action == "set_cooling_rate_limit") {
+            // JsonObject params = cmd["params"];
+            // float rate = params["rate"];
+            // pid.setCoolingRateLimit(rate);
+            sendResponse("Cooling rate limit command received (not implemented yet)");
+
+        } else if (action == "set_safety_margin") {
+            // JsonObject params = cmd["params"];
+            // float margin = params["margin"];
+            // Note: You'll need to add getCurrentDeadband() method to AsymmetricPIDModule
+            sendResponse("Safety margin command received (not implemented yet)");
+
+        } else if (action == "start_asymmetric_autotune") {
+            // pid.startAsymmetricAutotune();
+            sendResponse("Asymmetric autotune command received (not implemented yet)");
+
+        } else if (action == "abort_asymmetric_autotune") {
+            pid.abortAutotune();
+            sendResponse("Asymmetric autotune aborted");
         } else {
             sendResponse("Unknown CMD action");
         }
@@ -289,6 +329,11 @@ void CommAPI::sendStatus() {
     doc["profile_remaining_time"] = profileManager.getRemainingTime();
     doc["autotune_active"] = pid.isAutotuneActive();
     doc["autotune_status"] = pid.getAutotuneStatus();
+    doc["cooling_mode"] = false;  // CHANGED: Temporarily disabled - was pid.isCooling();
+    doc["emergency_stop"] = false;  // Will implement getEmergencyStop() later
+    doc["temperature_rate"] = 0.0;  // Will implement getTemperatureRate() later
+    doc["asymmetric_autotune_active"] = false;  // Will implement later
+    
     serializeJson(doc, *serial);
     serial->println();
 }

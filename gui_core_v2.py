@@ -8,7 +8,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QWidget, QFileDialog, QHBoxLayout,
     QTextEdit, QComboBox, QMessageBox, QGroupBox,
     QFormLayout, QLineEdit, QSplitter, QInputDialog,
-    QProgressBar, QCheckBox, QSpinBox, QGridLayout
+    QProgressBar, QCheckBox, QSpinBox, QGridLayout,
+    QTabWidget, QScrollArea
 )
 from PySide6.QtCore import QTimer, Qt, Signal
 from PySide6.QtGui import QFont, QPalette, QColor
@@ -20,9 +21,12 @@ from profile_loader import ProfileLoader
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Musehypothermi GUI - Status Monitor v2.0")
-        self.setMinimumSize(1400, 900)
-        self.resize(1600, 1000)
+        self.setWindowTitle("Musehypothermi GUI - Status Monitor v2.1")
+        self.setMinimumSize(1200, 700)
+        
+        # Get screen size and adjust window accordingly
+        screen = QApplication.primaryScreen().availableGeometry()
+        self.resize(min(1400, screen.width() - 100), min(900, screen.height() - 100))
 
         # Initialize UI first
         self.init_ui()
@@ -71,181 +75,125 @@ class MainWindow(QMainWindow):
         self.refresh_ports()
 
     def init_ui(self):
-        # Main layout with splitter
-        main_splitter = QSplitter(Qt.Horizontal)
+        # Create main widget with tabs for better organization
+        central_widget = QWidget()
+        self.setCentralWidget(central_widget)
         
-        # Left panel
-        left_widget = self.create_left_panel()
-        left_widget.setMinimumWidth(500)
-        main_splitter.addWidget(left_widget)
+        main_layout = QVBoxLayout()
+        central_widget.setLayout(main_layout)
         
-        # Right panel
-        right_widget = self.create_right_panel()
-        right_widget.setMinimumWidth(350)
-        main_splitter.addWidget(right_widget)
+        # Top bar - always visible
+        top_bar = self.create_top_bar()
+        main_layout.addWidget(top_bar)
         
-        # Set splitter proportions
-        main_splitter.setSizes([700, 450])
+        # Tab widget for main content
+        self.tab_widget = QTabWidget()
+        main_layout.addWidget(self.tab_widget)
         
-        # Graph panel
-        graph_widget = self.create_graph_panel()
+        # Control Tab
+        control_tab = self.create_control_tab()
+        self.tab_widget.addTab(control_tab, "Control")
         
-        # Main container
-        container = QWidget()
-        container_layout = QVBoxLayout()
-        container_layout.addWidget(main_splitter, 2)
-        container_layout.addWidget(graph_widget, 1)
-        container.setLayout(container_layout)
+        # Monitoring Tab
+        monitoring_tab = self.create_monitoring_tab()
+        self.tab_widget.addTab(monitoring_tab, "Monitoring")
         
-        self.setCentralWidget(container)
+        # Profile Tab
+        profile_tab = self.create_profile_tab()
+        self.tab_widget.addTab(profile_tab, "Profile")
 
-    def create_left_panel(self):
-        left_widget = QWidget()
-        left_layout = QVBoxLayout()
-        left_layout.setSpacing(8)
-        left_layout.setContentsMargins(8, 8, 8, 8)
-
-        # TOP ROW: Serial + Status
-        top_row_layout = QHBoxLayout()
-        top_row_layout.setSpacing(10)
+    def create_top_bar(self):
+        """Compact top bar with essential controls"""
+        top_widget = QWidget()
+        top_widget.setMaximumHeight(60)
+        top_layout = QHBoxLayout()
+        top_widget.setLayout(top_layout)
         
-        serial_section = self.create_serial_section()
-        serial_section.setMaximumWidth(250)
-        
-        status_section = self.create_status_section()
-        status_section.setMaximumWidth(300)
-        
-        top_row_layout.addWidget(serial_section)
-        top_row_layout.addWidget(status_section)
-        top_row_layout.addStretch()
-        
-        left_layout.addLayout(top_row_layout)
-        
-        # PID control section
-        pid_section = self.create_pid_section()
-        pid_section.setMinimumHeight(300)
-        left_layout.addWidget(pid_section)
-        
-        # Profile + Emergency
-        bottom_row_layout = QHBoxLayout()
-        bottom_row_layout.setSpacing(10)
-        
-        profile_section = self.create_profile_section()
-        profile_section.setMaximumWidth(300)
-        
-        emergency_section = self.create_emergency_section()
-        emergency_section.setMaximumWidth(250)
-        
-        bottom_row_layout.addWidget(profile_section)
-        bottom_row_layout.addWidget(emergency_section)
-        bottom_row_layout.addStretch()
-        
-        left_layout.addLayout(bottom_row_layout)
-        left_layout.addStretch(1)
-        
-        left_widget.setLayout(left_layout)
-        return left_widget
-
-    def create_serial_section(self):
-        group = QGroupBox("Serial Connection")
-        group.setMaximumHeight(100)
-        layout = QVBoxLayout()
-        layout.setSpacing(5)
-        
-        # Port selection
-        port_layout = QHBoxLayout()
-        port_layout.setSpacing(5)
+        # Serial connection
+        serial_group = QGroupBox("Connection")
+        serial_group.setMaximumWidth(200)
+        serial_layout = QHBoxLayout()
         
         self.portSelector = QComboBox()
-        self.portSelector.setFixedWidth(80)
+        self.portSelector.setFixedWidth(60)
         
         self.refreshButton = QPushButton("↻")
         self.refreshButton.clicked.connect(self.refresh_ports)
-        self.refreshButton.setFixedSize(25, 25)
-        self.refreshButton.setToolTip("Refresh ports")
+        self.refreshButton.setFixedSize(20, 20)
         
         self.connectButton = QPushButton("Connect")
         self.connectButton.clicked.connect(self.toggle_connection)
-        self.connectButton.setFixedWidth(70)
-        self.connectButton.setFixedHeight(25)
+        self.connectButton.setFixedWidth(60)
         
-        port_layout.addWidget(QLabel("Port:"))
-        port_layout.addWidget(self.portSelector)
-        port_layout.addWidget(self.refreshButton)
-        port_layout.addWidget(self.connectButton)
-        port_layout.addStretch()
-        
-        layout.addLayout(port_layout)
+        serial_layout.addWidget(self.portSelector)
+        serial_layout.addWidget(self.refreshButton)
+        serial_layout.addWidget(self.connectButton)
+        serial_group.setLayout(serial_layout)
         
         # Connection status
         self.connectionStatusLabel = QLabel("Disconnected")
-        self.connectionStatusLabel.setStyleSheet("color: red; font-weight: bold; font-size: 11px;")
-        layout.addWidget(self.connectionStatusLabel)
+        self.connectionStatusLabel.setStyleSheet("color: red; font-weight: bold; font-size: 10px;")
         
-        group.setLayout(layout)
-        return group
+        # Key status indicators
+        status_group = QGroupBox("Status")
+        status_layout = QHBoxLayout()
+        
+        self.failsafeIndicator = QLabel("⚪ Safe")
+        self.failsafeIndicator.setStyleSheet("color: green; font-size: 10px;")
+        
+        self.pidStatusIndicator = QLabel("⚪ PID Off")
+        self.pidStatusIndicator.setStyleSheet("color: gray; font-size: 10px;")
+        
+        status_layout.addWidget(self.failsafeIndicator)
+        status_layout.addWidget(QLabel("|"))
+        status_layout.addWidget(self.pidStatusIndicator)
+        status_group.setLayout(status_layout)
+        
+        # Emergency button
+        self.panicButton = QPushButton("PANIC")
+        self.panicButton.setFixedSize(60, 30)
+        self.panicButton.setStyleSheet("""
+            QPushButton {
+                background-color: red; 
+                color: white; 
+                font-weight: bold; 
+                font-size: 10px;
+                border: none;
+                border-radius: 3px;
+            }
+        """)
+        self.panicButton.clicked.connect(self.trigger_panic)
+        
+        top_layout.addWidget(serial_group)
+        top_layout.addWidget(self.connectionStatusLabel)
+        top_layout.addWidget(status_group)
+        top_layout.addStretch()
+        top_layout.addWidget(self.panicButton)
+        
+        return top_widget
 
-    def create_status_section(self):
-        group = QGroupBox("System Status")
-        group.setMaximumHeight(100)
-        layout = QFormLayout()
-        layout.setSpacing(3)
-        layout.setContentsMargins(5, 5, 5, 5)
+    def create_control_tab(self):
+        """Control tab with PID controls and live data"""
+        control_widget = QWidget()
+        control_layout = QHBoxLayout()
+        control_widget.setLayout(control_layout)
         
-        # Status labels
-        self.failsafeLabel = QLabel("Unknown")
-        self.failsafeLabel.setStyleSheet("font-size: 11px;")
+        # Left panel - Controls
+        left_panel = QWidget()
+        left_panel.setMaximumWidth(350)
+        left_layout = QVBoxLayout()
+        left_panel.setLayout(left_layout)
         
-        self.profileStatusLabel = QLabel("Inactive")
-        self.profileStatusLabel.setStyleSheet("font-size: 11px;")
-        
-        self.autotuneStatusLabel = QLabel("Idle")
-        self.autotuneStatusLabel.setStyleSheet("font-size: 11px;")
-        
-        self.maxOutputLabel = QLabel("Unknown")
-        self.maxOutputLabel.setStyleSheet("font-size: 11px;")
-        
-        self.pidParamsLabel = QLabel("Kp: -, Ki: -, Kd: -")
-        self.pidParamsLabel.setStyleSheet("font-size: 10px; font-family: monospace;")
-        
-        layout.addRow("Failsafe:", self.failsafeLabel)
-        layout.addRow("Profile:", self.profileStatusLabel)
-        layout.addRow("Autotune:", self.autotuneStatusLabel)
-        layout.addRow("Max Out:", self.maxOutputLabel)
-        layout.addRow("PID:", self.pidParamsLabel)
-        
-        group.setLayout(layout)
-        return group
-
-    def create_pid_section(self):
-        group = QGroupBox("PID Control")
-        group.setMinimumHeight(280)
-        group.setMaximumHeight(320)
-        layout = QVBoxLayout()
-        layout.setSpacing(5)
-        layout.setContentsMargins(8, 8, 8, 8)
-        
-        # PID Parameters + Target
-        params_target_layout = QHBoxLayout()
-        params_target_layout.setSpacing(10)
-        
-        # PID Parameters
-        pid_params_group = QGroupBox("PID Parameters")
-        pid_params_group.setMaximumWidth(300)
+        # PID Parameters - Compact
+        pid_group = QGroupBox("PID Parameters")
         pid_layout = QGridLayout()
-        pid_layout.setSpacing(5)
         
         self.kpInput = QLineEdit("0.1")
         self.kpInput.setFixedWidth(50)
-        self.kpInput.setFixedHeight(22)
-        
         self.kiInput = QLineEdit("0.01")
         self.kiInput.setFixedWidth(50)
-        self.kiInput.setFixedHeight(22)
-        
         self.kdInput = QLineEdit("0.01")
         self.kdInput.setFixedWidth(50)
-        self.kdInput.setFixedHeight(22)
         
         pid_layout.addWidget(QLabel("Kp:"), 0, 0)
         pid_layout.addWidget(self.kpInput, 0, 1)
@@ -254,349 +202,177 @@ class MainWindow(QMainWindow):
         pid_layout.addWidget(QLabel("Kd:"), 1, 0)
         pid_layout.addWidget(self.kdInput, 1, 1)
         
-        self.setPIDButton = QPushButton("Set")
-        self.setPIDButton.setFixedSize(60, 22)
+        self.setPIDButton = QPushButton("Set PID")
         self.setPIDButton.clicked.connect(self.set_pid_values)
         pid_layout.addWidget(self.setPIDButton, 1, 2, 1, 2)
         
-        pid_params_group.setLayout(pid_layout)
-        params_target_layout.addWidget(pid_params_group)
+        pid_group.setLayout(pid_layout)
+        left_layout.addWidget(pid_group)
         
         # Target Temperature
-        target_group = QGroupBox("Target")
-        target_group.setMaximumWidth(200)
+        target_group = QGroupBox("Target Temperature")
         target_layout = QHBoxLayout()
-        target_layout.setSpacing(5)
         
         self.setpointInput = QLineEdit("37")
         self.setpointInput.setFixedWidth(50)
-        self.setpointInput.setFixedHeight(22)
         
         self.setSetpointButton = QPushButton("Set")
-        self.setSetpointButton.setFixedSize(50, 22)
         self.setSetpointButton.clicked.connect(self.set_manual_setpoint)
         
-        target_layout.addWidget(QLabel("°C:"))
+        target_layout.addWidget(QLabel("Target:"))
         target_layout.addWidget(self.setpointInput)
+        target_layout.addWidget(QLabel("°C"))
         target_layout.addWidget(self.setSetpointButton)
         target_layout.addStretch()
         
         target_group.setLayout(target_layout)
-        params_target_layout.addWidget(target_group)
-        params_target_layout.addStretch()
+        left_layout.addWidget(target_group)
         
-        layout.addLayout(params_target_layout)
-        
-        # PID Control Buttons
-        control_group = QGroupBox("Control")
+        # Control Buttons
+        control_group = QGroupBox("PID Control")
         control_layout = QHBoxLayout()
-        control_layout.setSpacing(8)
         
-        self.startPIDButton = QPushButton("▶ START")
+        self.startPIDButton = QPushButton("START")
         self.startPIDButton.clicked.connect(lambda: self.send_and_log_cmd("pid", "start"))
-        self.startPIDButton.setFixedHeight(35)
-        self.startPIDButton.setFixedWidth(80)
-        self.startPIDButton.setStyleSheet("""
-            QPushButton { 
-                background-color: #4CAF50; 
-                color: white; 
-                font-weight: bold; 
-                border: none;
-                border-radius: 3px;
-            }
-            QPushButton:hover { background-color: #45a049; }
-        """)
+        self.startPIDButton.setStyleSheet("QPushButton { background-color: #4CAF50; color: white; font-weight: bold; }")
         
-        self.stopPIDButton = QPushButton("⏹ STOP")
+        self.stopPIDButton = QPushButton("STOP")
         self.stopPIDButton.clicked.connect(lambda: self.send_and_log_cmd("pid", "stop"))
-        self.stopPIDButton.setFixedHeight(35)
-        self.stopPIDButton.setFixedWidth(80)
-        self.stopPIDButton.setStyleSheet("""
-            QPushButton { 
-                background-color: #f44336; 
-                color: white; 
-                font-weight: bold; 
-                border: none;
-                border-radius: 3px;
-            }
-            QPushButton:hover { background-color: #da190b; }
-        """)
+        self.stopPIDButton.setStyleSheet("QPushButton { background-color: #f44336; color: white; font-weight: bold; }")
         
         control_layout.addWidget(self.startPIDButton)
         control_layout.addWidget(self.stopPIDButton)
-        control_layout.addStretch()
-        
         control_group.setLayout(control_layout)
-        layout.addWidget(control_group)
+        left_layout.addWidget(control_group)
         
-        # Autotune + Advanced
-        bottom_layout = QHBoxLayout()
-        bottom_layout.setSpacing(10)
-        
-        # Autotune
-        autotune_group = QGroupBox("Autotune")
-        autotune_group.setMaximumWidth(200)
-        autotune_layout = QHBoxLayout()
-        autotune_layout.setSpacing(5)
-        
-        self.autotuneButton = QPushButton("Start")
-        self.autotuneButton.clicked.connect(self.start_autotune)
-        self.autotuneButton.setFixedSize(60, 25)
-        
-        self.abortAutotuneButton = QPushButton("Abort")
-        self.abortAutotuneButton.clicked.connect(self.abort_autotune)
-        self.abortAutotuneButton.setVisible(False)
-        self.abortAutotuneButton.setFixedSize(60, 25)
-        self.abortAutotuneButton.setStyleSheet("background-color: orange; font-weight: bold;")
-        
-        autotune_layout.addWidget(self.autotuneButton)
-        autotune_layout.addWidget(self.abortAutotuneButton)
-        autotune_layout.addStretch()
-        
-        autotune_group.setLayout(autotune_layout)
-        bottom_layout.addWidget(autotune_group)
-        
-        # Advanced
+        # Advanced Controls - Collapsible
         advanced_group = QGroupBox("Advanced")
-        advanced_group.setMaximumWidth(250)
         advanced_layout = QHBoxLayout()
-        advanced_layout.setSpacing(5)
         
-        self.setMaxOutputButton = QPushButton("Max")
-        self.setMaxOutputButton.clicked.connect(self.set_max_output_limit)
-        self.setMaxOutputButton.setFixedSize(45, 25)
-        
-        self.saveEEPROMButton = QPushButton("Save")
-        self.saveEEPROMButton.clicked.connect(self.save_pid_to_eeprom)
-        self.saveEEPROMButton.setFixedSize(45, 25)
+        self.autotuneButton = QPushButton("Autotune")
+        self.autotuneButton.clicked.connect(self.start_autotune)
         
         self.fetchPIDButton = QPushButton("Fetch")
         self.fetchPIDButton.clicked.connect(self.fetch_pid_parameters)
-        self.fetchPIDButton.setFixedSize(45, 25)
         
-        advanced_layout.addWidget(self.setMaxOutputButton)
-        advanced_layout.addWidget(self.saveEEPROMButton)
+        self.saveEEPROMButton = QPushButton("Save")
+        self.saveEEPROMButton.clicked.connect(self.save_pid_to_eeprom)
+        
+        self.clearFailsafeButton = QPushButton("Clear FS")
+        self.clearFailsafeButton.clicked.connect(self.clear_failsafe)
+        self.clearFailsafeButton.setStyleSheet("background-color: orange; font-weight: bold;")
+        
+        advanced_layout.addWidget(self.autotuneButton)
         advanced_layout.addWidget(self.fetchPIDButton)
-        advanced_layout.addStretch()
+        advanced_layout.addWidget(self.saveEEPROMButton)
+        advanced_layout.addWidget(self.clearFailsafeButton)
         
         advanced_group.setLayout(advanced_layout)
-        bottom_layout.addWidget(advanced_group)
-        bottom_layout.addStretch()
+        left_layout.addWidget(advanced_group)
         
-        layout.addLayout(bottom_layout)
+        left_layout.addStretch()
         
-        group.setLayout(layout)
-        return group
+        # Right panel - Live Data
+        right_panel = self.create_live_data_panel()
+        
+        control_layout.addWidget(left_panel)
+        control_layout.addWidget(right_panel)
+        
+        return control_widget
 
-    def create_profile_section(self):
-        group = QGroupBox("Profile Control")
-        group.setMaximumHeight(100)
-        layout = QVBoxLayout()
-        layout.setSpacing(5)
+    def create_live_data_panel(self):
+        """Compact live data display"""
+        data_group = QGroupBox("Live Data")
+        data_layout = QGridLayout()
         
-        # Profile loading
-        load_layout = QHBoxLayout()
-        load_layout.setSpacing(5)
-        
-        self.loadProfileButton = QPushButton("Load")
-        self.loadProfileButton.clicked.connect(self.load_profile)
-        self.loadProfileButton.setFixedSize(50, 25)
-        
-        self.profileFileLabel = QLabel("No profile")
-        self.profileFileLabel.setStyleSheet("font-style: italic; color: gray; font-size: 11px;")
-        
-        load_layout.addWidget(self.loadProfileButton)
-        load_layout.addWidget(self.profileFileLabel)
-        load_layout.addStretch()
-        
-        layout.addLayout(load_layout)
-        
-        # Profile control buttons
-        control_layout = QHBoxLayout()
-        control_layout.setSpacing(5)
-        
-        self.startProfileButton = QPushButton("Start")
-        self.startProfileButton.clicked.connect(lambda: self.send_and_log_cmd("profile", "start"))
-        self.startProfileButton.setEnabled(False)
-        self.startProfileButton.setFixedSize(50, 25)
-        
-        self.pauseProfileButton = QPushButton("Pause")
-        self.pauseProfileButton.clicked.connect(lambda: self.send_and_log_cmd("profile", "pause"))
-        self.pauseProfileButton.setEnabled(False)
-        self.pauseProfileButton.setFixedSize(50, 25)
-        
-        self.resumeProfileButton = QPushButton("Resume")
-        self.resumeProfileButton.clicked.connect(lambda: self.send_and_log_cmd("profile", "resume"))
-        self.resumeProfileButton.setEnabled(False)
-        self.resumeProfileButton.setFixedSize(55, 25)
-        
-        self.stopProfileButton = QPushButton("Stop")
-        self.stopProfileButton.clicked.connect(lambda: self.send_and_log_cmd("profile", "stop"))
-        self.stopProfileButton.setEnabled(False)
-        self.stopProfileButton.setFixedSize(50, 25)
-        
-        control_layout.addWidget(self.startProfileButton)
-        control_layout.addWidget(self.pauseProfileButton)
-        control_layout.addWidget(self.resumeProfileButton)
-        control_layout.addWidget(self.stopProfileButton)
-        control_layout.addStretch()
-        
-        layout.addLayout(control_layout)
-        
-        # Progress bar
-        self.profileProgressBar = QProgressBar()
-        self.profileProgressBar.setVisible(False)
-        self.profileProgressBar.setFixedHeight(15)
-        layout.addWidget(self.profileProgressBar)
-        
-        group.setLayout(layout)
-        return group
-
-    def create_emergency_section(self):
-        group = QGroupBox("Emergency")
-        group.setMaximumHeight(100)
-        layout = QVBoxLayout()
-        layout.setSpacing(5)
-        
-        button_layout = QHBoxLayout()
-        button_layout.setSpacing(8)
-        
-        self.panicButton = QPushButton("PANIC")
-        self.panicButton.setFixedSize(80, 40)
-        self.panicButton.setStyleSheet("""
-            QPushButton {
-                background-color: red; 
-                color: white; 
-                font-weight: bold; 
-                font-size: 12px;
-                border: none;
-                border-radius: 5px;
-            }
-            QPushButton:hover {
-                background-color: darkred;
-            }
-        """)
-        self.panicButton.clicked.connect(self.trigger_panic)
-        
-        self.clearFailsafeButton = QPushButton("Clear\nFailsafe")
-        self.clearFailsafeButton.setFixedSize(60, 40)
-        self.clearFailsafeButton.setStyleSheet("""
-            QPushButton {
-                background-color: orange; 
-                font-weight: bold;
-                font-size: 10px;
-                border: none;
-                border-radius: 3px;
-            }
-            QPushButton:hover {
-                background-color: darkorange;
-            }
-        """)
-        self.clearFailsafeButton.clicked.connect(self.clear_failsafe)
-        
-        button_layout.addWidget(self.panicButton)
-        button_layout.addWidget(self.clearFailsafeButton)
-        button_layout.addStretch()
-        
-        layout.addLayout(button_layout)
-        
-        group.setLayout(layout)
-        return group
-
-    def create_right_panel(self):
-        right_widget = QWidget()
-        right_layout = QVBoxLayout()
-        
-        # Live data display
-        data_display_group = QGroupBox("Live Data Values")
-        data_display_layout = QFormLayout()
-        
+        # Temperature displays
         self.plateTempDisplay = QLabel("22.0°C")
-        self.plateTempDisplay.setStyleSheet("font-family: monospace; font-size: 12px; font-weight: bold;")
+        self.plateTempDisplay.setStyleSheet("font-family: monospace; font-size: 14px; font-weight: bold; color: red;")
         
         self.rectalTempDisplay = QLabel("37.0°C")
-        self.rectalTempDisplay.setStyleSheet("font-family: monospace; font-size: 12px; font-weight: bold;")
-        
-        self.pidOutputDisplay = QLabel("0.0")
-        self.pidOutputDisplay.setStyleSheet("font-family: monospace; font-size: 12px; font-weight: bold;")
+        self.rectalTempDisplay.setStyleSheet("font-family: monospace; font-size: 14px; font-weight: bold; color: green;")
         
         self.targetTempDisplay = QLabel("37.0°C")
-        self.targetTempDisplay.setStyleSheet("font-family: monospace; font-size: 12px; font-weight: bold;")
+        self.targetTempDisplay.setStyleSheet("font-family: monospace; font-size: 14px; font-weight: bold; color: blue;")
+        
+        self.pidOutputDisplay = QLabel("0.0")
+        self.pidOutputDisplay.setStyleSheet("font-family: monospace; font-size: 14px; font-weight: bold; color: purple;")
         
         self.breathRateDisplay = QLabel("150 BPM")
-        self.breathRateDisplay.setStyleSheet("font-family: monospace; font-size: 12px; font-weight: bold;")
+        self.breathRateDisplay.setStyleSheet("font-family: monospace; font-size: 14px; font-weight: bold; color: orange;")
         
         self.lastUpdateDisplay = QLabel("Never")
         self.lastUpdateDisplay.setStyleSheet("font-family: monospace; font-size: 10px; color: gray;")
         
-        data_display_layout.addRow("Cooling Plate:", self.plateTempDisplay)
-        data_display_layout.addRow("Rectal Probe:", self.rectalTempDisplay)
-        data_display_layout.addRow("PID Output:", self.pidOutputDisplay)
-        data_display_layout.addRow("Target Temp:", self.targetTempDisplay)
-        data_display_layout.addRow("Breath Rate:", self.breathRateDisplay)
-        data_display_layout.addRow("Last Update:", self.lastUpdateDisplay)
+        # Compact grid layout
+        data_layout.addWidget(QLabel("Cooling Plate:"), 0, 0)
+        data_layout.addWidget(self.plateTempDisplay, 0, 1)
         
-        data_display_group.setLayout(data_display_layout)
-        right_layout.addWidget(data_display_group)
+        data_layout.addWidget(QLabel("Rectal Probe:"), 1, 0)
+        data_layout.addWidget(self.rectalTempDisplay, 1, 1)
         
-        # Event log
-        log_group = QGroupBox("Event Log")
-        log_layout = QVBoxLayout()
+        data_layout.addWidget(QLabel("Target:"), 2, 0)
+        data_layout.addWidget(self.targetTempDisplay, 2, 1)
         
-        self.logBox = QTextEdit()
-        self.logBox.setReadOnly(True)
-        self.logBox.setMaximumHeight(300)
-        self.logBox.setFont(QFont("Courier", 9))
+        data_layout.addWidget(QLabel("PID Output:"), 3, 0)
+        data_layout.addWidget(self.pidOutputDisplay, 3, 1)
         
-        # Log controls
-        log_controls = QHBoxLayout()
-        self.clearLogButton = QPushButton("Clear Log")
-        self.clearLogButton.clicked.connect(lambda: self.logBox.clear())
-        self.clearLogButton.setMaximumWidth(80)
+        data_layout.addWidget(QLabel("Breath Rate:"), 4, 0)
+        data_layout.addWidget(self.breathRateDisplay, 4, 1)
         
-        self.autoScrollCheckbox = QCheckBox("Auto-scroll")
-        self.autoScrollCheckbox.setChecked(True)
+        data_layout.addWidget(QLabel("Last Update:"), 5, 0)
+        data_layout.addWidget(self.lastUpdateDisplay, 5, 1)
         
-        log_controls.addWidget(self.clearLogButton)
-        log_controls.addWidget(self.autoScrollCheckbox)
-        log_controls.addStretch()
+        # System status
+        self.pidParamsLabel = QLabel("Kp: -, Ki: -, Kd: -")
+        self.pidParamsLabel.setStyleSheet("font-size: 10px; font-family: monospace;")
+        data_layout.addWidget(QLabel("PID Params:"), 6, 0)
+        data_layout.addWidget(self.pidParamsLabel, 6, 1)
         
-        log_layout.addLayout(log_controls)
-        log_layout.addWidget(self.logBox)
-        log_group.setLayout(log_layout)
+        self.maxOutputLabel = QLabel("Unknown")
+        self.maxOutputLabel.setStyleSheet("font-size: 10px;")
+        data_layout.addWidget(QLabel("Max Output:"), 7, 0)
+        data_layout.addWidget(self.maxOutputLabel, 7, 1)
         
-        right_layout.addWidget(log_group)
-        right_widget.setLayout(right_layout)
-        return right_widget
+        data_group.setLayout(data_layout)
+        return data_group
 
-    def create_graph_panel(self):
-        graph_group = QGroupBox("Live Data Monitoring")
-        graph_layout = QVBoxLayout()
+    def create_monitoring_tab(self):
+        """Monitoring tab focused on graphs"""
+        monitoring_widget = QWidget()
+        monitoring_layout = QVBoxLayout()
+        monitoring_widget.setLayout(monitoring_layout)
         
-        # Control buttons for graphs
-        graph_control_layout = QHBoxLayout()
+        # Graph controls - compact
+        graph_controls = QHBoxLayout()
         
         self.generateTestDataButton = QPushButton("Generate Test Data")
         self.generateTestDataButton.clicked.connect(self.generate_test_data)
-        self.generateTestDataButton.setFixedHeight(30)
         self.generateTestDataButton.setStyleSheet("QPushButton { background-color: #2196F3; color: white; }")
         
         self.clearGraphsButton = QPushButton("Clear Graphs")
         self.clearGraphsButton.clicked.connect(self.clear_graphs)
-        self.clearGraphsButton.setFixedHeight(30)
         self.clearGraphsButton.setStyleSheet("QPushButton { background-color: #FF9800; color: white; }")
         
-        self.testBasicPlotButton = QPushButton("Test Basic Plot")
+        self.testBasicPlotButton = QPushButton("Test Plot")
         self.testBasicPlotButton.clicked.connect(self.test_basic_plot)
-        self.testBasicPlotButton.setFixedHeight(30)
         self.testBasicPlotButton.setStyleSheet("QPushButton { background-color: #E91E63; color: white; }")
         
-        graph_control_layout.addWidget(self.generateTestDataButton)
-        graph_control_layout.addWidget(self.clearGraphsButton)
-        graph_control_layout.addWidget(self.testBasicPlotButton)
-        graph_control_layout.addStretch()
+        graph_controls.addWidget(self.generateTestDataButton)
+        graph_controls.addWidget(self.clearGraphsButton)
+        graph_controls.addWidget(self.testBasicPlotButton)
+        graph_controls.addStretch()
         
-        # Create graph widgets with visible pens
+        monitoring_layout.addLayout(graph_controls)
+        
+        # Create graphs - optimized for laptop screens
+        self.create_graphs(monitoring_layout)
+        
+        return monitoring_widget
+
+    def create_graphs(self, layout):
+        """Create optimized graphs for laptop screens"""
+        # Temperature graph
         self.tempGraphWidget = pg.PlotWidget(title="Temperatures (°C)")
         self.tempGraphWidget.addLegend()
         self.tempGraphWidget.setLabel('bottom', 'Time (seconds)')
@@ -605,70 +381,167 @@ class MainWindow(QMainWindow):
         self.tempGraphWidget.setYRange(10, 45)
         self.tempGraphWidget.setXRange(0, 60)
         self.tempGraphWidget.setBackground('w')
+        self.tempGraphWidget.setMinimumHeight(200)
         
-        # Temperature plots with thick, visible lines
-        print("Creating temperature plots...")
+        # Temperature plots
         self.temp_plot_plate = self.tempGraphWidget.plot(
-            pen=pg.mkPen(color='r', width=4), 
+            pen=pg.mkPen(color='r', width=3), 
             name="Cooling Plate",
-            symbol='o', symbolSize=5, symbolBrush='r'
+            symbol='o', symbolSize=4, symbolBrush='r'
         )
         
         self.temp_plot_rectal = self.tempGraphWidget.plot(
-            pen=pg.mkPen(color='g', width=4), 
+            pen=pg.mkPen(color='g', width=3), 
             name="Rectal Probe",
-            symbol='s', symbolSize=5, symbolBrush='g'
+            symbol='s', symbolSize=4, symbolBrush='g'
         )
         
         self.temp_plot_target = self.tempGraphWidget.plot(
-            pen=pg.mkPen(color='b', width=3, style=Qt.DashLine), 
+            pen=pg.mkPen(color='b', width=2, style=Qt.DashLine), 
             name="Target"
         )
         
-        self.pidGraphWidget = pg.PlotWidget(title="PID Output")
-        self.pidGraphWidget.addLegend()
-        self.pidGraphWidget.setLabel('bottom', 'Time (seconds)')
-        self.pidGraphWidget.setLabel('left', 'PID Output')
-        self.pidGraphWidget.showGrid(x=True, y=True, alpha=0.3)
-        self.pidGraphWidget.setYRange(-100, 100)
-        self.pidGraphWidget.setXRange(0, 60)
-        self.pidGraphWidget.setBackground('w')
+        # Combined PID and Breath graph for space efficiency
+        self.combinedGraphWidget = pg.PlotWidget(title="PID Output & Breath Rate")
+        self.combinedGraphWidget.addLegend()
+        self.combinedGraphWidget.setLabel('bottom', 'Time (seconds)')
+        self.combinedGraphWidget.setLabel('left', 'Value')
+        self.combinedGraphWidget.showGrid(x=True, y=True, alpha=0.3)
+        self.combinedGraphWidget.setYRange(-50, 200)
+        self.combinedGraphWidget.setXRange(0, 60)
+        self.combinedGraphWidget.setBackground('w')
+        self.combinedGraphWidget.setMinimumHeight(200)
         
-        self.pid_plot = self.pidGraphWidget.plot(
-            pen=pg.mkPen(color='purple', width=4), 
+        self.pid_plot = self.combinedGraphWidget.plot(
+            pen=pg.mkPen(color='purple', width=3), 
             name="PID Output",
-            symbol='t', symbolSize=5, symbolBrush='purple'
+            symbol='t', symbolSize=4, symbolBrush='purple'
         )
         
-        self.breathGraphWidget = pg.PlotWidget(title="Breath Frequency (BPM)")
-        self.breathGraphWidget.addLegend()
-        self.breathGraphWidget.setLabel('bottom', 'Time (seconds)')
-        self.breathGraphWidget.setLabel('left', 'Breaths per Minute')
-        self.breathGraphWidget.showGrid(x=True, y=True, alpha=0.3)
-        self.breathGraphWidget.setYRange(0, 160)
-        self.breathGraphWidget.setXRange(0, 60)
-        self.breathGraphWidget.setBackground('w')
-        
-        self.breath_plot = self.breathGraphWidget.plot(
-            pen=pg.mkPen(color='orange', width=4), 
-            name="Breath Rate",
-            symbol='d', symbolSize=5, symbolBrush='orange'
+        self.breath_plot = self.combinedGraphWidget.plot(
+            pen=pg.mkPen(color='orange', width=3), 
+            name="Breath Rate (BPM)",
+            symbol='d', symbolSize=4, symbolBrush='orange'
         )
         
-        # Set minimum heights for graphs
-        self.tempGraphWidget.setMinimumHeight(200)
-        self.pidGraphWidget.setMinimumHeight(200)
-        self.breathGraphWidget.setMinimumHeight(200)
-        
-        # Add graphs to layout
-        graph_layout.addLayout(graph_control_layout)
-        graph_layout.addWidget(self.tempGraphWidget)
-        graph_layout.addWidget(self.pidGraphWidget)
-        graph_layout.addWidget(self.breathGraphWidget)
-        
-        graph_group.setLayout(graph_layout)
-        return graph_group
+        layout.addWidget(self.tempGraphWidget)
+        layout.addWidget(self.combinedGraphWidget)
 
+    def create_profile_tab(self):
+        """Profile management tab"""
+        profile_widget = QWidget()
+        profile_layout = QVBoxLayout()
+        profile_widget.setLayout(profile_layout)
+        
+        # Profile loading
+        load_group = QGroupBox("Profile Management")
+        load_layout = QHBoxLayout()
+        
+        self.loadProfileButton = QPushButton("Load Profile")
+        self.loadProfileButton.clicked.connect(self.load_profile)
+        
+        self.profileFileLabel = QLabel("No profile loaded")
+        self.profileFileLabel.setStyleSheet("font-style: italic; color: gray;")
+        
+        load_layout.addWidget(self.loadProfileButton)
+        load_layout.addWidget(self.profileFileLabel)
+        load_layout.addStretch()
+        
+        load_group.setLayout(load_layout)
+        profile_layout.addWidget(load_group)
+        
+        # Profile controls
+        control_group = QGroupBox("Profile Control")
+        control_layout = QHBoxLayout()
+        
+        self.startProfileButton = QPushButton("Start")
+        self.startProfileButton.clicked.connect(lambda: self.send_and_log_cmd("profile", "start"))
+        self.startProfileButton.setEnabled(False)
+        
+        self.pauseProfileButton = QPushButton("Pause")
+        self.pauseProfileButton.clicked.connect(lambda: self.send_and_log_cmd("profile", "pause"))
+        self.pauseProfileButton.setEnabled(False)
+        
+        self.resumeProfileButton = QPushButton("Resume")
+        self.resumeProfileButton.clicked.connect(lambda: self.send_and_log_cmd("profile", "resume"))
+        self.resumeProfileButton.setEnabled(False)
+        
+        self.stopProfileButton = QPushButton("Stop")
+        self.stopProfileButton.clicked.connect(lambda: self.send_and_log_cmd("profile", "stop"))
+        self.stopProfileButton.setEnabled(False)
+        
+        control_layout.addWidget(self.startProfileButton)
+        control_layout.addWidget(self.pauseProfileButton)
+        control_layout.addWidget(self.resumeProfileButton)
+        control_layout.addWidget(self.stopProfileButton)
+        control_layout.addStretch()
+        
+        control_group.setLayout(control_layout)
+        profile_layout.addWidget(control_group)
+        
+        # Progress indicator
+        self.profileProgressBar = QProgressBar()
+        self.profileProgressBar.setVisible(False)
+        profile_layout.addWidget(self.profileProgressBar)
+        
+        # Event log in profile tab
+        log_group = QGroupBox("Event Log")
+        log_layout = QVBoxLayout()
+        
+        log_controls = QHBoxLayout()
+        self.clearLogButton = QPushButton("Clear Log")
+        self.clearLogButton.clicked.connect(lambda: self.logBox.clear())
+        
+        self.autoScrollCheckbox = QCheckBox("Auto-scroll")
+        self.autoScrollCheckbox.setChecked(True)
+        
+        log_controls.addWidget(self.clearLogButton)
+        log_controls.addWidget(self.autoScrollCheckbox)
+        log_controls.addStretch()
+        
+        self.logBox = QTextEdit()
+        self.logBox.setReadOnly(True)
+        self.logBox.setMaximumHeight(250)
+        self.logBox.setFont(QFont("Courier", 9))
+        
+        log_layout.addLayout(log_controls)
+        log_layout.addWidget(self.logBox)
+        log_group.setLayout(log_layout)
+        
+        profile_layout.addWidget(log_group)
+        profile_layout.addStretch()
+        
+        return profile_widget
+
+    # Add the abortAutotuneButton for autotune functionality
+    def start_autotune(self):
+        """Start PID autotune"""
+        if not self.serial_manager.is_connected():
+            self.log("❌ Not connected", "error")
+            return
+            
+        # Change button to abort during autotune
+        self.autotuneButton.setText("Abort")
+        self.autotuneButton.clicked.disconnect()
+        self.autotuneButton.clicked.connect(self.abort_autotune)
+        self.autotuneButton.setStyleSheet("background-color: orange; font-weight: bold;")
+        
+        self.send_and_log_cmd("pid", "autotune")
+        self.log("🔧 Starting PID autotune...", "command")
+
+    def abort_autotune(self):
+        """Abort PID autotune"""
+        self.send_and_log_cmd("pid", "abort_autotune")
+        
+        # Reset button
+        self.autotuneButton.setText("Autotune")
+        self.autotuneButton.clicked.disconnect()
+        self.autotuneButton.clicked.connect(self.start_autotune)
+        self.autotuneButton.setStyleSheet("")
+        
+        self.log("⏹ Autotune aborted", "warning")
+
+    # Include all the other methods from the previous implementation
     def test_basic_plot(self):
         """Test absolute basic plotting"""
         try:
@@ -804,10 +677,8 @@ class MainWindow(QMainWindow):
             self.temp_plot_rectal.setData(self.graph_data["time"], self.graph_data["rectal_temp"])
             self.temp_plot_target.setData(self.graph_data["time"], self.graph_data["target_temp"])
             
-            # Update PID graph
+            # Update combined graph
             self.pid_plot.setData(self.graph_data["time"], self.graph_data["pid_output"])
-            
-            # Update breath graph
             self.breath_plot.setData(self.graph_data["time"], self.graph_data["breath_rate"])
             
             # Auto-scale X axis to show last 60 seconds
@@ -815,8 +686,7 @@ class MainWindow(QMainWindow):
                 x_min = self.graph_data["time"][-60]
                 x_max = self.graph_data["time"][-1]
                 self.tempGraphWidget.setXRange(x_min, x_max + 5)
-                self.pidGraphWidget.setXRange(x_min, x_max + 5)
-                self.breathGraphWidget.setXRange(x_min, x_max + 5)
+                self.combinedGraphWidget.setXRange(x_min, x_max + 5)
             
         except Exception as e:
             print(f"❌ Update graphs error: {e}")
@@ -828,7 +698,7 @@ class MainWindow(QMainWindow):
             return
             
         self.serial_manager.sendCMD(action, state)
-        self.event_logger.log_event(f"CMD: {action} → {state}")
+        self.event_logger.log_event(f"CMD: {action} -> {state}")
         self.log(f"🛰️ Sent CMD: {action} = {state}", "command")
 
     def log(self, message, log_type="info"):
@@ -901,30 +771,36 @@ class MainWindow(QMainWindow):
             if "failsafe_active" in data:
                 failsafe = data["failsafe_active"]
                 if failsafe:
-                    self.failsafeLabel.setText("ACTIVE")
-                    self.failsafeLabel.setStyleSheet("color: red; font-weight: bold;")
+                    self.failsafeIndicator.setText("🔴 FAILSAFE")
+                    self.failsafeIndicator.setStyleSheet("color: red; font-weight: bold;")
                 else:
-                    self.failsafeLabel.setText("Clear")
-                    self.failsafeLabel.setStyleSheet("color: green; font-weight: bold;")
+                    self.failsafeIndicator.setText("🟢 Safe")
+                    self.failsafeIndicator.setStyleSheet("color: green; font-weight: bold;")
 
-            if "profile_active" in data:
-                active = data["profile_active"]
-                if active:
-                    self.profileStatusLabel.setText("Running")
-                    self.profileStatusLabel.setStyleSheet("color: green; font-weight: bold;")
+            # Update PID status in top bar
+            if "pid_output" in data:
+                output = data["pid_output"]
+                if abs(output) > 0.1:
+                    self.pidStatusIndicator.setText("🟢 PID On")
+                    self.pidStatusIndicator.setStyleSheet("color: green; font-weight: bold;")
                 else:
-                    self.profileStatusLabel.setText("Inactive")
-                    self.profileStatusLabel.setStyleSheet("color: gray;")
+                    self.pidStatusIndicator.setText("⚪ PID Off")
+                    self.pidStatusIndicator.setStyleSheet("color: gray;")
 
             if "autotune_active" in data:
                 is_active = data["autotune_active"]
-                self.abortAutotuneButton.setVisible(is_active)
-                if is_active:
-                    self.autotuneStatusLabel.setText("Running")
-                    self.autotuneStatusLabel.setStyleSheet("color: orange; font-weight: bold;")
-                else:
-                    self.autotuneStatusLabel.setText("Idle")
-                    self.autotuneStatusLabel.setStyleSheet("color: gray;")
+                if is_active and self.autotuneButton.text() == "Autotune":
+                    # Switch to abort mode
+                    self.autotuneButton.setText("Abort")
+                    self.autotuneButton.clicked.disconnect()
+                    self.autotuneButton.clicked.connect(self.abort_autotune)
+                    self.autotuneButton.setStyleSheet("background-color: orange; font-weight: bold;")
+                elif not is_active and self.autotuneButton.text() == "Abort":
+                    # Switch back to start mode
+                    self.autotuneButton.setText("Autotune")
+                    self.autotuneButton.clicked.disconnect()
+                    self.autotuneButton.clicked.connect(self.start_autotune)
+                    self.autotuneButton.setStyleSheet("")
 
             if "pid_max_output" in data:
                 max_output = data["pid_max_output"]
@@ -974,21 +850,6 @@ class MainWindow(QMainWindow):
         self.serial_manager.sendCMD("get", "pid_params")
         self.log("🔄 Fetching PID parameters...", "command")
 
-    def start_autotune(self):
-        """Start PID autotune"""
-        if not self.serial_manager.is_connected():
-            self.log("❌ Not connected", "error")
-            return
-            
-        self.send_and_log_cmd("pid", "autotune")
-        self.log("🔧 Starting PID autotune...", "command")
-
-    def abort_autotune(self):
-        """Abort PID autotune"""
-        self.send_and_log_cmd("pid", "abort_autotune")
-        self.abortAutotuneButton.setVisible(False)
-        self.log("⏹ Autotune aborted", "warning")
-
     def set_max_output_limit(self):
         """Set maximum PID output limit"""
         value, ok = QInputDialog.getDouble(
@@ -998,7 +859,7 @@ class MainWindow(QMainWindow):
         )
         if ok:
             self.serial_manager.sendSET("pid_max_output", value)
-            self.event_logger.log_event(f"SET: pid_max_output → {value:.1f}%")
+            self.event_logger.log_event(f"SET: pid_max_output -> {value:.1f}%")
             self.log(f"⚙️ Max output limit set to {value:.1f}%", "command")
 
     def save_pid_to_eeprom(self):
@@ -1026,7 +887,7 @@ class MainWindow(QMainWindow):
             self.serial_manager.sendSET("pid_ki", ki)
             self.serial_manager.sendSET("pid_kd", kd)
             
-            self.event_logger.log_event(f"SET: PID → Kp={kp}, Ki={ki}, Kd={kd}")
+            self.event_logger.log_event(f"SET: PID -> Kp={kp}, Ki={ki}, Kd={kd}")
             self.log(f"✅ Set PID: Kp={kp}, Ki={ki}, Kd={kd}", "success")
             
         except ValueError:
@@ -1043,7 +904,7 @@ class MainWindow(QMainWindow):
                 return
                 
             self.serial_manager.sendSET("target_temp", value)
-            self.event_logger.log_event(f"SET: target_temp → {value:.2f} °C")
+            self.event_logger.log_event(f"SET: target_temp -> {value:.2f} C")
             self.log(f"✅ Manual setpoint set to {value:.2f} °C", "success")
             
         except ValueError:
@@ -1121,7 +982,7 @@ class MainWindow(QMainWindow):
             self.serial_manager.disconnect()
             self.connectButton.setText("Connect")
             self.connectionStatusLabel.setText("Disconnected")
-            self.connectionStatusLabel.setStyleSheet("color: red; font-weight: bold; font-size: 11px;")
+            self.connectionStatusLabel.setStyleSheet("color: red; font-weight: bold; font-size: 10px;")
             self.log("🔌 Disconnected", "info")
             self.event_logger.log_event("Disconnected")
             self.connection_established = False
@@ -1134,7 +995,7 @@ class MainWindow(QMainWindow):
             if self.serial_manager.connect(port):
                 self.connectButton.setText("Disconnect")
                 self.connectionStatusLabel.setText(f"Connected to {port}")
-                self.connectionStatusLabel.setStyleSheet("color: green; font-weight: bold; font-size: 11px;")
+                self.connectionStatusLabel.setStyleSheet("color: green; font-weight: bold; font-size: 10px;")
                 self.log(f"🔌 Connected to {port}", "success")
                 self.event_logger.log_event(f"Connected to {port}")
                 self.connection_established = True

@@ -1,12 +1,12 @@
 #include "profile_manager.h"
-#include "pid_module.h"
+#include "pid_module_asymmetric.h"
 #include "sensor_module.h"
 #include "task_scheduler.h"
 
 // 👉🏻 Opprett den globale instansen av ProfileManager
 ProfileManager profileManager;
 
-extern PIDModule pid;
+extern AsymmetricPIDModule pid;
 extern SensorModule sensors;
 
 ProfileManager::ProfileManager() 

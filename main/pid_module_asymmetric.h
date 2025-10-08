@@ -42,18 +42,24 @@ public:
     
     // Safety controls
     void setEmergencyStop(bool enabled);
-    void setCoolingRateLimit(float maxCoolingRatePerSecond);
+    void setCoolingRateLimit(float maxCoolingRatePerSecond, bool persist = true);
     
     // PID parameter management
-    void setCoolingPID(float kp, float ki, float kd);
-    void setHeatingPID(float kp, float ki, float kd);
-    void setOutputLimits(float coolingLimit, float heatingLimit);
-    void setSafetyParams(float deadband, float safetyMargin);
+    void setCoolingPID(float kp, float ki, float kd, bool persist = true);
+    void setHeatingPID(float kp, float ki, float kd, bool persist = true);
+    void setOutputLimits(float coolingLimit, float heatingLimit, bool persist = true);
+    void setSafetyParams(float deadband, float safetyMargin, bool persist = true);
     
     // Getters for compatibility with original PIDModule
     float getKp();
-    float getKi(); 
+    float getKi();
     float getKd();
+    float getHeatingKp() const { return currentParams.kp_heating; }
+    float getHeatingKi() const { return currentParams.ki_heating; }
+    float getHeatingKd() const { return currentParams.kd_heating; }
+    float getCoolingKp() const { return currentParams.kp_cooling; }
+    float getCoolingKi() const { return currentParams.ki_cooling; }
+    float getCoolingKd() const { return currentParams.kd_cooling; }
     float getTargetTemp() { return Setpoint; }
     float getActivePlateTarget() { return Setpoint; }
     float getMaxOutputPercent();
@@ -64,14 +70,20 @@ public:
     bool isEmergencyStop() { return emergencyStop; }
     float getTemperatureRate() { return temperatureRate; }
     float getCurrentDeadband() { return currentParams.deadband; }
-    
+    float getCoolingRateLimit() const { return maxCoolingRate; }
+    float getSafetyMargin() const { return currentParams.safety_margin; }
+    float getHeatingOutputLimit() const { return currentParams.heating_limit; }
+    float getCoolingOutputLimit() const {
+        return currentParams.cooling_limit < 0 ? -currentParams.cooling_limit : currentParams.cooling_limit;
+    }
+
     // Compatibility setters
     void setTargetTemp(float value) { Setpoint = value; }
     void setKp(float value);
-    void setKi(float value); 
+    void setKi(float value);
     void setKd(float value);
-    void setMaxOutputPercent(float percent);
-    
+    void setMaxOutputPercent(float percent, bool persist = true);
+
     // Autotune functionality
     void startAutotune();  // Standard autotune for compatibility
     void startAsymmetricAutotune();

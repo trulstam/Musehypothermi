@@ -90,6 +90,8 @@ AsymmetricPIDModule::AsymmetricPIDModule()
       lastTemperature(0.0), temperatureRate(0.0),
       outputSmoothingFactor(kOutputSmoothingFactor), lastOutput(0.0),
       eeprom(nullptr) {
+
+    // Initialize default parameters
     currentParams.kp_cooling = kDefaultCoolingKp;
     currentParams.ki_cooling = kDefaultCoolingKi;
     currentParams.kd_cooling = kDefaultCoolingKd;
@@ -106,6 +108,7 @@ void AsymmetricPIDModule::begin(EEPROMManager &eepromManager) {
     eeprom = &eepromManager;
     loadAsymmetricParams();
 
+    // Configure both PID controllers
     coolingPID.SetSampleTime(kSampleTimeMs);
     heatingPID.SetSampleTime(kSampleTimeMs);
 
@@ -117,7 +120,7 @@ void AsymmetricPIDModule::begin(EEPROMManager &eepromManager) {
     comm.sendEvent("🔧 Asymmetric PID controller ready");
 }
 
-void AsymmetricPIDModule::update(double currentTemp) {
+void AsymmetricPIDModule::update(double /*currentTemp*/) {
     if (emergencyStop || isFailsafeActive()) {
         stop();
         return;
@@ -259,11 +262,13 @@ void AsymmetricPIDModule::applyRateLimiting() {
 }
 
 void AsymmetricPIDModule::applyOutputSmoothing() {
+    // Smooth output changes to prevent sudden jumps
     finalOutput = (outputSmoothingFactor * lastOutput) +
                   ((1.0 - outputSmoothingFactor) * rawPIDOutput);
     lastOutput = finalOutput;
 }
 
+// --- Compatibility-style getters (preserve existing API) ---
 float AsymmetricPIDModule::getKp() {
     return coolingMode ? currentParams.kp_cooling : currentParams.kp_heating;
 }

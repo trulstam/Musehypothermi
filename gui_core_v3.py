@@ -163,30 +163,30 @@ class AsymmetricPIDControls(QWidget):
 
         safety_layout.addWidget(QLabel("Max Temperature Change:"), 1, 0)
         self.cooling_rate_input = QLineEdit("1.5")
-        self.cooling_rate_input.setMinimumWidth(90)
+        self.cooling_rate_input.setFixedWidth(70)
         safety_layout.addWidget(self.cooling_rate_input, 1, 1)
         safety_layout.addWidget(QLabel("°C/s"), 1, 2)
 
         self.set_rate_limit_button = QPushButton("Set")
         self.set_rate_limit_button.clicked.connect(self.set_cooling_rate_limit)
-        self.set_rate_limit_button.setFixedWidth(60)
+        self.set_rate_limit_button.setFixedWidth(45)
         safety_layout.addWidget(self.set_rate_limit_button, 1, 3)
 
         safety_layout.addWidget(QLabel("Deadband:"), 2, 0)
         self.deadband_input = QLineEdit("0.5")
-        self.deadband_input.setMinimumWidth(90)
+        self.deadband_input.setFixedWidth(70)
         safety_layout.addWidget(self.deadband_input, 2, 1)
         safety_layout.addWidget(QLabel("°C"), 2, 2)
 
         safety_layout.addWidget(QLabel("Safety Margin:"), 3, 0)
         self.safety_margin_input = QLineEdit("1.5")
-        self.safety_margin_input.setMinimumWidth(90)
+        self.safety_margin_input.setFixedWidth(70)
         safety_layout.addWidget(self.safety_margin_input, 3, 1)
         safety_layout.addWidget(QLabel("°C"), 3, 2)
 
         self.set_safety_params_button = QPushButton("Update")
         self.set_safety_params_button.clicked.connect(self.set_safety_params)
-        self.set_safety_params_button.setFixedWidth(80)
+        self.set_safety_params_button.setFixedWidth(65)
         safety_layout.addWidget(self.set_safety_params_button, 3, 3)
 
         safety_group.setLayout(safety_layout)
@@ -947,8 +947,32 @@ class MainWindow(QMainWindow):
         conn_layout.addLayout(emergency_row)
         conn_group.setLayout(conn_layout)
         layout.addWidget(conn_group)
-
-        # PID CONTROL (moved directly under serial connection)
+        
+        # ASYMMETRIC PID CONTROLS
+        self.asymmetric_controls = AsymmetricPIDControls(self)
+        layout.addWidget(self.asymmetric_controls)
+        
+        # TARGET TEMPERATURE
+        target_group = QGroupBox("🎯 Target Temperature")
+        target_layout = QHBoxLayout()
+        
+        self.setpointInput = QLineEdit("37.0")
+        self.setpointInput.setFixedWidth(60)
+        
+        self.setSetpointButton = QPushButton("Set Target")
+        self.setSetpointButton.clicked.connect(self.set_manual_setpoint)
+        self.setSetpointButton.setStyleSheet("background-color: #28a745; color: white; font-weight: bold;")
+        
+        target_layout.addWidget(QLabel("Target:"))
+        target_layout.addWidget(self.setpointInput)
+        target_layout.addWidget(QLabel("°C"))
+        target_layout.addWidget(self.setSetpointButton)
+        target_layout.addStretch()
+        
+        target_group.setLayout(target_layout)
+        layout.addWidget(target_group)
+        
+        # PID CONTROL
         control_group = QGroupBox("🚀 PID Control")
         control_layout = QHBoxLayout()
 
@@ -994,11 +1018,40 @@ class MainWindow(QMainWindow):
         control_layout.addWidget(self.stopPIDButton)
         control_group.setLayout(control_layout)
         layout.addWidget(control_group)
+        
+        # ADVANCED CONTROLS
+        advanced_group = QGroupBox("System Utilities")
+        advanced_layout = QGridLayout()
 
-        # ASYMMETRIC PID CONTROLS
-        self.asymmetric_controls = AsymmetricPIDControls(self)
-        layout.addWidget(self.asymmetric_controls)
+        self.refreshPidButton = QPushButton("Refresh PID")
+        self.refreshPidButton.clicked.connect(self.refresh_pid_from_device)
 
+        self.applyBothPidButton = QPushButton("Apply PID")
+        self.applyBothPidButton.clicked.connect(self.asymmetric_controls.apply_both_pid)
+
+        self.setMaxOutputButton = QPushButton("Max Output")
+        self.setMaxOutputButton.clicked.connect(self.set_max_output_limit)
+
+        self.saveEEPROMButton = QPushButton("Save EEPROM")
+        self.saveEEPROMButton.clicked.connect(self.save_pid_to_eeprom)
+
+        self.requestStatusButton = QPushButton("Refresh Status")
+        self.requestStatusButton.clicked.connect(self.request_status)
+
+        self.clearFailsafeButton = QPushButton("Clear FS")
+        self.clearFailsafeButton.clicked.connect(self.clear_failsafe)
+        self.clearFailsafeButton.setStyleSheet("background-color: #fd7e14; color: white; font-weight: bold;")
+
+        advanced_layout.addWidget(self.refreshPidButton, 0, 0)
+        advanced_layout.addWidget(self.applyBothPidButton, 0, 1)
+        advanced_layout.addWidget(self.setMaxOutputButton, 1, 0)
+        advanced_layout.addWidget(self.saveEEPROMButton, 1, 1)
+        advanced_layout.addWidget(self.requestStatusButton, 2, 0)
+        advanced_layout.addWidget(self.clearFailsafeButton, 2, 1)
+
+        advanced_group.setLayout(advanced_layout)
+        layout.addWidget(advanced_group)
+        
         layout.addStretch()
         return panel
 

@@ -2,11 +2,11 @@
     "metadata": {},
     "events": [
         {
-            "timestamp": "2025-10-08 10:12:08",
+            "timestamp": "2025-10-08 10:48:31",
             "event": "Connected to COM5"
         },
         {
-            "timestamp": "2025-10-08 10:12:08",
+            "timestamp": "2025-10-08 10:48:31",
             "event": "\u2705 Failsafe cleared after heartbeat recovery"
         }
     ]

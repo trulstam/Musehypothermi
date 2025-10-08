@@ -1,0 +1,16 @@
+timestamp,event
+2025-10-08 12:21:02,Connected to COM5
+2025-10-08 12:21:02,✅ Failsafe cleared after heartbeat recovery
+2025-10-08 12:21:21,"SET: PID → Kp=2.0, Ki=2.0, Kd=2.0"
+2025-10-08 12:21:21,🔥 Heating PID parameters updated
+2025-10-08 12:21:21,🔥 Heating PID parameters updated
+2025-10-08 12:21:21,🔥 Heating PID parameters updated
+2025-10-08 12:21:23,CMD: save_eeprom
+2025-10-08 12:21:32,"SET: PID → Kp=2.0, Ki=1.0, Kd=1.0"
+2025-10-08 12:21:32,🔥 Heating PID parameters updated
+2025-10-08 12:21:32,🔥 Heating PID parameters updated
+2025-10-08 12:21:32,🔥 Heating PID parameters updated
+2025-10-08 12:21:34,CMD: save_eeprom
+2025-10-08 12:21:57,SET: target_temp → 25.00°C
+2025-10-08 12:22:01,CMD: pid → start
+2025-10-08 12:22:01,🚀 Asymmetric PID started

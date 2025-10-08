@@ -13,7 +13,7 @@ class EventLogger:
 
         # CSV setup
         self.filename_csv = os.path.join(directory, f"{filename_prefix}_{timestamp}.csv")
-        self.csv_file = open(self.filename_csv, "w", newline="")
+        self.csv_file = open(self.filename_csv, "w", newline="", encoding="utf-8")
         self.csv_writer = csv.writer(self.csv_file)
 
         if metadata:
@@ -54,7 +54,7 @@ class EventLogger:
     def flush_json(self):
         """Write JSON buffer to file."""
         try:
-            with open(self.filename_json, "w") as file:
+            with open(self.filename_json, "w", encoding="utf-8") as file:
                 json.dump(self.json_content, file, indent=4)
         except Exception as e:
             print(f"❌ Failed to flush JSON log: {e}")

@@ -433,6 +433,12 @@ void AsymmetricPIDModule::abortAutotune() {
 void AsymmetricPIDModule::saveAsymmetricParams() {
     if (!eeprom) {
         return;
+    // Save both heating and cooling parameters to EEPROM
+    // Basic implementation - store in existing EEPROM slots for now
+    if (eeprom) {
+        eeprom->savePIDParams(currentParams.kp_heating,
+                             currentParams.ki_heating,
+                             currentParams.kd_heating);
     }
 
     eeprom->saveHeatingPIDParams(currentParams.kp_heating,
@@ -476,6 +482,29 @@ void AsymmetricPIDModule::loadAsymmetricParams() {
         currentParams.kp_cooling = coolingKp;
         currentParams.ki_cooling = coolingKi;
         currentParams.kd_cooling = coolingKd;
+        float kp, ki, kd;
+        eeprom->loadPIDParams(kp, ki, kd);
+
+        if (shouldRestorePidDefaults(kp, ki, kd)) {
+            kp = kDefaultHeatingKp;
+            ki = kDefaultHeatingKi;
+            kd = kDefaultHeatingKd;
+            eeprom->savePIDParams(kp, ki, kd);
+            restoredDefaults = true;
+        }
+
+        currentParams.kp_heating = kp;
+        currentParams.ki_heating = ki;
+        currentParams.kd_heating = kd;
+
+        // Cooling PID defaults stay conservative unless explicitly tuned later
+        if (shouldRestorePidDefaults(currentParams.kp_cooling,
+                                     currentParams.ki_cooling,
+                                     currentParams.kd_cooling)) {
+            currentParams.kp_cooling = kDefaultCoolingKp;
+            currentParams.ki_cooling = kDefaultCoolingKi;
+            currentParams.kd_cooling = kDefaultCoolingKd;
+        }
 
         heatingPID.SetTunings(currentParams.kp_heating,
                               currentParams.ki_heating,
@@ -528,6 +557,7 @@ void AsymmetricPIDModule::loadAsymmetricParams() {
             restoredDefaults = true;
         }
         currentParams.safety_margin = storedMargin;
+        setMaxOutputPercent(maxOutput);
     } else {
         // If EEPROM manager unavailable, ensure sane runtime defaults
         heatingPID.SetTunings(currentParams.kp_heating,
@@ -541,6 +571,7 @@ void AsymmetricPIDModule::loadAsymmetricParams() {
         maxCoolingRate = 2.0f;
         currentParams.deadband = 0.5f;
         currentParams.safety_margin = 2.0f;
+        setMaxOutputPercent(kDefaultMaxOutputPercent);
     }
 
     if (restoredDefaults) {

@@ -406,9 +406,9 @@ class MatplotlibGraphWidget(QWidget):
     def setup_plots(self):
         """Create matplotlib figure with optimized settings"""
         try:
-            self.figure = Figure(figsize=(12, 8), facecolor='white', tight_layout=True)
+            self.figure = Figure(figsize=(12, 8), facecolor='white', constrained_layout=True)
             self.canvas = FigureCanvas(self.figure)
-            
+
             # Create subplots
             gs = self.figure.add_gridspec(3, 1, height_ratios=[2, 1, 1], hspace=0.3)
             

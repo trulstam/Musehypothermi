@@ -1081,40 +1081,6 @@ class MainWindow(QMainWindow):
         control_layout.addWidget(self.stopPIDButton)
         control_group.setLayout(control_layout)
         layout.addWidget(control_group)
-        
-        # ADVANCED CONTROLS
-        advanced_group = QGroupBox("System Utilities")
-        advanced_layout = QGridLayout()
-
-        self.refreshPidButton = QPushButton("Refresh PID")
-        self.refreshPidButton.clicked.connect(self.refresh_pid_from_device)
-
-        self.applyBothPidButton = QPushButton("Apply PID")
-        self.applyBothPidButton.clicked.connect(self.asymmetric_controls.apply_both_pid)
-
-        self.setMaxOutputButton = QPushButton("Max Output")
-        self.setMaxOutputButton.clicked.connect(self.set_max_output_limit)
-
-        self.saveEEPROMButton = QPushButton("Save EEPROM")
-        self.saveEEPROMButton.clicked.connect(self.save_pid_to_eeprom)
-
-        self.requestStatusButton = QPushButton("Refresh Status")
-        self.requestStatusButton.clicked.connect(self.request_status)
-
-        self.clearFailsafeButton = QPushButton("Clear FS")
-        self.clearFailsafeButton.clicked.connect(self.clear_failsafe)
-        self.clearFailsafeButton.setStyleSheet("background-color: #fd7e14; color: white; font-weight: bold;")
-
-        advanced_layout.addWidget(self.refreshPidButton, 0, 0)
-        advanced_layout.addWidget(self.applyBothPidButton, 0, 1)
-        advanced_layout.addWidget(self.setMaxOutputButton, 1, 0)
-        advanced_layout.addWidget(self.saveEEPROMButton, 1, 1)
-        advanced_layout.addWidget(self.requestStatusButton, 2, 0)
-        advanced_layout.addWidget(self.clearFailsafeButton, 2, 1)
-
-        advanced_group.setLayout(advanced_layout)
-        layout.addWidget(advanced_group)
-        
         layout.addStretch()
         return panel
 
@@ -1240,7 +1206,6 @@ class MainWindow(QMainWindow):
         params_layout = QFormLayout()
 
         self.pidParamsLabel = QLabel("Heating: - | Cooling: -")
-        self.pidParamsLabel = QLabel("Kp: -, Ki: -, Kd: -")
         self.pidParamsLabel.setStyleSheet("font-family: 'Courier New'; font-size: 11px;")
         self.pidParamsLabel.setWordWrap(True)
         self.pidParamsLabel.setMinimumWidth(260)

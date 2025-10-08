@@ -329,10 +329,6 @@ void AsymmetricPIDModule::setOutputLimits(float coolingLimit, float heatingLimit
     heatingPID.SetOutputLimits(0.0, currentParams.heating_limit);
 
     if (persist) {
-        if (eeprom) {
-            eeprom->saveCoolingMaxOutput(constrainedCooling);
-            eeprom->saveHeatingMaxOutput(constrainedHeating);
-        }
         saveAsymmetricParams();
     }
 }
@@ -469,11 +465,20 @@ void AsymmetricPIDModule::saveAsymmetricParams() {
     eeprom->saveCoolingPIDParams(currentParams.kp_cooling,
                                  currentParams.ki_cooling,
                                  currentParams.kd_cooling);
-    eeprom->saveHeatingMaxOutput(fabs(currentParams.heating_limit));
-    eeprom->saveCoolingMaxOutput(fabs(currentParams.cooling_limit));
-    eeprom->saveCoolingRateLimit(maxCoolingRate);
-    eeprom->saveDeadband(currentParams.deadband);
-    eeprom->saveSafetyMargin(currentParams.safety_margin);
+
+    EEPROMManager::OutputLimits limits{
+        fabs(currentParams.heating_limit),
+        fabs(currentParams.cooling_limit),
+    };
+    eeprom->saveOutputLimits(limits);
+
+    EEPROMManager::SafetySettings safety{
+        maxCoolingRate,
+        currentParams.deadband,
+        currentParams.safety_margin,
+    };
+    eeprom->saveSafetySettings(safety);
+
     eeprom->saveTargetTemp(Setpoint);
 }
 

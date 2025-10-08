@@ -487,10 +487,19 @@ void CommAPI::saveAllToEEPROM() {
     eeprom.saveHeatingPIDParams(pid.getHeatingKp(), pid.getHeatingKi(), pid.getHeatingKd());
     eeprom.saveCoolingPIDParams(pid.getCoolingKp(), pid.getCoolingKi(), pid.getCoolingKd());
     eeprom.saveTargetTemp(pid.getTargetTemp());
-    eeprom.saveMaxOutput(pid.getMaxOutputPercent());
-    eeprom.saveCoolingRateLimit(pid.getCoolingRateLimit());
-    eeprom.saveDeadband(pid.getCurrentDeadband());
-    eeprom.saveSafetyMargin(pid.getSafetyMargin());
+
+    EEPROMManager::OutputLimits limits{
+        pid.getHeatingOutputLimit(),
+        pid.getCoolingOutputLimit(),
+    };
+    eeprom.saveOutputLimits(limits);
+
+    EEPROMManager::SafetySettings safety{
+        pid.getCoolingRateLimit(),
+        pid.getCurrentDeadband(),
+        pid.getSafetyMargin(),
+    };
+    eeprom.saveSafetySettings(safety);
     int debugLevel = pid.isDebugEnabled() ? 1 : 0;
     eeprom.saveDebugLevel(debugLevel);
     eeprom.saveFailsafeTimeout(heartbeatTimeoutMs);

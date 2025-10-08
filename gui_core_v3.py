@@ -51,7 +51,7 @@ class AsymmetricPIDControls(QWidget):
         layout = QVBoxLayout()
 
         # Mode indicator
-        self.mode_indicator = QLabel("HEATING MODE")
+        self.mode_indicator = QLabel("REGULATION MODE - HEATING")
         self.mode_indicator.setStyleSheet("""
             QLabel {
                 background-color: #ff6b35;
@@ -62,6 +62,7 @@ class AsymmetricPIDControls(QWidget):
                 text-align: center;
             }
         """)
+        self.mode_indicator.setAlignment(Qt.AlignCenter)
         layout.addWidget(self.mode_indicator)
 
         # PID parameter groups
@@ -72,8 +73,11 @@ class AsymmetricPIDControls(QWidget):
         cooling_layout = QGridLayout()
 
         self.kp_cooling_input = QLineEdit("0.8")
+        self.kp_cooling_input.setMinimumWidth(90)
         self.ki_cooling_input = QLineEdit("0.02")
+        self.ki_cooling_input.setMinimumWidth(90)
         self.kd_cooling_input = QLineEdit("3.0")
+        self.kd_cooling_input.setMinimumWidth(90)
 
         cooling_layout.addWidget(QLabel("Kp"), 0, 0)
         cooling_layout.addWidget(self.kp_cooling_input, 0, 1)
@@ -97,8 +101,11 @@ class AsymmetricPIDControls(QWidget):
         heating_layout = QGridLayout()
 
         self.kp_heating_input = QLineEdit("2.5")
+        self.kp_heating_input.setMinimumWidth(90)
         self.ki_heating_input = QLineEdit("0.2")
+        self.ki_heating_input.setMinimumWidth(90)
         self.kd_heating_input = QLineEdit("1.2")
+        self.kd_heating_input.setMinimumWidth(90)
 
         heating_layout.addWidget(QLabel("Kp"), 0, 0)
         heating_layout.addWidget(self.kp_heating_input, 0, 1)
@@ -188,10 +195,13 @@ class AsymmetricPIDControls(QWidget):
         # Status display
         status_group = QGroupBox("System Status")
         status_layout = QGridLayout()
-        
-        self.current_mode_label = QLabel("Mode: Unknown")
-        self.temperature_rate_label = QLabel("Rate: 0.00 °C/s")
-        self.emergency_status_label = QLabel("Emergency: Clear")
+
+        self.current_mode_label = QLabel("Unknown")
+        self.current_mode_label.setStyleSheet("color: #6c757d; font-weight: bold;")
+        self.temperature_rate_label = QLabel("0.000 °C/s")
+        self.temperature_rate_label.setStyleSheet("color: #28a745; font-weight: bold;")
+        self.emergency_status_label = QLabel("✅ Clear")
+        self.emergency_status_label.setStyleSheet("color: #28a745; font-weight: bold;")
         
         status_layout.addWidget(QLabel("Current Mode:"), 0, 0)
         status_layout.addWidget(self.current_mode_label, 0, 1)
@@ -204,6 +214,10 @@ class AsymmetricPIDControls(QWidget):
         
         status_group.setLayout(status_layout)
         layout.addWidget(status_group)
+        self.status_group = status_group
+        self.external_mode_label: Optional[QLabel] = None
+        self.external_rate_label: Optional[QLabel] = None
+        self.external_emergency_label: Optional[QLabel] = None
         
         # Asymmetric Autotune
         autotune_group = QGroupBox("🎯 Asymmetric Autotune")
@@ -230,14 +244,36 @@ class AsymmetricPIDControls(QWidget):
         
         layout.addStretch()
         self.setLayout(layout)
-    
+
+    def register_status_labels(
+        self,
+        mode_label: QLabel,
+        rate_label: QLabel,
+        emergency_label: QLabel,
+    ):
+        """Expose shared status labels so the main panel can mirror updates."""
+        self.external_mode_label = mode_label
+        self.external_rate_label = rate_label
+        self.external_emergency_label = emergency_label
+
+        # Prime external mirrors with the current values
+        if self.current_mode_label and self.external_mode_label:
+            self.external_mode_label.setText(self.current_mode_label.text())
+            self.external_mode_label.setStyleSheet(self.current_mode_label.styleSheet())
+        if self.temperature_rate_label and self.external_rate_label:
+            self.external_rate_label.setText(self.temperature_rate_label.text())
+            self.external_rate_label.setStyleSheet(self.temperature_rate_label.styleSheet())
+        if self.emergency_status_label and self.external_emergency_label:
+            self.external_emergency_label.setText(self.emergency_status_label.text())
+            self.external_emergency_label.setStyleSheet(self.emergency_status_label.styleSheet())
+
     def update_status(self, data):
         """Update status displays from Arduino data"""
         try:
             # Update mode indicator
             if "cooling_mode" in data:
                 if data["cooling_mode"]:
-                    self.mode_indicator.setText("COOLING MODE")
+                    self.mode_indicator.setText("REGULATION MODE - COOLING")
                     self.mode_indicator.setStyleSheet("""
                         QLabel {
                             background-color: #4dabf7;
@@ -248,10 +284,13 @@ class AsymmetricPIDControls(QWidget):
                             text-align: center;
                         }
                     """)
-                    self.current_mode_label.setText("Cooling")
-                    self.current_mode_label.setStyleSheet("color: #4dabf7; font-weight: bold;")
+                    self._update_label_styles(
+                        [self.current_mode_label, self.external_mode_label],
+                        "Cooling",
+                        "color: #4dabf7; font-weight: bold;",
+                    )
                 else:
-                    self.mode_indicator.setText("HEATING MODE")
+                    self.mode_indicator.setText("REGULATION MODE - HEATING")
                     self.mode_indicator.setStyleSheet("""
                         QLabel {
                             background-color: #ff6b35;
@@ -262,32 +301,45 @@ class AsymmetricPIDControls(QWidget):
                             text-align: center;
                         }
                     """)
-                    self.current_mode_label.setText("Heating")
-                    self.current_mode_label.setStyleSheet("color: #ff6b35; font-weight: bold;")
-            
+                    self._update_label_styles(
+                        [self.current_mode_label, self.external_mode_label],
+                        "Heating",
+                        "color: #ff6b35; font-weight: bold;",
+                    )
+
             # Update temperature rate
             if "temperature_rate" in data:
                 rate = float(data["temperature_rate"])
-                self.temperature_rate_label.setText(f"{rate:.3f} °C/s")
-                
+                style = "color: #28a745; font-weight: bold;"
+
                 # Color code based on rate
                 if rate < -1.0:  # Fast cooling
-                    self.temperature_rate_label.setStyleSheet("color: #dc3545; font-weight: bold;")
+                    style = "color: #dc3545; font-weight: bold;"
                 elif rate < -0.5:  # Moderate cooling
-                    self.temperature_rate_label.setStyleSheet("color: #fd7e14; font-weight: bold;")
+                    style = "color: #fd7e14; font-weight: bold;"
                 elif rate > 0.5:  # Heating
-                    self.temperature_rate_label.setStyleSheet("color: #ff6b35; font-weight: bold;")
-                else:  # Stable
-                    self.temperature_rate_label.setStyleSheet("color: #28a745; font-weight: bold;")
-            
+                    style = "color: #ff6b35; font-weight: bold;"
+
+                self._update_label_styles(
+                    [self.temperature_rate_label, self.external_rate_label],
+                    f"{rate:.3f} °C/s",
+                    style,
+                )
+
             # Update emergency status
             if "emergency_stop" in data:
                 if data["emergency_stop"]:
-                    self.emergency_status_label.setText("🚨 ACTIVE")
-                    self.emergency_status_label.setStyleSheet("color: #dc3545; font-weight: bold;")
+                    self._update_label_styles(
+                        [self.emergency_status_label, self.external_emergency_label],
+                        "🚨 ACTIVE",
+                        "color: #dc3545; font-weight: bold;",
+                    )
                 else:
-                    self.emergency_status_label.setText("✅ Clear")
-                    self.emergency_status_label.setStyleSheet("color: #28a745; font-weight: bold;")
+                    self._update_label_styles(
+                        [self.emergency_status_label, self.external_emergency_label],
+                        "✅ Clear",
+                        "color: #28a745; font-weight: bold;",
+                    )
             
             # Handle asymmetric autotune status
             if "asymmetric_autotune_active" in data:
@@ -326,6 +378,13 @@ class AsymmetricPIDControls(QWidget):
 
         except Exception as e:
             print(f"Status update error: {e}")
+
+    @staticmethod
+    def _update_label_styles(labels: List[Optional[QLabel]], text: str, style: str):
+        for label in labels:
+            if label is not None:
+                label.setText(text)
+                label.setStyleSheet(style)
     
     def set_cooling_pid(self):
         """Set cooling PID parameters with validation"""
@@ -804,11 +863,11 @@ class MainWindow(QMainWindow):
         
         # Left panel
         left_panel = self.create_control_panel()
-        left_panel.setMaximumWidth(400)
+        left_panel.setMaximumWidth(450)
         
         # Right panel
         right_panel = self.create_live_data_panel()
-        right_panel.setMaximumWidth(350)
+        right_panel.setMaximumWidth(400)
         
         control_layout.addWidget(left_panel)
         control_layout.addWidget(right_panel)
@@ -831,16 +890,16 @@ class MainWindow(QMainWindow):
         port_row.addWidget(QLabel("Port:"))
         
         self.portSelector = QComboBox()
-        self.portSelector.setFixedWidth(100)
+        self.portSelector.setMinimumWidth(140)
         port_row.addWidget(self.portSelector)
         
         self.refreshButton = QPushButton("🔄")
-        self.refreshButton.setFixedSize(30, 25)
+        self.refreshButton.setFixedSize(36, 28)
         self.refreshButton.clicked.connect(self.refresh_ports)
         port_row.addWidget(self.refreshButton)
         
         self.connectButton = QPushButton("Connect")
-        self.connectButton.setFixedWidth(80)
+        self.connectButton.setFixedWidth(100)
         self.connectButton.clicked.connect(self.toggle_connection)
         port_row.addWidget(self.connectButton)
         
@@ -867,7 +926,7 @@ class MainWindow(QMainWindow):
         emergency_row = QHBoxLayout()
         
         self.panicButton = QPushButton("🚨 PANIC")
-        self.panicButton.setFixedSize(90, 35)
+        self.panicButton.setFixedSize(110, 38)
         self.panicButton.setStyleSheet("""
             QPushButton {
                 background-color: #dc3545; 
@@ -916,7 +975,7 @@ class MainWindow(QMainWindow):
         # PID CONTROL
         control_group = QGroupBox("🚀 PID Control")
         control_layout = QHBoxLayout()
-        
+
         self.startPIDButton = QPushButton("▶️ START")
         self.startPIDButton.clicked.connect(lambda: self.send_and_log_cmd("pid", "start"))
         self.startPIDButton.setCursor(Qt.PointingHandCursor)
@@ -925,7 +984,7 @@ class MainWindow(QMainWindow):
                 background-color: #28a745;
                 color: white;
                 font-weight: bold;
-                padding: 8px;
+                padding: 8px 18px;
                 border-radius: 5px;
             }
             QPushButton:hover {
@@ -944,7 +1003,7 @@ class MainWindow(QMainWindow):
                 background-color: #dc3545;
                 color: white;
                 font-weight: bold;
-                padding: 8px;
+                padding: 8px 18px;
                 border-radius: 5px;
             }
             QPushButton:hover {
@@ -954,7 +1013,7 @@ class MainWindow(QMainWindow):
                 background-color: #b02a37;
             }
         """)
-        
+
         control_layout.addWidget(self.startPIDButton)
         control_layout.addWidget(self.stopPIDButton)
         control_group.setLayout(control_layout)
@@ -1001,7 +1060,39 @@ class MainWindow(QMainWindow):
         panel = QWidget()
         layout = QVBoxLayout()
         panel.setLayout(layout)
-        
+
+        # System status group (shown above live data)
+        status_group = QGroupBox("📡 System Status")
+        status_layout = QGridLayout()
+
+        self.regulationModeValue = QLabel("Unknown")
+        self.regulationModeValue.setStyleSheet("font-weight: bold; color: #6c757d;")
+        self.temperatureRateValue = QLabel("0.000 °C/s")
+        self.temperatureRateValue.setStyleSheet("font-weight: bold; color: #28a745;")
+        self.emergencyStateValue = QLabel("✅ Clear")
+        self.emergencyStateValue.setStyleSheet("font-weight: bold; color: #28a745;")
+
+        status_layout.addWidget(QLabel("Regulation Mode:"), 0, 0)
+        status_layout.addWidget(self.regulationModeValue, 0, 1)
+        status_layout.addWidget(QLabel("Temp Rate:"), 1, 0)
+        status_layout.addWidget(self.temperatureRateValue, 1, 1)
+        status_layout.addWidget(QLabel("Emergency:"), 2, 0)
+        status_layout.addWidget(self.emergencyStateValue, 2, 1)
+        status_layout.setColumnStretch(1, 1)
+        status_layout.setHorizontalSpacing(12)
+
+        status_group.setLayout(status_layout)
+        layout.addWidget(status_group)
+
+        if hasattr(self, "asymmetric_controls"):
+            self.asymmetric_controls.register_status_labels(
+                self.regulationModeValue,
+                self.temperatureRateValue,
+                self.emergencyStateValue,
+            )
+            if hasattr(self.asymmetric_controls, "status_group"):
+                self.asymmetric_controls.status_group.setVisible(False)
+
         # Live data group
         data_group = QGroupBox("📊 Live Data")
         data_layout = QGridLayout()
@@ -1033,8 +1124,8 @@ class MainWindow(QMainWindow):
         
         self.targetTempDisplay = QLabel("37.0°C")
         self.targetTempDisplay.setStyleSheet("""
-            font-family: 'Courier New'; 
-            font-size: 16px; 
+            font-family: 'Courier New';
+            font-size: 16px;
             font-weight: bold; 
             color: #007bff;
             background-color: #f8f9fa;
@@ -1084,7 +1175,7 @@ class MainWindow(QMainWindow):
         # System parameters
         params_group = QGroupBox("⚙️ System Parameters")
         params_layout = QFormLayout()
-        
+
         self.pidParamsLabel = QLabel("Kp: -, Ki: -, Kd: -")
         self.pidParamsLabel.setStyleSheet("font-family: 'Courier New'; font-size: 11px;")
         
@@ -1100,7 +1191,69 @@ class MainWindow(QMainWindow):
         
         params_group.setLayout(params_layout)
         layout.addWidget(params_group)
-        
+
+        # System utilities now resides beneath parameters
+        advanced_group = QGroupBox("System Utilities")
+        advanced_layout = QGridLayout()
+        advanced_layout.setHorizontalSpacing(12)
+        advanced_layout.setVerticalSpacing(8)
+
+        self.refreshPidButton = QPushButton("Refresh PID")
+        self.refreshPidButton.setMinimumWidth(120)
+        self.refreshPidButton.clicked.connect(self.refresh_pid_from_device)
+
+        self.applyBothPidButton = QPushButton("Apply PID")
+        self.applyBothPidButton.setMinimumWidth(120)
+        self.applyBothPidButton.clicked.connect(self.asymmetric_controls.apply_both_pid)
+
+        self.setMaxOutputButton = QPushButton("Max Output")
+        self.setMaxOutputButton.setMinimumWidth(120)
+        self.setMaxOutputButton.clicked.connect(self.set_max_output_limit)
+
+        self.saveEEPROMButton = QPushButton("Save EEPROM")
+        self.saveEEPROMButton.setMinimumWidth(120)
+        self.saveEEPROMButton.clicked.connect(self.save_pid_to_eeprom)
+
+        self.requestStatusButton = QPushButton("Refresh Status")
+        self.requestStatusButton.setMinimumWidth(120)
+        self.requestStatusButton.clicked.connect(self.request_status)
+
+        self.clearFailsafeButton = QPushButton("Clear FS")
+        self.clearFailsafeButton.setMinimumWidth(120)
+        self.clearFailsafeButton.clicked.connect(self.clear_failsafe)
+        self.clearFailsafeButton.setStyleSheet("background-color: #fd7e14; color: white; font-weight: bold;")
+
+        advanced_layout.addWidget(self.refreshPidButton, 0, 0)
+        advanced_layout.addWidget(self.applyBothPidButton, 0, 1)
+        advanced_layout.addWidget(self.setMaxOutputButton, 1, 0)
+        advanced_layout.addWidget(self.saveEEPROMButton, 1, 1)
+        advanced_layout.addWidget(self.requestStatusButton, 2, 0)
+        advanced_layout.addWidget(self.clearFailsafeButton, 2, 1)
+
+        advanced_group.setLayout(advanced_layout)
+        layout.addWidget(advanced_group)
+
+        # Target temperature placed beneath system utilities
+        target_group = QGroupBox("🎯 Target Temperature")
+        target_layout = QHBoxLayout()
+
+        self.setpointInput = QLineEdit("37.0")
+        self.setpointInput.setMinimumWidth(80)
+        self.setpointInput.setAlignment(Qt.AlignCenter)
+
+        self.setSetpointButton = QPushButton("Set Target")
+        self.setSetpointButton.clicked.connect(self.set_manual_setpoint)
+        self.setSetpointButton.setStyleSheet("background-color: #28a745; color: white; font-weight: bold;")
+
+        target_layout.addWidget(QLabel("Target:"))
+        target_layout.addWidget(self.setpointInput)
+        target_layout.addWidget(QLabel("°C"))
+        target_layout.addWidget(self.setSetpointButton)
+        target_layout.addStretch()
+
+        target_group.setLayout(target_layout)
+        layout.addWidget(target_group)
+
         layout.addStretch()
         return panel
 

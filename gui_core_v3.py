@@ -277,7 +277,30 @@ class AsymmetricPIDControls(QWidget):
                 else:
                     self.start_asymmetric_autotune_button.setVisible(True)
                     self.abort_asymmetric_autotune_button.setVisible(False)
-                    
+
+            # Sync parameter fields when not being edited
+            if all(key in data for key in ["pid_cooling_kp", "pid_cooling_ki", "pid_cooling_kd"]):
+                if not self.kp_cooling_input.hasFocus():
+                    self.kp_cooling_input.setText(f"{float(data['pid_cooling_kp']):.3f}")
+                if not self.ki_cooling_input.hasFocus():
+                    self.ki_cooling_input.setText(f"{float(data['pid_cooling_ki']):.4f}")
+                if not self.kd_cooling_input.hasFocus():
+                    self.kd_cooling_input.setText(f"{float(data['pid_cooling_kd']):.3f}")
+
+            if all(key in data for key in ["pid_heating_kp", "pid_heating_ki", "pid_heating_kd"]):
+                if not self.kp_heating_input.hasFocus():
+                    self.kp_heating_input.setText(f"{float(data['pid_heating_kp']):.3f}")
+                if not self.ki_heating_input.hasFocus():
+                    self.ki_heating_input.setText(f"{float(data['pid_heating_ki']):.3f}")
+                if not self.kd_heating_input.hasFocus():
+                    self.kd_heating_input.setText(f"{float(data['pid_heating_kd']):.3f}")
+
+            if "cooling_rate_limit" in data and not self.cooling_rate_input.hasFocus():
+                self.cooling_rate_input.setText(f"{float(data['cooling_rate_limit']):.2f}")
+
+            if "safety_margin" in data and not self.safety_margin_input.hasFocus():
+                self.safety_margin_input.setText(f"{float(data['safety_margin']):.2f}")
+
         except Exception as e:
             print(f"Status update error: {e}")
     
@@ -665,28 +688,11 @@ class MainWindow(QMainWindow):
             self.create_profile_tab()
             
             # ============================================================================
-            # 3. ADD THE ASYMMETRIC PID TAB HERE (in the init_ui method)
-            # ============================================================================
-            self.create_asymmetric_tab()
-            
             print("✅ UI initialized")
             
         except Exception as e:
             print(f"❌ UI error: {e}")
             raise
-
-    # ============================================================================
-    # 4. ADD THIS NEW METHOD TO CREATE THE ASYMMETRIC TAB
-    # ============================================================================
-    
-    def create_asymmetric_tab(self):
-        """Create asymmetric PID control tab"""
-        try:
-            self.asymmetric_controls = AsymmetricPIDControls(self)
-            self.tab_widget.addTab(self.asymmetric_controls, "🎛️ Asymmetric PID")
-            print("✅ Asymmetric PID tab created")
-        except Exception as e:
-            print(f"❌ Asymmetric tab error: {e}")
 
     # ============================================================================
     # 5. ADD THIS NEW METHOD FOR ASYMMETRIC COMMANDS
@@ -800,36 +806,9 @@ class MainWindow(QMainWindow):
         conn_group.setLayout(conn_layout)
         layout.addWidget(conn_group)
         
-        # PID PARAMETERS
-        pid_group = QGroupBox("⚙️ PID Parameters")
-        pid_layout = QGridLayout()
-        
-        self.kpInput = QLineEdit("2.0")
-        self.kpInput.setFixedWidth(60)
-        self.kiInput = QLineEdit("0.5")
-        self.kiInput.setFixedWidth(60)
-        self.kdInput = QLineEdit("1.0")
-        self.kdInput.setFixedWidth(60)
-        
-        pid_layout.addWidget(QLabel("Kp:"), 0, 0)
-        pid_layout.addWidget(self.kpInput, 0, 1)
-        pid_layout.addWidget(QLabel("Ki:"), 0, 2)
-        pid_layout.addWidget(self.kiInput, 0, 3)
-        pid_layout.addWidget(QLabel("Kd:"), 1, 0)
-        pid_layout.addWidget(self.kdInput, 1, 1)
-        
-        self.setPIDButton = QPushButton("Set PID")
-        self.setPIDButton.clicked.connect(self.set_pid_values)
-        self.setPIDButton.setStyleSheet("background-color: #007bff; color: white; font-weight: bold;")
-        
-        self.fetchPIDButton = QPushButton("Fetch")
-        self.fetchPIDButton.clicked.connect(self.fetch_pid_parameters)
-        
-        pid_layout.addWidget(self.setPIDButton, 1, 2)
-        pid_layout.addWidget(self.fetchPIDButton, 1, 3)
-        
-        pid_group.setLayout(pid_layout)
-        layout.addWidget(pid_group)
+        # ASYMMETRIC PID CONTROLS
+        self.asymmetric_controls = AsymmetricPIDControls(self)
+        layout.addWidget(self.asymmetric_controls)
         
         # TARGET TEMPERATURE
         target_group = QGroupBox("🎯 Target Temperature")
@@ -857,25 +836,39 @@ class MainWindow(QMainWindow):
         
         self.startPIDButton = QPushButton("▶️ START")
         self.startPIDButton.clicked.connect(lambda: self.send_and_log_cmd("pid", "start"))
+        self.startPIDButton.setCursor(Qt.PointingHandCursor)
         self.startPIDButton.setStyleSheet("""
-            QPushButton { 
-                background-color: #28a745; 
-                color: white; 
-                font-weight: bold; 
+            QPushButton {
+                background-color: #28a745;
+                color: white;
+                font-weight: bold;
                 padding: 8px;
                 border-radius: 5px;
             }
+            QPushButton:hover {
+                background-color: #34c759;
+            }
+            QPushButton:pressed {
+                background-color: #1e7e34;
+            }
         """)
-        
+
         self.stopPIDButton = QPushButton("⏹️ STOP")
         self.stopPIDButton.clicked.connect(lambda: self.send_and_log_cmd("pid", "stop"))
+        self.stopPIDButton.setCursor(Qt.PointingHandCursor)
         self.stopPIDButton.setStyleSheet("""
-            QPushButton { 
-                background-color: #dc3545; 
-                color: white; 
-                font-weight: bold; 
+            QPushButton {
+                background-color: #dc3545;
+                color: white;
+                font-weight: bold;
                 padding: 8px;
                 border-radius: 5px;
+            }
+            QPushButton:hover {
+                background-color: #ff5c6c;
+            }
+            QPushButton:pressed {
+                background-color: #b02a37;
             }
         """)
         
@@ -1280,20 +1273,34 @@ class MainWindow(QMainWindow):
     def update_pid_displays(self, data: Dict[str, Any]):
         """Update PID parameter displays"""
         try:
-            if all(key in data for key in ["pid_kp", "pid_ki", "pid_kd"]):
-                kp = float(data["pid_kp"])
-                ki = float(data["pid_ki"])
-                kd = float(data["pid_kd"])
-                
-                self.kpInput.setText(f"{kp:.3f}")
-                self.kiInput.setText(f"{ki:.3f}")
-                self.kdInput.setText(f"{kd:.3f}")
-                self.pidParamsLabel.setText(f"Kp: {kp:.3f}, Ki: {ki:.3f}, Kd: {kd:.3f}")
+            heating_present = all(
+                key in data for key in ["pid_heating_kp", "pid_heating_ki", "pid_heating_kd"]
+            )
+            cooling_present = all(
+                key in data for key in ["pid_cooling_kp", "pid_cooling_ki", "pid_cooling_kd"]
+            )
 
-            if "pid_max_output" in data:
+            if heating_present and cooling_present:
+                hk = float(data["pid_heating_kp"])
+                hi = float(data["pid_heating_ki"])
+                hd = float(data["pid_heating_kd"])
+                ck = float(data["pid_cooling_kp"])
+                ci = float(data["pid_cooling_ki"])
+                cd = float(data["pid_cooling_kd"])
+
+                self.pidParamsLabel.setText(
+                    f"Heat Kp={hk:.3f}, Ki={hi:.3f}, Kd={hd:.3f} | "
+                    f"Cool Kp={ck:.3f}, Ki={ci:.3f}, Kd={cd:.3f}"
+                )
+
+            if "pid_heating_limit" in data or "pid_cooling_limit" in data:
+                heat_limit = float(data.get("pid_heating_limit", 0.0))
+                cool_limit = float(data.get("pid_cooling_limit", 0.0))
+                self.maxOutputLabel.setText(f"Heat {heat_limit:.1f}% / Cool {cool_limit:.1f}%")
+            elif "pid_max_output" in data:
                 max_output = float(data["pid_max_output"])
                 self.maxOutputLabel.setText(f"{max_output:.1f}%")
-                
+
         except (ValueError, KeyError) as e:
             print(f"PID display error: {e}")
 
@@ -1396,23 +1403,22 @@ class MainWindow(QMainWindow):
                 kp = float(results["kp"])
                 ki = float(results["ki"])
                 kd = float(results["kd"])
-                
-                # Update inputs
-                self.kpInput.setText(f"{kp:.3f}")
-                self.kiInput.setText(f"{ki:.3f}")
-                self.kdInput.setText(f"{kd:.3f}")
-                
-                # Show dialog
+
+                if hasattr(self, "asymmetric_controls"):
+                    self.asymmetric_controls.kp_heating_input.setText(f"{kp:.3f}")
+                    self.asymmetric_controls.ki_heating_input.setText(f"{ki:.3f}")
+                    self.asymmetric_controls.kd_heating_input.setText(f"{kd:.3f}")
+
                 QMessageBox.information(
-                    self, 
+                    self,
                     "🎯 Autotune Complete",
-                    f"New PID parameters:\n\n"
+                    f"New heating PID parameters:\n\n"
                     f"Kp: {kp:.3f}\n"
                     f"Ki: {ki:.3f}\n"
                     f"Kd: {kd:.3f}\n\n"
-                    f"Click 'Set PID' to apply."
+                    f"Review and apply via the heating PID controls."
                 )
-                
+
                 self.log(f"🎯 Autotune: Kp={kp:.3f}, Ki={ki:.3f}, Kd={kd:.3f}", "success")
                 
         except (ValueError, KeyError) as e:
@@ -1441,38 +1447,6 @@ class MainWindow(QMainWindow):
                 
         except Exception as e:
             self.log(f"❌ Autotune abort error: {e}", "error")
-
-    def set_pid_values(self):
-        """Set PID parameters"""
-        try:
-            kp = float(self.kpInput.text())
-            ki = float(self.kiInput.text())
-            kd = float(self.kdInput.text())
-            
-            # Validation
-            if not (0 <= kp <= 100):
-                raise ValueError("Kp must be 0-100")
-            if not (0 <= ki <= 50):
-                raise ValueError("Ki must be 0-50")
-            if not (0 <= kd <= 50):
-                raise ValueError("Kd must be 0-50")
-            
-            if not self.connection_established:
-                self.log("❌ Not connected", "error")
-                return
-                
-            self.serial_manager.sendSET("pid_kp", kp)
-            self.serial_manager.sendSET("pid_ki", ki)
-            self.serial_manager.sendSET("pid_kd", kd)
-            
-            self.event_logger.log_event(f"SET: PID → Kp={kp}, Ki={ki}, Kd={kd}")
-            self.log(f"✅ PID set: Kp={kp}, Ki={ki}, Kd={kd}", "success")
-            
-        except ValueError as e:
-            QMessageBox.warning(self, "Invalid Input", f"PID error: {e}")
-            self.log(f"❌ Invalid PID: {e}", "error")
-        except Exception as e:
-            self.log(f"❌ PID set error: {e}", "error")
 
     def set_manual_setpoint(self):
         """Set target temperature"""
@@ -1525,22 +1499,6 @@ class MainWindow(QMainWindow):
                 
         except Exception as e:
             self.log(f"❌ Max output error: {e}", "error")
-
-    def fetch_pid_parameters(self):
-        """Fetch PID parameters"""
-        try:
-            if not self.connection_established:
-                self.log("❌ Not connected", "error")
-                return
-                
-            self.serial_manager.sendCMD("get", "pid_params")
-            self.log("🔄 Fetching PID parameters...", "command")
-            
-            # Also get status
-            QTimer.singleShot(200, lambda: self.serial_manager.sendCMD("get", "status"))
-            
-        except Exception as e:
-            self.log(f"❌ Fetch error: {e}", "error")
 
     def save_pid_to_eeprom(self):
         """Save to EEPROM"""

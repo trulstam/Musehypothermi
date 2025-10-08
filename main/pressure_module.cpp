@@ -24,23 +24,36 @@ void PressureModule::update() {
 
   double rectalTemp = sensors.getRectalTemp();
 
-  double tempThreshold = 16.0;
-  double tempMin = 14.0;
+  const double tempThreshold = 16.0;
+  const double tempMin = 14.0;
+  const double maxTemp = 37.0;
+  const double maxBreaths = 150.0;
+  const double minBreathsAtThreshold = 1.5;
 
-  if (rectalTemp <= tempMin) {
-      breathsPerMinute = 0.0;
+  bool apneaCondition = rectalTemp <= tempMin;
+
+  if (apneaCondition) {
+    breathsPerMinute = 0.0;
   } else if (rectalTemp < tempThreshold) {
-      double scale = (rectalTemp - tempMin) / (tempThreshold - tempMin);
-      breathsPerMinute = 1.5 * scale * scale;
+    double scale = (rectalTemp - tempMin) / (tempThreshold - tempMin);
+    breathsPerMinute = minBreathsAtThreshold * scale * scale;
   } else {
-      breathsPerMinute = map(rectalTemp, tempThreshold, 37.0, 1.5, 150.0);
+    double clampedTemp = min(rectalTemp, maxTemp);
+    double slope = (maxBreaths - minBreathsAtThreshold) / (maxTemp - tempThreshold);
+    breathsPerMinute = minBreathsAtThreshold + slope * (clampedTemp - tempThreshold);
   }
 
   int adcNoiseRaw = analogRead(A4);
-  double noise = map(adcNoiseRaw, 0, 16383, -0.5, 0.5);
+  double normalizedNoise = static_cast<double>(adcNoiseRaw) / 16383.0;
+  double noise = -0.5 + normalizedNoise;
 
-  breathsPerMinute += noise;
-  breathsPerMinute = constrain(breathsPerMinute, 0.0, 150.0);
+  if (!apneaCondition) {
+    breathsPerMinute += noise;
+    breathsPerMinute = constrain(breathsPerMinute, 0.0, maxBreaths);
+    if (breathsPerMinute < 0.1) {
+      breathsPerMinute = 0.1;
+    }
+  }
 }
 
 float PressureModule::getBreathRate() {

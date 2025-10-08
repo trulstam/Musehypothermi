@@ -7,7 +7,7 @@
 class CommAPI {
 public:
     CommAPI(Stream &serialStream);
-    void begin(Stream &serialStream);
+    void begin(Stream &serialStream, bool factoryResetOccurred = false);
     void process();
 
     void sendData();                           // Live data (plate temp, rectal, PID, pust)

@@ -315,24 +315,26 @@ void AsymmetricPIDModule::setKd(float value) {
 
 void AsymmetricPIDModule::setMaxOutputPercent(float percent, bool persist) {
     percent = constrain(percent, 0.0f, 100.0f);
-    currentParams.cooling_limit = -percent;
-    currentParams.heating_limit = percent;
-
-    coolingPID.SetOutputLimits(currentParams.cooling_limit, 0.0);
-    heatingPID.SetOutputLimits(0.0, currentParams.heating_limit);
-
-    if (persist && eeprom) {
-        eeprom->saveMaxOutput(percent);
-        saveAsymmetricParams();
-    }
+    setOutputLimits(percent, percent, persist);
 }
 
-void AsymmetricPIDModule::setOutputLimits(float coolingLimit, float heatingLimit) {
-    currentParams.cooling_limit = constrain(coolingLimit, -100.0f, 0.0f);
-    currentParams.heating_limit = constrain(heatingLimit, 0.0f, 100.0f);
+void AsymmetricPIDModule::setOutputLimits(float coolingLimit, float heatingLimit, bool persist) {
+    float constrainedCooling = constrain(coolingLimit, 0.0f, 100.0f);
+    float constrainedHeating = constrain(heatingLimit, 0.0f, 100.0f);
+
+    currentParams.cooling_limit = -constrainedCooling;
+    currentParams.heating_limit = constrainedHeating;
 
     coolingPID.SetOutputLimits(currentParams.cooling_limit, 0.0);
     heatingPID.SetOutputLimits(0.0, currentParams.heating_limit);
+
+    if (persist) {
+        if (eeprom) {
+            eeprom->saveCoolingMaxOutput(constrainedCooling);
+            eeprom->saveHeatingMaxOutput(constrainedHeating);
+        }
+        saveAsymmetricParams();
+    }
 }
 
 void AsymmetricPIDModule::setCoolingPID(float kp, float ki, float kd, bool persist) {
@@ -467,6 +469,8 @@ void AsymmetricPIDModule::saveAsymmetricParams() {
     eeprom->saveCoolingPIDParams(currentParams.kp_cooling,
                                  currentParams.ki_cooling,
                                  currentParams.kd_cooling);
+    eeprom->saveHeatingMaxOutput(fabs(currentParams.heating_limit));
+    eeprom->saveCoolingMaxOutput(fabs(currentParams.cooling_limit));
     eeprom->saveCoolingRateLimit(maxCoolingRate);
     eeprom->saveDeadband(currentParams.deadband);
     eeprom->saveSafetyMargin(currentParams.safety_margin);
@@ -483,7 +487,8 @@ void AsymmetricPIDModule::loadAsymmetricParams() {
     float coolingKi = kDefaultCoolingKi;
     float coolingKd = kDefaultCoolingKd;
     float target = kDefaultTargetTemp;
-    float maxOutput = kDefaultMaxOutputPercent;
+    float heatingLimit = kDefaultMaxOutputPercent;
+    float coolingLimit = kDefaultMaxOutputPercent;
     float storedRate = kDefaultCoolingRate;
     float storedDeadband = kDefaultDeadband;
     float storedMargin = kDefaultSafetyMargin;
@@ -514,10 +519,17 @@ void AsymmetricPIDModule::loadAsymmetricParams() {
             restoredDefaults = true;
         }
 
-        eeprom->loadMaxOutput(maxOutput);
-        if (shouldRestoreMaxOutput(maxOutput)) {
-            maxOutput = kDefaultMaxOutputPercent;
-            eeprom->saveMaxOutput(maxOutput);
+        eeprom->loadHeatingMaxOutput(heatingLimit);
+        if (shouldRestoreMaxOutput(heatingLimit)) {
+            heatingLimit = kDefaultMaxOutputPercent;
+            eeprom->saveHeatingMaxOutput(heatingLimit);
+            restoredDefaults = true;
+        }
+
+        eeprom->loadCoolingMaxOutput(coolingLimit);
+        if (shouldRestoreMaxOutput(coolingLimit)) {
+            coolingLimit = kDefaultMaxOutputPercent;
+            eeprom->saveCoolingMaxOutput(coolingLimit);
             restoredDefaults = true;
         }
 
@@ -553,7 +565,7 @@ void AsymmetricPIDModule::loadAsymmetricParams() {
     currentParams.safety_margin = storedMargin;
 
     setTargetTemp(target);
-    setMaxOutputPercent(maxOutput, false);
+    setOutputLimits(coolingLimit, heatingLimit, false);
     maxCoolingRate = storedRate;
 
     heatingPID.SetTunings(currentParams.kp_heating,

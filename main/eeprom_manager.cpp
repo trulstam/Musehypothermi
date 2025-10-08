@@ -54,11 +54,52 @@ void EEPROMManager::loadTargetTemp(float &temp) {
 }
 
 void EEPROMManager::saveMaxOutput(float maxOutput) {
-    EEPROM.put(addrMaxOutput, maxOutput);
+    saveHeatingMaxOutput(maxOutput);
+    saveCoolingMaxOutput(maxOutput);
 }
 
 void EEPROMManager::loadMaxOutput(float &maxOutput) {
-    EEPROM.get(addrMaxOutput, maxOutput);
+    loadHeatingMaxOutput(maxOutput);
+}
+
+void EEPROMManager::saveHeatingMaxOutput(float maxOutput) {
+    EEPROM.put(addrHeatingMaxOutput, maxOutput);
+}
+
+void EEPROMManager::loadHeatingMaxOutput(float &maxOutput) {
+    EEPROM.get(addrHeatingMaxOutput, maxOutput);
+}
+
+void EEPROMManager::saveCoolingMaxOutput(float maxOutput) {
+    EEPROM.put(addrCoolingMaxOutput, maxOutput);
+}
+
+void EEPROMManager::loadCoolingMaxOutput(float &maxOutput) {
+    EEPROM.get(addrCoolingMaxOutput, maxOutput);
+}
+
+void EEPROMManager::saveCoolingRateLimit(float rate) {
+    EEPROM.put(addrCoolingRateLimit, rate);
+}
+
+void EEPROMManager::loadCoolingRateLimit(float &rate) {
+    EEPROM.get(addrCoolingRateLimit, rate);
+}
+
+void EEPROMManager::saveDeadband(float deadband) {
+    EEPROM.put(addrDeadband, deadband);
+}
+
+void EEPROMManager::loadDeadband(float &deadband) {
+    EEPROM.get(addrDeadband, deadband);
+}
+
+void EEPROMManager::saveSafetyMargin(float margin) {
+    EEPROM.put(addrSafetyMargin, margin);
+}
+
+void EEPROMManager::loadSafetyMargin(float &margin) {
+    EEPROM.get(addrSafetyMargin, margin);
 }
 
 void EEPROMManager::saveCoolingRateLimit(float rate) {

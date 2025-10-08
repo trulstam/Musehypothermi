@@ -9,15 +9,16 @@ import time
 import csv
 import os
 import traceback
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QPushButton, QLabel,
     QVBoxLayout, QWidget, QFileDialog, QHBoxLayout,
     QTextEdit, QComboBox, QMessageBox, QGroupBox,
-    QFormLayout, QLineEdit, QSplitter, QInputDialog,
+    QFormLayout, QLineEdit, QSplitter,
     QProgressBar, QCheckBox, QSpinBox, QGridLayout,
-    QTabWidget, QScrollArea, QFrame
+    QTabWidget, QScrollArea, QFrame, QDialog,
+    QDialogButtonBox, QDoubleSpinBox
 )
 from PySide6.QtCore import QTimer, Qt, Signal
 from PySide6.QtGui import QFont, QPalette, QColor
@@ -38,6 +39,53 @@ from profile_loader import ProfileLoader
 # ============================================================================
 # 1. ADD THIS NEW CLASS BEFORE THE MatplotlibGraphWidget CLASS
 # ============================================================================
+
+
+class MaxOutputDialog(QDialog):
+    """Dialog that lets the user edit heating and cooling output limits."""
+
+    def __init__(self, heating: float, cooling: float, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self.setWindowTitle("Max Output Limits")
+        self.setModal(True)
+
+        layout = QVBoxLayout(self)
+
+        form = QFormLayout()
+        form.setLabelAlignment(Qt.AlignRight)
+        form.setHorizontalSpacing(14)
+        form.setVerticalSpacing(10)
+
+        self.heating_spin = QDoubleSpinBox()
+        self.heating_spin.setRange(0.0, 100.0)
+        self.heating_spin.setDecimals(1)
+        self.heating_spin.setSingleStep(1.0)
+        self.heating_spin.setSuffix(" %")
+        self.heating_spin.setValue(max(0.0, heating))
+
+        self.cooling_spin = QDoubleSpinBox()
+        self.cooling_spin.setRange(0.0, 100.0)
+        self.cooling_spin.setDecimals(1)
+        self.cooling_spin.setSingleStep(1.0)
+        self.cooling_spin.setSuffix(" %")
+        self.cooling_spin.setValue(max(0.0, cooling))
+
+        form.addRow("Heating limit:", self.heating_spin)
+        form.addRow("Cooling limit:", self.cooling_spin)
+
+        layout.addLayout(form)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    @staticmethod
+    def get_limits(parent: QWidget, heating: float, cooling: float) -> Tuple[float, float, bool]:
+        dialog = MaxOutputDialog(heating, cooling, parent)
+        accepted = dialog.exec() == QDialog.Accepted
+        return dialog.heating_spin.value(), dialog.cooling_spin.value(), accepted
+
 
 class AsymmetricPIDControls(QWidget):
     """Enhanced controls for asymmetric PID system"""
@@ -71,13 +119,15 @@ class AsymmetricPIDControls(QWidget):
 
         cooling_group = QGroupBox("Cooling PID (Conservative)")
         cooling_layout = QGridLayout()
+        cooling_layout.setHorizontalSpacing(14)
+        cooling_layout.setVerticalSpacing(8)
 
         self.kp_cooling_input = QLineEdit("0.8")
-        self.kp_cooling_input.setMinimumWidth(90)
+        self.kp_cooling_input.setMinimumWidth(120)
         self.ki_cooling_input = QLineEdit("0.02")
-        self.ki_cooling_input.setMinimumWidth(90)
+        self.ki_cooling_input.setMinimumWidth(120)
         self.kd_cooling_input = QLineEdit("3.0")
-        self.kd_cooling_input.setMinimumWidth(90)
+        self.kd_cooling_input.setMinimumWidth(120)
 
         cooling_layout.addWidget(QLabel("Kp"), 0, 0)
         cooling_layout.addWidget(self.kp_cooling_input, 0, 1)
@@ -94,18 +144,21 @@ class AsymmetricPIDControls(QWidget):
         self.set_cooling_pid_button = QPushButton("Apply Cooling PID")
         self.set_cooling_pid_button.clicked.connect(self.set_cooling_pid)
         cooling_layout.addWidget(self.set_cooling_pid_button, 3, 0, 1, 3)
+        cooling_layout.setColumnStretch(1, 1)
 
         cooling_group.setLayout(cooling_layout)
 
         heating_group = QGroupBox("Heating PID (Aggressive)")
         heating_layout = QGridLayout()
+        heating_layout.setHorizontalSpacing(14)
+        heating_layout.setVerticalSpacing(8)
 
         self.kp_heating_input = QLineEdit("2.5")
-        self.kp_heating_input.setMinimumWidth(90)
+        self.kp_heating_input.setMinimumWidth(120)
         self.ki_heating_input = QLineEdit("0.2")
-        self.ki_heating_input.setMinimumWidth(90)
+        self.ki_heating_input.setMinimumWidth(120)
         self.kd_heating_input = QLineEdit("1.2")
-        self.kd_heating_input.setMinimumWidth(90)
+        self.kd_heating_input.setMinimumWidth(120)
 
         heating_layout.addWidget(QLabel("Kp"), 0, 0)
         heating_layout.addWidget(self.kp_heating_input, 0, 1)
@@ -122,11 +175,14 @@ class AsymmetricPIDControls(QWidget):
         self.set_heating_pid_button = QPushButton("Apply Heating PID")
         self.set_heating_pid_button.clicked.connect(self.set_heating_pid)
         heating_layout.addWidget(self.set_heating_pid_button, 3, 0, 1, 3)
+        heating_layout.setColumnStretch(1, 1)
 
         heating_group.setLayout(heating_layout)
 
         params_layout.addWidget(cooling_group, 0, 0)
         params_layout.addWidget(heating_group, 0, 1)
+        params_layout.setColumnStretch(0, 1)
+        params_layout.setColumnStretch(1, 1)
 
         button_row = QHBoxLayout()
         self.refresh_pid_button = QPushButton("Refresh From Device")
@@ -145,6 +201,8 @@ class AsymmetricPIDControls(QWidget):
         # Safety controls
         safety_group = QGroupBox("Safety Controls")
         safety_layout = QGridLayout()
+        safety_layout.setHorizontalSpacing(14)
+        safety_layout.setVerticalSpacing(10)
 
         # Emergency stop
         self.emergency_stop_button = QPushButton("Emergency Stop")
@@ -161,33 +219,36 @@ class AsymmetricPIDControls(QWidget):
         """)
         safety_layout.addWidget(self.emergency_stop_button, 0, 0, 1, 4)
 
-        safety_layout.addWidget(QLabel("Max Temperature Change:"), 1, 0)
+        safety_layout.addWidget(QLabel("Max Temp Change:"), 1, 0)
         self.cooling_rate_input = QLineEdit("1.5")
-        self.cooling_rate_input.setFixedWidth(70)
+        self.cooling_rate_input.setMinimumWidth(120)
+        self.cooling_rate_input.setPlaceholderText("°C per second")
         safety_layout.addWidget(self.cooling_rate_input, 1, 1)
         safety_layout.addWidget(QLabel("°C/s"), 1, 2)
 
         self.set_rate_limit_button = QPushButton("Set")
         self.set_rate_limit_button.clicked.connect(self.set_cooling_rate_limit)
-        self.set_rate_limit_button.setFixedWidth(45)
+        self.set_rate_limit_button.setFixedWidth(60)
         safety_layout.addWidget(self.set_rate_limit_button, 1, 3)
 
         safety_layout.addWidget(QLabel("Deadband:"), 2, 0)
         self.deadband_input = QLineEdit("0.5")
-        self.deadband_input.setFixedWidth(70)
+        self.deadband_input.setMinimumWidth(90)
         safety_layout.addWidget(self.deadband_input, 2, 1)
         safety_layout.addWidget(QLabel("°C"), 2, 2)
 
         safety_layout.addWidget(QLabel("Safety Margin:"), 3, 0)
         self.safety_margin_input = QLineEdit("1.5")
-        self.safety_margin_input.setFixedWidth(70)
+        self.safety_margin_input.setMinimumWidth(90)
         safety_layout.addWidget(self.safety_margin_input, 3, 1)
         safety_layout.addWidget(QLabel("°C"), 3, 2)
 
         self.set_safety_params_button = QPushButton("Update")
         self.set_safety_params_button.clicked.connect(self.set_safety_params)
-        self.set_safety_params_button.setFixedWidth(65)
+        self.set_safety_params_button.setFixedWidth(80)
         safety_layout.addWidget(self.set_safety_params_button, 3, 3)
+
+        safety_layout.setColumnStretch(1, 1)
 
         safety_group.setLayout(safety_layout)
         layout.addWidget(safety_group)
@@ -802,13 +863,15 @@ class MainWindow(QMainWindow):
             "breath_rate": [],
             "target_temp": []
         }
-        
+
         self.connection_established = False
         self.start_time = None
         self.max_graph_points = 200
         self.data_update_count = 0
         self.graph_update_count = 0
-        
+        self.last_heating_limit = 35.0
+        self.last_cooling_limit = 35.0
+
         print("✅ Data structures initialized")
 
     def init_ui(self):
@@ -863,11 +926,11 @@ class MainWindow(QMainWindow):
         
         # Left panel
         left_panel = self.create_control_panel()
-        left_panel.setMaximumWidth(450)
+        left_panel.setMaximumWidth(520)
         
         # Right panel
         right_panel = self.create_live_data_panel()
-        right_panel.setMaximumWidth(400)
+        right_panel.setMaximumWidth(480)
         
         control_layout.addWidget(left_panel)
         control_layout.addWidget(right_panel)
@@ -1176,11 +1239,16 @@ class MainWindow(QMainWindow):
         params_group = QGroupBox("⚙️ System Parameters")
         params_layout = QFormLayout()
 
+        self.pidParamsLabel = QLabel("Heating: - | Cooling: -")
         self.pidParamsLabel = QLabel("Kp: -, Ki: -, Kd: -")
         self.pidParamsLabel.setStyleSheet("font-family: 'Courier New'; font-size: 11px;")
-        
+        self.pidParamsLabel.setWordWrap(True)
+        self.pidParamsLabel.setMinimumWidth(260)
+
         self.maxOutputLabel = QLabel("Unknown")
         self.maxOutputLabel.setStyleSheet("font-family: 'Courier New'; font-size: 11px;")
+        self.maxOutputLabel.setWordWrap(True)
+        self.maxOutputLabel.setMinimumWidth(260)
         
         self.lastUpdateLabel = QLabel("Never")
         self.lastUpdateLabel.setStyleSheet("font-family: 'Courier New'; font-size: 10px; color: #6c757d;")
@@ -1197,6 +1265,8 @@ class MainWindow(QMainWindow):
         advanced_layout = QGridLayout()
         advanced_layout.setHorizontalSpacing(12)
         advanced_layout.setVerticalSpacing(8)
+        advanced_layout.setColumnStretch(0, 1)
+        advanced_layout.setColumnStretch(1, 1)
 
         self.refreshPidButton = QPushButton("Refresh PID")
         self.refreshPidButton.setMinimumWidth(120)
@@ -1236,9 +1306,10 @@ class MainWindow(QMainWindow):
         # Target temperature placed beneath system utilities
         target_group = QGroupBox("🎯 Target Temperature")
         target_layout = QHBoxLayout()
+        target_layout.setSpacing(12)
 
         self.setpointInput = QLineEdit("37.0")
-        self.setpointInput.setMinimumWidth(80)
+        self.setpointInput.setMinimumWidth(120)
         self.setpointInput.setAlignment(Qt.AlignCenter)
 
         self.setSetpointButton = QPushButton("Set Target")
@@ -1527,17 +1598,27 @@ class MainWindow(QMainWindow):
                 cd = float(data["pid_cooling_kd"])
 
                 self.pidParamsLabel.setText(
-                    f"Heat Kp={hk:.3f}, Ki={hi:.3f}, Kd={hd:.3f} | "
-                    f"Cool Kp={ck:.3f}, Ki={ci:.3f}, Kd={cd:.3f}"
+                    "Heating → "
+                    f"Kp={hk:.3f}, Ki={hi:.3f}, Kd={hd:.3f}\n"
+                    "Cooling → "
+                    f"Kp={ck:.3f}, Ki={ci:.3f}, Kd={cd:.3f}"
                 )
 
             if "pid_heating_limit" in data or "pid_cooling_limit" in data:
                 heat_limit = float(data.get("pid_heating_limit", 0.0))
                 cool_limit = float(data.get("pid_cooling_limit", 0.0))
-                self.maxOutputLabel.setText(f"Heat {heat_limit:.1f}% / Cool {cool_limit:.1f}%")
+                self.last_heating_limit = heat_limit
+                self.last_cooling_limit = cool_limit
+                self.maxOutputLabel.setText(
+                    f"Heating limit: {heat_limit:.1f}%\nCooling limit: {cool_limit:.1f}%"
+                )
             elif "pid_max_output" in data:
                 max_output = float(data["pid_max_output"])
-                self.maxOutputLabel.setText(f"{max_output:.1f}%")
+                self.last_heating_limit = max_output
+                self.last_cooling_limit = max_output
+                self.maxOutputLabel.setText(
+                    f"Heating limit: {max_output:.1f}%\nCooling limit: {max_output:.1f}%"
+                )
 
         except (ValueError, KeyError) as e:
             print(f"PID display error: {e}")
@@ -1700,30 +1781,33 @@ class MainWindow(QMainWindow):
     def set_max_output_limit(self):
         """Set max output limit"""
         try:
-            current_value = 20.0
-            try:
-                current_text = self.maxOutputLabel.text()
-                if "%" in current_text:
-                    current_value = float(current_text.replace("%", ""))
-            except:
-                pass
-                
-            value, ok = QInputDialog.getDouble(
-                self, "Max Output Limit", 
-                "Enter max output % (0–100):", 
-                current_value, 0.0, 100.0, 1
+            heating_default = max(0.0, self.last_heating_limit)
+            cooling_default = max(0.0, self.last_cooling_limit)
+
+            heating, cooling, ok = MaxOutputDialog.get_limits(
+                self,
+                heating_default,
+                cooling_default,
             )
-            
+
             if ok:
                 if not self.connection_established:
                     self.log("❌ Not connected", "error")
                     return
-                    
-                self.serial_manager.sendSET("pid_max_output", value)
-                self.event_logger.log_event(f"SET: pid_max_output → {value:.1f}%")
-                self.log(f"⚙️ Max output: {value:.1f}%", "command")
-                self.maxOutputLabel.setText(f"{value:.1f}%")
-                
+
+                payload = {"heating": heating, "cooling": cooling}
+                if self.send_asymmetric_command("set_output_limits", payload):
+                    self.last_heating_limit = heating
+                    self.last_cooling_limit = cooling
+                    self.maxOutputLabel.setText(
+                        f"Heating limit: {heating:.1f}%\nCooling limit: {cooling:.1f}%"
+                    )
+                    self.log(
+                        "⚙️ Output limits → "
+                        f"Heating {heating:.1f}% | Cooling {cooling:.1f}%",
+                        "command",
+                    )
+
         except Exception as e:
             self.log(f"❌ Max output error: {e}", "error")
 

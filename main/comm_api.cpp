@@ -179,6 +179,17 @@ void CommAPI::handleCommand(const String &jsonString) {
                 sendResponse("Safety parameters missing");
             }
 
+        } else if (action == "set_output_limits") {
+            JsonObject params = cmd["params"];
+            if (!params.isNull() && params.containsKey("heating") && params.containsKey("cooling")) {
+                float heating = params["heating"];
+                float cooling = params["cooling"];
+                pid.setOutputLimits(cooling, heating);
+                sendResponse("Output limits updated");
+            } else {
+                sendResponse("Output limit parameters missing");
+            }
+
         } else if (action == "start_asymmetric_autotune") {
             pid.startAsymmetricAutotune();
             sendResponse("Asymmetric autotune started");
@@ -220,6 +231,16 @@ void CommAPI::handleCommand(const String &jsonString) {
             float value = set["value"];
             pid.setMaxOutputPercent(value);
             sendResponse("Max output limit updated");
+
+        } else if (variable == "pid_heating_limit") {
+            float value = set["value"];
+            pid.setOutputLimits(pid.getCoolingOutputLimit(), value);
+            sendResponse("Heating output limit updated");
+
+        } else if (variable == "pid_cooling_limit") {
+            float value = set["value"];
+            pid.setOutputLimits(value, pid.getHeatingOutputLimit());
+            sendResponse("Cooling output limit updated");
 
         } else if (variable == "pid_cooling_kp") {
             float value = set["value"];

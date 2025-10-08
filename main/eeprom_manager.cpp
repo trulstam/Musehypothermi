@@ -102,6 +102,30 @@ void EEPROMManager::loadSafetyMargin(float &margin) {
     EEPROM.get(addrSafetyMargin, margin);
 }
 
+void EEPROMManager::saveCoolingRateLimit(float rate) {
+    EEPROM.put(addrCoolingRateLimit, rate);
+}
+
+void EEPROMManager::loadCoolingRateLimit(float &rate) {
+    EEPROM.get(addrCoolingRateLimit, rate);
+}
+
+void EEPROMManager::saveDeadband(float deadband) {
+    EEPROM.put(addrDeadband, deadband);
+}
+
+void EEPROMManager::loadDeadband(float &deadband) {
+    EEPROM.get(addrDeadband, deadband);
+}
+
+void EEPROMManager::saveSafetyMargin(float margin) {
+    EEPROM.put(addrSafetyMargin, margin);
+}
+
+void EEPROMManager::loadSafetyMargin(float &margin) {
+    EEPROM.get(addrSafetyMargin, margin);
+}
+
 void EEPROMManager::saveDebugLevel(int debugLevel) {
     EEPROM.put(addrDebugLevel, debugLevel);
 }

@@ -34,6 +34,15 @@ public:
     void saveSafetyMargin(float margin);
     void loadSafetyMargin(float &margin);
 
+    void saveCoolingRateLimit(float rate);
+    void loadCoolingRateLimit(float &rate);
+
+    void saveDeadband(float deadband);
+    void loadDeadband(float &deadband);
+
+    void saveSafetyMargin(float margin);
+    void loadSafetyMargin(float &margin);
+
     void saveDebugLevel(int debugLevel);
     void loadDebugLevel(int &debugLevel);
 

@@ -414,33 +414,33 @@ class MatplotlibGraphWidget(QWidget):
             
             # Temperature subplot
             self.ax_temp = self.figure.add_subplot(gs[0])
-            self.ax_temp.set_title('🌡️ Temperature Monitoring', fontsize=14, fontweight='bold')
+            self.ax_temp.set_title('Temperature Monitoring', fontsize=14, fontweight='bold')
             self.ax_temp.set_ylabel('Temperature (°C)', fontsize=12)
             self.ax_temp.grid(True, alpha=0.3)
             self.ax_temp.set_facecolor('#f8f9fa')
             
             # PID subplot
             self.ax_pid = self.figure.add_subplot(gs[1])
-            self.ax_pid.set_title('🎛️ PID Output', fontsize=12, fontweight='bold')
+            self.ax_pid.set_title('PID Output', fontsize=12, fontweight='bold')
             self.ax_pid.set_ylabel('PID Output', fontsize=11)
             self.ax_pid.grid(True, alpha=0.3)
             self.ax_pid.set_facecolor('#f0f8ff')
             
             # Breath subplot
             self.ax_breath = self.figure.add_subplot(gs[2])
-            self.ax_breath.set_title('🫁 Breath Frequency', fontsize=12, fontweight='bold')
+            self.ax_breath.set_title('Breath Frequency', fontsize=12, fontweight='bold')
             self.ax_breath.set_xlabel('Time (seconds)', fontsize=12)
             self.ax_breath.set_ylabel('BPM', fontsize=11)
             self.ax_breath.grid(True, alpha=0.3)
             self.ax_breath.set_facecolor('#fff8f0')
             
             # Initialize lines
-            self.line_plate, = self.ax_temp.plot([], [], 'r-o', linewidth=3, markersize=4, 
-                                               label='🔥 Cooling Plate', alpha=0.8)
-            self.line_rectal, = self.ax_temp.plot([], [], 'g-s', linewidth=3, markersize=4, 
-                                                label='🌡️ Rectal Probe', alpha=0.8)
-            self.line_target, = self.ax_temp.plot([], [], 'b--', linewidth=2, 
-                                                label='🎯 Target', alpha=0.7)
+            self.line_plate, = self.ax_temp.plot([], [], 'r-o', linewidth=3, markersize=4,
+                                               label='Cooling Plate', alpha=0.8)
+            self.line_rectal, = self.ax_temp.plot([], [], 'g-s', linewidth=3, markersize=4,
+                                                label='Rectal Probe', alpha=0.8)
+            self.line_target, = self.ax_temp.plot([], [], 'b--', linewidth=2,
+                                                label='Target', alpha=0.7)
             
             self.line_pid, = self.ax_pid.plot([], [], 'purple', linewidth=2.5, 
                                             label='PID Output', alpha=0.8)

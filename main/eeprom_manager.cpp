@@ -60,7 +60,7 @@ void EEPROMManager::loadFailsafeTimeout(int &timeout) {
 bool EEPROMManager::factoryReset() {
     savePIDParams(2.0f, 0.5f, 1.0f);
     saveTargetTemp(37.0f);
-    saveMaxOutput(20.0f);
+    saveMaxOutput(35.0f);
     saveDebugLevel(0);
     saveFailsafeTimeout(5000);
 

@@ -124,42 +124,75 @@ void CommAPI::handleCommand(const String &jsonString) {
                 sendResponse("\u274c EEPROM factory reset failed");
             }
         } else if (action == "set_cooling_pid") {
-            // JsonObject params = cmd["params"];
-            // float kp = params["kp"];
-            // float ki = params["ki"];
-            // float kd = params["kd"];
-            // pid.setCoolingPID(kp, ki, kd);
-            sendResponse("Cooling PID command received (not implemented yet)");
+            JsonObject params = cmd["params"];
+            if (!params.isNull() && params.containsKey("kp") &&
+                params.containsKey("ki") && params.containsKey("kd")) {
+                float kp = params["kp"];
+                float ki = params["ki"];
+                float kd = params["kd"];
+                pid.setCoolingPID(kp, ki, kd);
+                sendResponse("Cooling PID updated");
+            } else {
+                sendResponse("Cooling PID parameters missing");
+            }
 
         } else if (action == "set_heating_pid") {
-            // JsonObject params = cmd["params"];
-            // float kp = params["kp"];
-            // float ki = params["ki"];
-            // float kd = params["kd"];
-            // pid.setHeatingPID(kp, ki, kd);
-            sendResponse("Heating PID command received (not implemented yet)");
+            JsonObject params = cmd["params"];
+            if (!params.isNull() && params.containsKey("kp") &&
+                params.containsKey("ki") && params.containsKey("kd")) {
+                float kp = params["kp"];
+                float ki = params["ki"];
+                float kd = params["kd"];
+                pid.setHeatingPID(kp, ki, kd);
+                sendResponse("Heating PID updated");
+            } else {
+                sendResponse("Heating PID parameters missing");
+            }
 
         } else if (action == "emergency_stop") {
-            // JsonObject params = cmd["params"];
-            // bool enabled = params["enabled"];
-            // pid.setEmergencyStop(enabled);
-            sendResponse("Emergency stop command received (not implemented yet)");
+            JsonObject params = cmd["params"];
+            bool enabled = true;
+            if (!params.isNull() && params.containsKey("enabled")) {
+                enabled = params["enabled"];
+            }
+            pid.setEmergencyStop(enabled);
+            sendResponse(enabled ? "Emergency stop enabled" : "Emergency stop cleared");
 
         } else if (action == "set_cooling_rate_limit") {
-            // JsonObject params = cmd["params"];
-            // float rate = params["rate"];
-            // pid.setCoolingRateLimit(rate);
-            sendResponse("Cooling rate limit command received (not implemented yet)");
+            JsonObject params = cmd["params"];
+            if (!params.isNull() && params.containsKey("rate")) {
+                float rate = params["rate"];
+                pid.setCoolingRateLimit(rate);
+                sendResponse("Cooling rate limit updated");
+            } else {
+                sendResponse("Cooling rate limit missing");
+            }
 
         } else if (action == "set_safety_margin") {
-            // JsonObject params = cmd["params"];
-            // float margin = params["margin"];
-            // Note: You'll need to add getCurrentDeadband() method to AsymmetricPIDModule
-            sendResponse("Safety margin command received (not implemented yet)");
+            JsonObject params = cmd["params"];
+            if (!params.isNull() && (params.containsKey("margin") || params.containsKey("deadband"))) {
+                float margin = params.containsKey("margin") ? params["margin"].as<float>() : pid.getSafetyMargin();
+                float deadband = params.containsKey("deadband") ? params["deadband"].as<float>() : pid.getCurrentDeadband();
+                pid.setSafetyParams(deadband, margin);
+                sendResponse("Safety parameters updated");
+            } else {
+                sendResponse("Safety parameters missing");
+            }
+
+        } else if (action == "set_output_limits") {
+            JsonObject params = cmd["params"];
+            if (!params.isNull() && params.containsKey("heating") && params.containsKey("cooling")) {
+                float heating = params["heating"];
+                float cooling = params["cooling"];
+                pid.setOutputLimits(cooling, heating);
+                sendResponse("Output limits updated");
+            } else {
+                sendResponse("Output limit parameters missing");
+            }
 
         } else if (action == "start_asymmetric_autotune") {
-            // pid.startAsymmetricAutotune();
-            sendResponse("Asymmetric autotune command received (not implemented yet)");
+            pid.startAsymmetricAutotune();
+            sendResponse("Asymmetric autotune started");
 
         } else if (action == "abort_asymmetric_autotune") {
             pid.abortAutotune();
@@ -181,27 +214,48 @@ void CommAPI::handleCommand(const String &jsonString) {
 
         } else if (variable == "pid_kp") {
             float value = set["value"];
-            pid.setKp(value);
-            eeprom.savePIDParams(pid.getKp(), pid.getKi(), pid.getKd());
-            sendResponse("Kp updated");
+            pid.setHeatingPID(value, pid.getHeatingKi(), pid.getHeatingKd());
+            sendResponse("Heating Kp updated");
 
         } else if (variable == "pid_ki") {
             float value = set["value"];
-            pid.setKi(value);
-            eeprom.savePIDParams(pid.getKp(), pid.getKi(), pid.getKd());
-            sendResponse("Ki updated");
+            pid.setHeatingPID(pid.getHeatingKp(), value, pid.getHeatingKd());
+            sendResponse("Heating Ki updated");
 
         } else if (variable == "pid_kd") {
             float value = set["value"];
-            pid.setKd(value);
-            eeprom.savePIDParams(pid.getKp(), pid.getKi(), pid.getKd());
-            sendResponse("Kd updated");
+            pid.setHeatingPID(pid.getHeatingKp(), pid.getHeatingKi(), value);
+            sendResponse("Heating Kd updated");
 
         } else if (variable == "pid_max_output") {
             float value = set["value"];
             pid.setMaxOutputPercent(value);
-            eeprom.saveMaxOutput(value);
             sendResponse("Max output limit updated");
+
+        } else if (variable == "pid_heating_limit") {
+            float value = set["value"];
+            pid.setOutputLimits(pid.getCoolingOutputLimit(), value);
+            sendResponse("Heating output limit updated");
+
+        } else if (variable == "pid_cooling_limit") {
+            float value = set["value"];
+            pid.setOutputLimits(value, pid.getHeatingOutputLimit());
+            sendResponse("Cooling output limit updated");
+
+        } else if (variable == "pid_cooling_kp") {
+            float value = set["value"];
+            pid.setCoolingPID(value, pid.getCoolingKi(), pid.getCoolingKd());
+            sendResponse("Cooling Kp updated");
+
+        } else if (variable == "pid_cooling_ki") {
+            float value = set["value"];
+            pid.setCoolingPID(pid.getCoolingKp(), value, pid.getCoolingKd());
+            sendResponse("Cooling Ki updated");
+
+        } else if (variable == "pid_cooling_kd") {
+            float value = set["value"];
+            pid.setCoolingPID(pid.getCoolingKp(), pid.getCoolingKi(), value);
+            sendResponse("Cooling Kd updated");
 
         } else if (variable == "debug_level") {
             int value = set["value"];
@@ -314,6 +368,17 @@ void CommAPI::sendData() {
     doc["breath_freq_bpm"] = pressure.getBreathRate();
     doc["failsafe"] = isFailsafeActive();
     doc["plate_target_active"] = pid.getActivePlateTarget();
+    doc["cooling_mode"] = pid.isCooling();
+    doc["temperature_rate"] = pid.getTemperatureRate();
+    doc["pid_max_output"] = pid.getMaxOutputPercent();
+    doc["pid_heating_limit"] = pid.getHeatingOutputLimit();
+    doc["pid_cooling_limit"] = pid.getCoolingOutputLimit();
+    doc["pid_heating_kp"] = pid.getHeatingKp();
+    doc["pid_heating_ki"] = pid.getHeatingKi();
+    doc["pid_heating_kd"] = pid.getHeatingKd();
+    doc["pid_cooling_kp"] = pid.getCoolingKp();
+    doc["pid_cooling_ki"] = pid.getCoolingKi();
+    doc["pid_cooling_kd"] = pid.getCoolingKd();
     serializeJson(doc, *serial);
     serial->println();
 }
@@ -333,11 +398,23 @@ void CommAPI::sendStatus() {
     doc["profile_remaining_time"] = profileManager.getRemainingTime();
     doc["autotune_active"] = pid.isAutotuneActive();
     doc["autotune_status"] = pid.getAutotuneStatus();
-    doc["cooling_mode"] = false;  // CHANGED: Temporarily disabled - was pid.isCooling();
-    doc["emergency_stop"] = false;  // Will implement getEmergencyStop() later
-    doc["temperature_rate"] = 0.0;  // Will implement getTemperatureRate() later
-    doc["asymmetric_autotune_active"] = false;  // Will implement later
-    
+    doc["cooling_mode"] = pid.isCooling();
+    doc["emergency_stop"] = pid.isEmergencyStop();
+    doc["temperature_rate"] = pid.getTemperatureRate();
+    doc["asymmetric_autotune_active"] = pid.isAutotuneActive();
+    doc["pid_max_output"] = pid.getMaxOutputPercent();
+    doc["pid_heating_limit"] = pid.getHeatingOutputLimit();
+    doc["pid_cooling_limit"] = pid.getCoolingOutputLimit();
+    doc["pid_heating_kp"] = pid.getHeatingKp();
+    doc["pid_heating_ki"] = pid.getHeatingKi();
+    doc["pid_heating_kd"] = pid.getHeatingKd();
+    doc["pid_cooling_kp"] = pid.getCoolingKp();
+    doc["pid_cooling_ki"] = pid.getCoolingKi();
+    doc["pid_cooling_kd"] = pid.getCoolingKd();
+    doc["cooling_rate_limit"] = pid.getCoolingRateLimit();
+    doc["deadband"] = pid.getCurrentDeadband();
+    doc["safety_margin"] = pid.getSafetyMargin();
+
     serializeJson(doc, *serial);
     serial->println();
 }
@@ -365,31 +442,64 @@ void CommAPI::sendStatus(const char* key, double value) {
 
 void CommAPI::sendPIDParams() {
     StaticJsonDocument<256> doc;
-    doc["pid_kp"] = pid.getKp();
-    doc["pid_ki"] = pid.getKi();
-    doc["pid_kd"] = pid.getKd();
+    doc["pid_kp"] = pid.getHeatingKp();
+    doc["pid_ki"] = pid.getHeatingKi();
+    doc["pid_kd"] = pid.getHeatingKd();
+    doc["pid_heating_kp"] = pid.getHeatingKp();
+    doc["pid_heating_ki"] = pid.getHeatingKi();
+    doc["pid_heating_kd"] = pid.getHeatingKd();
+    doc["pid_cooling_kp"] = pid.getCoolingKp();
+    doc["pid_cooling_ki"] = pid.getCoolingKi();
+    doc["pid_cooling_kd"] = pid.getCoolingKd();
     doc["pid_max_output"] = pid.getMaxOutputPercent();
+    doc["pid_heating_limit"] = pid.getHeatingOutputLimit();
+    doc["pid_cooling_limit"] = pid.getCoolingOutputLimit();
+    doc["pid_mode"] = pid.isCooling() ? "cooling" : "heating";
     serializeJson(doc, *serial);
     serial->println();
 }
 
 void CommAPI::sendConfig() {
     StaticJsonDocument<512> doc;
-    doc["pid_kp"] = pid.getKp();
-    doc["pid_ki"] = pid.getKi();
-    doc["pid_kd"] = pid.getKd();
+    doc["pid_kp"] = pid.getHeatingKp();
+    doc["pid_ki"] = pid.getHeatingKi();
+    doc["pid_kd"] = pid.getHeatingKd();
+    doc["pid_heating_kp"] = pid.getHeatingKp();
+    doc["pid_heating_ki"] = pid.getHeatingKi();
+    doc["pid_heating_kd"] = pid.getHeatingKd();
+    doc["pid_cooling_kp"] = pid.getCoolingKp();
+    doc["pid_cooling_ki"] = pid.getCoolingKi();
+    doc["pid_cooling_kd"] = pid.getCoolingKd();
     doc["pid_max_output"] = pid.getMaxOutputPercent();
+    doc["pid_heating_limit"] = pid.getHeatingOutputLimit();
+    doc["pid_cooling_limit"] = pid.getCoolingOutputLimit();
     doc["target_temp"] = pid.getTargetTemp();
     doc["debug_level"] = pid.isDebugEnabled() ? 1 : 0;
     doc["failsafe_timeout"] = heartbeatTimeoutMs;
+    doc["cooling_rate_limit"] = pid.getCoolingRateLimit();
+    doc["deadband"] = pid.getCurrentDeadband();
+    doc["safety_margin"] = pid.getSafetyMargin();
     serializeJson(doc, *serial);
     serial->println();
 }
 
 void CommAPI::saveAllToEEPROM() {
-    eeprom.savePIDParams(pid.getKp(), pid.getKi(), pid.getKd());
+    eeprom.saveHeatingPIDParams(pid.getHeatingKp(), pid.getHeatingKi(), pid.getHeatingKd());
+    eeprom.saveCoolingPIDParams(pid.getCoolingKp(), pid.getCoolingKi(), pid.getCoolingKd());
     eeprom.saveTargetTemp(pid.getTargetTemp());
-    eeprom.saveMaxOutput(pid.getMaxOutputPercent());
+
+    EEPROMManager::OutputLimits limits{
+        pid.getHeatingOutputLimit(),
+        pid.getCoolingOutputLimit(),
+    };
+    eeprom.saveOutputLimits(limits);
+
+    EEPROMManager::SafetySettings safety{
+        pid.getCoolingRateLimit(),
+        pid.getCurrentDeadband(),
+        pid.getSafetyMargin(),
+    };
+    eeprom.saveSafetySettings(safety);
     int debugLevel = pid.isDebugEnabled() ? 1 : 0;
     eeprom.saveDebugLevel(debugLevel);
     eeprom.saveFailsafeTimeout(heartbeatTimeoutMs);

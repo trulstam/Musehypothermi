@@ -90,6 +90,8 @@ AsymmetricPIDModule::AsymmetricPIDModule()
       lastTemperature(0.0), temperatureRate(0.0),
       outputSmoothingFactor(kOutputSmoothingFactor), lastOutput(0.0),
       eeprom(nullptr) {
+
+    // Initialize default parameters
     currentParams.kp_cooling = kDefaultCoolingKp;
     currentParams.ki_cooling = kDefaultCoolingKi;
     currentParams.kd_cooling = kDefaultCoolingKd;
@@ -106,6 +108,7 @@ void AsymmetricPIDModule::begin(EEPROMManager &eepromManager) {
     eeprom = &eepromManager;
     loadAsymmetricParams();
 
+    // Configure both PID controllers
     coolingPID.SetSampleTime(kSampleTimeMs);
     heatingPID.SetSampleTime(kSampleTimeMs);
 
@@ -117,7 +120,7 @@ void AsymmetricPIDModule::begin(EEPROMManager &eepromManager) {
     comm.sendEvent("🔧 Asymmetric PID controller ready");
 }
 
-void AsymmetricPIDModule::update(double currentTemp) {
+void AsymmetricPIDModule::update(double /*currentTemp*/) {
     if (emergencyStop || isFailsafeActive()) {
         stop();
         return;
@@ -259,11 +262,13 @@ void AsymmetricPIDModule::applyRateLimiting() {
 }
 
 void AsymmetricPIDModule::applyOutputSmoothing() {
+    // Smooth output changes to prevent sudden jumps
     finalOutput = (outputSmoothingFactor * lastOutput) +
                   ((1.0 - outputSmoothingFactor) * rawPIDOutput);
     lastOutput = finalOutput;
 }
 
+// --- Compatibility-style getters (preserve existing API) ---
 float AsymmetricPIDModule::getKp() {
     return coolingMode ? currentParams.kp_cooling : currentParams.kp_heating;
 }
@@ -518,57 +523,40 @@ void AsymmetricPIDModule::loadAsymmetricParams() {
             restoredDefaults = true;
         }
 
-        EEPROMManager::OutputLimits storedLimits{
-            heatingLimit,
-            coolingLimit,
-        };
-        eeprom->loadOutputLimits(storedLimits);
-
-        bool limitsChanged = false;
-        if (shouldRestoreMaxOutput(storedLimits.heatingPercent)) {
-            storedLimits.heatingPercent = kDefaultMaxOutputPercent;
-            limitsChanged = true;
-        }
-        if (shouldRestoreMaxOutput(storedLimits.coolingPercent)) {
-            storedLimits.coolingPercent = kDefaultMaxOutputPercent;
-            limitsChanged = true;
-        }
-        if (limitsChanged) {
-            eeprom->saveOutputLimits(storedLimits);
+        eeprom->loadHeatingMaxOutput(heatingLimit);
+        if (shouldRestoreMaxOutput(heatingLimit)) {
+            heatingLimit = kDefaultMaxOutputPercent;
+            eeprom->saveHeatingMaxOutput(heatingLimit);
             restoredDefaults = true;
         }
 
-        heatingLimit = storedLimits.heatingPercent;
-        coolingLimit = storedLimits.coolingPercent;
-
-        EEPROMManager::SafetySettings storedSafety{
-            storedRate,
-            storedDeadband,
-            storedMargin,
-        };
-        eeprom->loadSafetySettings(storedSafety);
-
-        bool safetyChanged = false;
-        if (shouldRestoreCoolingRate(storedSafety.coolingRateLimit)) {
-            storedSafety.coolingRateLimit = kDefaultCoolingRate;
-            safetyChanged = true;
-        }
-        if (shouldRestoreDeadband(storedSafety.deadband)) {
-            storedSafety.deadband = kDefaultDeadband;
-            safetyChanged = true;
-        }
-        if (shouldRestoreSafetyMargin(storedSafety.safetyMargin)) {
-            storedSafety.safetyMargin = kDefaultSafetyMargin;
-            safetyChanged = true;
-        }
-        if (safetyChanged) {
-            eeprom->saveSafetySettings(storedSafety);
+        eeprom->loadCoolingMaxOutput(coolingLimit);
+        if (shouldRestoreMaxOutput(coolingLimit)) {
+            coolingLimit = kDefaultMaxOutputPercent;
+            eeprom->saveCoolingMaxOutput(coolingLimit);
             restoredDefaults = true;
         }
 
-        storedRate = storedSafety.coolingRateLimit;
-        storedDeadband = storedSafety.deadband;
-        storedMargin = storedSafety.safetyMargin;
+        eeprom->loadCoolingRateLimit(storedRate);
+        if (shouldRestoreCoolingRate(storedRate)) {
+            storedRate = kDefaultCoolingRate;
+            eeprom->saveCoolingRateLimit(storedRate);
+            restoredDefaults = true;
+        }
+
+        eeprom->loadDeadband(storedDeadband);
+        if (shouldRestoreDeadband(storedDeadband)) {
+            storedDeadband = kDefaultDeadband;
+            eeprom->saveDeadband(storedDeadband);
+            restoredDefaults = true;
+        }
+
+        eeprom->loadSafetyMargin(storedMargin);
+        if (shouldRestoreSafetyMargin(storedMargin)) {
+            storedMargin = kDefaultSafetyMargin;
+            eeprom->saveSafetyMargin(storedMargin);
+            restoredDefaults = true;
+        }
     }
 
     currentParams.kp_heating = heatingKp;

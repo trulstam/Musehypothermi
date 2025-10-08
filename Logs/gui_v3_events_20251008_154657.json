@@ -1,0 +1,33 @@
+{
+    "metadata": {},
+    "events": [
+        {
+            "timestamp": "2025-10-08 15:47:06",
+            "event": "Connected to COM5"
+        },
+        {
+            "timestamp": "2025-10-08 15:47:07",
+            "event": "\u2705 Failsafe cleared after heartbeat recovery"
+        },
+        {
+            "timestamp": "2025-10-08 15:47:35",
+            "event": "CMD: pid \u2192 start"
+        },
+        {
+            "timestamp": "2025-10-08 15:47:35",
+            "event": "\ud83d\ude80 Asymmetric PID started"
+        },
+        {
+            "timestamp": "2025-10-08 15:48:08",
+            "event": "SET: target_temp \u2192 25.00\u00b0C"
+        },
+        {
+            "timestamp": "2025-10-08 15:48:33",
+            "event": "SET: target_temp \u2192 20.00\u00b0C"
+        },
+        {
+            "timestamp": "2025-10-08 15:48:33",
+            "event": "\u2744\ufe0f Switched to cooling mode"
+        }
+    ]
+}

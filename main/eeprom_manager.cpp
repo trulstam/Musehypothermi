@@ -59,6 +59,18 @@ void EEPROMManager::loadCoolingPIDParams(float &kp, float &ki, float &kd) const 
     EEPROM.get(Layout::addrCoolingKd, kd);
 }
 
+void EEPROMManager::saveCoolingPIDParams(float kp, float ki, float kd) {
+    EEPROM.put(addrCoolingKp, kp);
+    EEPROM.put(addrCoolingKi, ki);
+    EEPROM.put(addrCoolingKd, kd);
+}
+
+void EEPROMManager::loadCoolingPIDParams(float &kp, float &ki, float &kd) {
+    EEPROM.get(addrCoolingKp, kp);
+    EEPROM.get(addrCoolingKi, ki);
+    EEPROM.get(addrCoolingKd, kd);
+}
+
 void EEPROMManager::saveTargetTemp(float temp) {
     EEPROM.put(Layout::addrTargetTemp, temp);
 }
@@ -156,6 +168,6 @@ void EEPROMManager::saveMagicNumber() {
 
 bool EEPROMManager::isMagicNumberValid() const {
     uint32_t magic = 0;
-    EEPROM.get(Layout::addrMagic, magic);
+    EEPROM.get(addrMagic, magic);
     return magic == MAGIC_NUMBER;
 }

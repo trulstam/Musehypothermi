@@ -417,6 +417,13 @@ void AsymmetricPIDModule::performCoolingAutotune() {
     // but with safety constraints and conservative parameter calculation
 }
 
+void AsymmetricPIDModule::performHeatingAutotune() {
+    // Placeholder for heating autotune logic
+    comm.sendEvent("🔥 Performing heating autotune...");
+    // TODO: implement heating-side autotune strategy compatible with the
+    // asymmetric PID controller.
+}
+
 void AsymmetricPIDModule::abortAutotune() {
     autotuneActive = false;
     autotuneStatusString = "aborted";
@@ -580,7 +587,8 @@ void AsymmetricPIDModule::enableDebug(bool enable) {
 bool AsymmetricPIDModule::isDebugEnabled() {
     return debugEnabled;
 }
-// Basic control methods (add at end of file)
+
+// Basic control methods
 void AsymmetricPIDModule::start() {
     clearFailsafe();
     coolingPID.SetMode(AUTOMATIC);

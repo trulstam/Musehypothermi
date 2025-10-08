@@ -7,6 +7,7 @@
 #include <Arduino.h>
 #include <ArduinoJson.h>
 #include <PID_v1.h>
+#include <math.h>
 
 extern SensorModule sensors;
 extern CommAPI comm;
@@ -14,34 +15,79 @@ extern CommAPI comm;
 // Global PWM tracker for simulation
 int currentPwmOutput = 0;
 
+namespace {
+constexpr float kDefaultHeatingKp = 2.0f;
+constexpr float kDefaultHeatingKi = 0.5f;
+constexpr float kDefaultHeatingKd = 1.0f;
+
+constexpr float kDefaultCoolingKp = 1.5f;
+constexpr float kDefaultCoolingKi = 0.3f;
+constexpr float kDefaultCoolingKd = 0.8f;
+
+constexpr float kDefaultTargetTemp = 37.0f;
+constexpr float kDefaultMaxOutputPercent = 35.0f;
+
+bool isInvalidPidValue(float value) {
+    return isnan(value) || isinf(value) || value < 0.0f;
+}
+
+bool shouldRestorePidDefaults(float kp, float ki, float kd) {
+    if (isInvalidPidValue(kp) || isInvalidPidValue(ki) || isInvalidPidValue(kd)) {
+        return true;
+    }
+
+    return kp == 0.0f && ki == 0.0f && kd == 0.0f;
+}
+
+bool shouldRestoreTarget(float target) {
+    return isnan(target) || isinf(target) || target < 30.0f || target > 40.0f;
+}
+
+bool shouldRestoreMaxOutput(float maxOutput) {
+    return isnan(maxOutput) || isinf(maxOutput) || maxOutput <= 0.0f || maxOutput > 100.0f;
+}
+
+bool shouldRestoreCoolingRate(float rate) {
+    return isnan(rate) || isinf(rate) || rate <= 0.0f || rate > 5.0f;
+}
+
+bool shouldRestoreDeadband(float deadband) {
+    return isnan(deadband) || isinf(deadband) || deadband < 0.1f || deadband > 5.0f;
+}
+
+bool shouldRestoreSafetyMargin(float margin) {
+    return isnan(margin) || isinf(margin) || margin < 0.1f || margin > 5.0f;
+}
+}  // namespace
+
 AsymmetricPIDModule::AsymmetricPIDModule()
-    : coolingPID(&Input, &coolingOutput, &Setpoint, 2.0, 0.5, 1.0, REVERSE),
-      heatingPID(&Input, &heatingOutput, &Setpoint, 1.5, 0.3, 0.8, DIRECT),
-      Input(0), coolingOutput(0), heatingOutput(0), Setpoint(37.0),
-      active(false), autotuneActive(false), 
+    : coolingPID(&Input, &coolingOutput, &Setpoint, kDefaultCoolingKp, kDefaultCoolingKi, kDefaultCoolingKd, REVERSE),
+      heatingPID(&Input, &heatingOutput, &Setpoint, kDefaultHeatingKp, kDefaultHeatingKi, kDefaultHeatingKd, DIRECT),
+      Input(0), coolingOutput(0), heatingOutput(0), Setpoint(kDefaultTargetTemp),
+      active(false), autotuneActive(false),
       debugEnabled(false),
       coolingMode(false), emergencyStop(false),
       maxCoolingRate(2.0), outputSmoothingFactor(0.8),
       lastOutput(0), rawPIDOutput(0), finalOutput(0),
       lastTemperature(0), lastUpdateTime(0), temperatureRate(0),
       autotuneStatusString("idle") {
-    
+
     // Initialize default parameters
-    currentParams.kp_cooling = 2.0;
-    currentParams.ki_cooling = 0.5;
-    currentParams.kd_cooling = 1.0;
-    currentParams.kp_heating = 1.5;
-    currentParams.ki_heating = 0.3;
-    currentParams.kd_heating = 0.8;
+    currentParams.kp_cooling = kDefaultCoolingKp;
+    currentParams.ki_cooling = kDefaultCoolingKi;
+    currentParams.kd_cooling = kDefaultCoolingKd;
+    currentParams.kp_heating = kDefaultHeatingKp;
+    currentParams.ki_heating = kDefaultHeatingKi;
+    currentParams.kd_heating = kDefaultHeatingKd;
     currentParams.deadband = 0.5;
     currentParams.safety_margin = 2.0;
-    currentParams.cooling_limit = -20.0;
-    currentParams.heating_limit = 20.0;
+    currentParams.cooling_limit = -kDefaultMaxOutputPercent;
+    currentParams.heating_limit = kDefaultMaxOutputPercent;
 }
 void AsymmetricPIDModule::begin(EEPROMManager &eepromManager) {
     eeprom = &eepromManager;
     loadAsymmetricParams();
-    
+
     // Configure both PID controllers
     coolingPID.SetSampleTime(100);
     heatingPID.SetSampleTime(100);
@@ -261,37 +307,47 @@ void AsymmetricPIDModule::setKd(float value) {
     }
 }
 
-void AsymmetricPIDModule::setMaxOutputPercent(float percent) {
+void AsymmetricPIDModule::setMaxOutputPercent(float percent, bool persist) {
+    percent = constrain(percent, 0.0f, 100.0f);
     currentParams.cooling_limit = -percent;
     currentParams.heating_limit = percent;
-    coolingPID.SetOutputLimits(-percent, 0);
-    heatingPID.SetOutputLimits(0, percent);
+    coolingPID.SetOutputLimits(currentParams.cooling_limit, 0);
+    heatingPID.SetOutputLimits(0, currentParams.heating_limit);
+
+    if (persist && eeprom) {
+        eeprom->saveMaxOutput(percent);
+        saveAsymmetricParams();
+    }
 }
 
-void AsymmetricPIDModule::setCoolingPID(float kp, float ki, float kd) {
+void AsymmetricPIDModule::setCoolingPID(float kp, float ki, float kd, bool persist) {
     currentParams.kp_cooling = kp;
     currentParams.ki_cooling = ki;
     currentParams.kd_cooling = kd;
-    
+
     if (coolingMode) {
         coolingPID.SetTunings(kp, ki, kd);
     }
-    
-    saveAsymmetricParams();
-    comm.sendEvent("❄️ Cooling PID parameters updated");
+
+    if (persist) {
+        saveAsymmetricParams();
+        comm.sendEvent("❄️ Cooling PID parameters updated");
+    }
 }
 
-void AsymmetricPIDModule::setHeatingPID(float kp, float ki, float kd) {
+void AsymmetricPIDModule::setHeatingPID(float kp, float ki, float kd, bool persist) {
     currentParams.kp_heating = kp;
     currentParams.ki_heating = ki;
     currentParams.kd_heating = kd;
-    
+
     if (!coolingMode) {
         heatingPID.SetTunings(kp, ki, kd);
     }
-    
-    saveAsymmetricParams();
-    comm.sendEvent("🔥 Heating PID parameters updated");
+
+    if (persist) {
+        saveAsymmetricParams();
+        comm.sendEvent("🔥 Heating PID parameters updated");
+    }
 }
 
 void AsymmetricPIDModule::setEmergencyStop(bool enabled) {
@@ -307,15 +363,24 @@ void AsymmetricPIDModule::setEmergencyStop(bool enabled) {
     }
 }
 
-void AsymmetricPIDModule::setCoolingRateLimit(float maxRate) {
+void AsymmetricPIDModule::setCoolingRateLimit(float maxRate, bool persist) {
     maxCoolingRate = maxRate;
-    comm.sendEvent("⚠️ Cooling rate limit set to " + String(maxRate) + "°C/s");
+
+    if (persist) {
+        saveAsymmetricParams();
+        comm.sendEvent("⚠️ Cooling rate limit set to " + String(maxRate, 2) + "°C/s");
+    }
 }
 
-void AsymmetricPIDModule::setSafetyParams(float deadband, float safetyMargin) {
+void AsymmetricPIDModule::setSafetyParams(float deadband, float safetyMargin, bool persist) {
     currentParams.deadband = deadband;
     currentParams.safety_margin = safetyMargin;
-    saveAsymmetricParams();
+
+    if (persist) {
+        saveAsymmetricParams();
+        comm.sendEvent("🛡️ Safety params updated: deadband=" + String(deadband, 2) +
+                       "°C, margin=" + String(safetyMargin, 2) + "°C");
+    }
 }
 
 void AsymmetricPIDModule::startAutotune() {
@@ -352,6 +417,13 @@ void AsymmetricPIDModule::performCoolingAutotune() {
     // but with safety constraints and conservative parameter calculation
 }
 
+void AsymmetricPIDModule::performHeatingAutotune() {
+    // Placeholder for heating autotune logic
+    comm.sendEvent("🔥 Performing heating autotune...");
+    // TODO: implement heating-side autotune strategy compatible with the
+    // asymmetric PID controller.
+}
+
 void AsymmetricPIDModule::abortAutotune() {
     autotuneActive = false;
     autotuneStatusString = "aborted";
@@ -359,24 +431,120 @@ void AsymmetricPIDModule::abortAutotune() {
 }
 
 void AsymmetricPIDModule::saveAsymmetricParams() {
-    // Save both heating and cooling parameters to EEPROM
-    // Basic implementation - store in existing EEPROM slots for now
-    if (eeprom) {
-        eeprom->savePIDParams(currentParams.kp_cooling, 
-                             currentParams.ki_cooling, 
-                             currentParams.kd_cooling);
+    if (!eeprom) {
+        return;
     }
+
+    eeprom->saveHeatingPIDParams(currentParams.kp_heating,
+                                 currentParams.ki_heating,
+                                 currentParams.kd_heating);
+    eeprom->saveCoolingPIDParams(currentParams.kp_cooling,
+                                 currentParams.ki_cooling,
+                                 currentParams.kd_cooling);
+    eeprom->saveCoolingRateLimit(maxCoolingRate);
+    eeprom->saveDeadband(currentParams.deadband);
+    eeprom->saveSafetyMargin(currentParams.safety_margin);
+    eeprom->saveTargetTemp(Setpoint);
 }
 
 void AsymmetricPIDModule::loadAsymmetricParams() {
-    // Load parameters from EEPROM or use defaults
-    // For now, use the defaults set in constructor
+    bool restoredDefaults = false;
+
     if (eeprom) {
-        float kp, ki, kd;
-        eeprom->loadPIDParams(kp, ki, kd);
-        currentParams.kp_cooling = kp;
-        currentParams.ki_cooling = ki;
-        currentParams.kd_cooling = kd;
+        float heatingKp, heatingKi, heatingKd;
+        eeprom->loadHeatingPIDParams(heatingKp, heatingKi, heatingKd);
+        if (shouldRestorePidDefaults(heatingKp, heatingKi, heatingKd)) {
+            heatingKp = kDefaultHeatingKp;
+            heatingKi = kDefaultHeatingKi;
+            heatingKd = kDefaultHeatingKd;
+            eeprom->saveHeatingPIDParams(heatingKp, heatingKi, heatingKd);
+            restoredDefaults = true;
+        }
+        currentParams.kp_heating = heatingKp;
+        currentParams.ki_heating = heatingKi;
+        currentParams.kd_heating = heatingKd;
+
+        float coolingKp, coolingKi, coolingKd;
+        eeprom->loadCoolingPIDParams(coolingKp, coolingKi, coolingKd);
+        if (shouldRestorePidDefaults(coolingKp, coolingKi, coolingKd)) {
+            coolingKp = kDefaultCoolingKp;
+            coolingKi = kDefaultCoolingKi;
+            coolingKd = kDefaultCoolingKd;
+            eeprom->saveCoolingPIDParams(coolingKp, coolingKi, coolingKd);
+            restoredDefaults = true;
+        }
+        currentParams.kp_cooling = coolingKp;
+        currentParams.ki_cooling = coolingKi;
+        currentParams.kd_cooling = coolingKd;
+
+        heatingPID.SetTunings(currentParams.kp_heating,
+                              currentParams.ki_heating,
+                              currentParams.kd_heating);
+        coolingPID.SetTunings(currentParams.kp_cooling,
+                              currentParams.ki_cooling,
+                              currentParams.kd_cooling);
+
+        float target;
+        eeprom->loadTargetTemp(target);
+        if (shouldRestoreTarget(target)) {
+            target = kDefaultTargetTemp;
+            eeprom->saveTargetTemp(target);
+            restoredDefaults = true;
+        }
+        setTargetTemp(target);
+
+        float maxOutput;
+        eeprom->loadMaxOutput(maxOutput);
+        if (shouldRestoreMaxOutput(maxOutput)) {
+            maxOutput = kDefaultMaxOutputPercent;
+            eeprom->saveMaxOutput(maxOutput);
+            restoredDefaults = true;
+        }
+        setMaxOutputPercent(maxOutput, false);
+
+        float storedRate;
+        eeprom->loadCoolingRateLimit(storedRate);
+        if (shouldRestoreCoolingRate(storedRate)) {
+            storedRate = 2.0f;
+            eeprom->saveCoolingRateLimit(storedRate);
+            restoredDefaults = true;
+        }
+        maxCoolingRate = storedRate;
+
+        float storedDeadband;
+        eeprom->loadDeadband(storedDeadband);
+        if (shouldRestoreDeadband(storedDeadband)) {
+            storedDeadband = 0.5f;
+            eeprom->saveDeadband(storedDeadband);
+            restoredDefaults = true;
+        }
+        currentParams.deadband = storedDeadband;
+
+        float storedMargin;
+        eeprom->loadSafetyMargin(storedMargin);
+        if (shouldRestoreSafetyMargin(storedMargin)) {
+            storedMargin = 2.0f;
+            eeprom->saveSafetyMargin(storedMargin);
+            restoredDefaults = true;
+        }
+        currentParams.safety_margin = storedMargin;
+    } else {
+        // If EEPROM manager unavailable, ensure sane runtime defaults
+        heatingPID.SetTunings(currentParams.kp_heating,
+                              currentParams.ki_heating,
+                              currentParams.kd_heating);
+        coolingPID.SetTunings(currentParams.kp_cooling,
+                              currentParams.ki_cooling,
+                              currentParams.kd_cooling);
+        setTargetTemp(kDefaultTargetTemp);
+        setMaxOutputPercent(kDefaultMaxOutputPercent, false);
+        maxCoolingRate = 2.0f;
+        currentParams.deadband = 0.5f;
+        currentParams.safety_margin = 2.0f;
+    }
+
+    if (restoredDefaults) {
+        Serial.println(F("[PID] Restored asymmetric defaults due to invalid EEPROM data"));
     }
 }
 
@@ -388,7 +556,8 @@ void AsymmetricPIDModule::enableDebug(bool enable) {
 bool AsymmetricPIDModule::isDebugEnabled() {
     return debugEnabled;
 }
-// Basic control methods (add at end of file)
+
+// Basic control methods
 void AsymmetricPIDModule::start() {
     clearFailsafe();
     coolingPID.SetMode(AUTOMATIC);

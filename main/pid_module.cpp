@@ -7,6 +7,36 @@
 #include <Arduino.h>
 #include <ArduinoJson.h>
 #include <PID_v1.h>
+#include <math.h>
+
+namespace {
+constexpr float kDefaultKp = 2.0f;
+constexpr float kDefaultKi = 0.5f;
+constexpr float kDefaultKd = 1.0f;
+constexpr float kDefaultTargetTemp = 37.0f;
+constexpr float kDefaultMaxOutputPercent = 35.0f;
+
+bool isInvalidPidValue(float value) {
+    return isnan(value) || isinf(value) || value < 0.0f;
+}
+
+bool shouldRestorePidDefaults(float kp, float ki, float kd) {
+    if (isInvalidPidValue(kp) || isInvalidPidValue(ki) || isInvalidPidValue(kd)) {
+        return true;
+    }
+
+    // Treat an all-zero triplet as an uninitialised/invalid EEPROM payload.
+    return kp == 0.0f && ki == 0.0f && kd == 0.0f;
+}
+
+bool shouldRestoreTarget(float target) {
+    return isnan(target) || isinf(target) || target < 30.0f || target > 40.0f;
+}
+
+bool shouldRestoreMaxOutput(float maxOutput) {
+    return isnan(maxOutput) || isinf(maxOutput) || maxOutput <= 0.0f || maxOutput > 100.0f;
+}
+}  // namespace
 
 extern SensorModule sensors;
 extern CommAPI comm;
@@ -14,29 +44,53 @@ extern CommAPI comm;
 // Global PWM tracker for simulation (defined in pid_module_asymmetric.cpp)
 
 PIDModule::PIDModule()
-  : pid(&Input, &Output, &Setpoint, 2.0, 0.5, 1.0, DIRECT),
-    kp(2.0), ki(0.5), kd(1.0), maxOutputPercent(20.0),
+  : pid(&Input, &Output, &Setpoint, kDefaultKp, kDefaultKi, kDefaultKd, DIRECT),
+    kp(kDefaultKp), ki(kDefaultKi), kd(kDefaultKd), maxOutputPercent(kDefaultMaxOutputPercent),
     active(false), autotuneActive(false), autotuneStatus("idle"),
-    Input(0), Output(0), Setpoint(37.0),
+    Input(0), Output(0), Setpoint(kDefaultTargetTemp),
     profileLength(0), currentProfileStep(0), profileStartMillis(0), profileActive(false),
-    debugEnabled(false), actualPlateTarget(37.0) {}
+    debugEnabled(false), actualPlateTarget(kDefaultTargetTemp) {}
 
 void PIDModule::begin(EEPROMManager &eepromManager) {
     eeprom = &eepromManager;
 
     float eKp, eKi, eKd;
     eeprom->loadPIDParams(eKp, eKi, eKd);
+    bool restoredDefaults = false;
+
+    if (shouldRestorePidDefaults(eKp, eKi, eKd)) {
+        eKp = kDefaultKp;
+        eKi = kDefaultKi;
+        eKd = kDefaultKd;
+        eeprom->savePIDParams(eKp, eKi, eKd);
+        restoredDefaults = true;
+    }
+
     setKp(eKp);
     setKi(eKi);
     setKd(eKd);
 
     float tTemp;
     eeprom->loadTargetTemp(tTemp);
+    if (shouldRestoreTarget(tTemp)) {
+        tTemp = kDefaultTargetTemp;
+        eeprom->saveTargetTemp(tTemp);
+        restoredDefaults = true;
+    }
     setTargetTemp(tTemp);
 
     float maxOutput;
     eeprom->loadMaxOutput(maxOutput);
+    if (shouldRestoreMaxOutput(maxOutput)) {
+        maxOutput = kDefaultMaxOutputPercent;
+        eeprom->saveMaxOutput(maxOutput);
+        restoredDefaults = true;
+    }
     setMaxOutputPercent(maxOutput);
+
+    if (restoredDefaults) {
+        Serial.println(F("[PID] Restored default parameters due to invalid EEPROM data"));
+    }
 
     pwm.begin();
 

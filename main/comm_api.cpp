@@ -23,9 +23,13 @@ CommAPI::CommAPI(Stream &serialStream) {
     buffer = "";
 }
 
-void CommAPI::begin(Stream &serialStream) {
+void CommAPI::begin(Stream &serialStream, bool factoryResetOccurred) {
     serial = &serialStream;
     buffer = "";
+
+    if (factoryResetOccurred) {
+        sendEvent("\u26a0\ufe0f EEPROM factory reset detected at boot");
+    }
 }
 
 void CommAPI::process() {

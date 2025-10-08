@@ -14,15 +14,35 @@ bool EEPROMManager::begin() {
 }
 
 void EEPROMManager::savePIDParams(float kp, float ki, float kd) {
+    saveHeatingPIDParams(kp, ki, kd);
+}
+
+void EEPROMManager::loadPIDParams(float &kp, float &ki, float &kd) {
+    loadHeatingPIDParams(kp, ki, kd);
+}
+
+void EEPROMManager::saveHeatingPIDParams(float kp, float ki, float kd) {
     EEPROM.put(addrKp, kp);
     EEPROM.put(addrKi, ki);
     EEPROM.put(addrKd, kd);
 }
 
-void EEPROMManager::loadPIDParams(float &kp, float &ki, float &kd) {
+void EEPROMManager::loadHeatingPIDParams(float &kp, float &ki, float &kd) {
     EEPROM.get(addrKp, kp);
     EEPROM.get(addrKi, ki);
     EEPROM.get(addrKd, kd);
+}
+
+void EEPROMManager::saveCoolingPIDParams(float kp, float ki, float kd) {
+    EEPROM.put(addrCoolingKp, kp);
+    EEPROM.put(addrCoolingKi, ki);
+    EEPROM.put(addrCoolingKd, kd);
+}
+
+void EEPROMManager::loadCoolingPIDParams(float &kp, float &ki, float &kd) {
+    EEPROM.get(addrCoolingKp, kp);
+    EEPROM.get(addrCoolingKi, ki);
+    EEPROM.get(addrCoolingKd, kd);
 }
 
 void EEPROMManager::saveTargetTemp(float temp) {
@@ -39,6 +59,30 @@ void EEPROMManager::saveMaxOutput(float maxOutput) {
 
 void EEPROMManager::loadMaxOutput(float &maxOutput) {
     EEPROM.get(addrMaxOutput, maxOutput);
+}
+
+void EEPROMManager::saveCoolingRateLimit(float rate) {
+    EEPROM.put(addrCoolingRateLimit, rate);
+}
+
+void EEPROMManager::loadCoolingRateLimit(float &rate) {
+    EEPROM.get(addrCoolingRateLimit, rate);
+}
+
+void EEPROMManager::saveDeadband(float deadband) {
+    EEPROM.put(addrDeadband, deadband);
+}
+
+void EEPROMManager::loadDeadband(float &deadband) {
+    EEPROM.get(addrDeadband, deadband);
+}
+
+void EEPROMManager::saveSafetyMargin(float margin) {
+    EEPROM.put(addrSafetyMargin, margin);
+}
+
+void EEPROMManager::loadSafetyMargin(float &margin) {
+    EEPROM.get(addrSafetyMargin, margin);
 }
 
 void EEPROMManager::saveDebugLevel(int debugLevel) {
@@ -58,9 +102,13 @@ void EEPROMManager::loadFailsafeTimeout(int &timeout) {
 }
 
 bool EEPROMManager::factoryReset() {
-    savePIDParams(2.0f, 0.5f, 1.0f);
+    saveHeatingPIDParams(2.0f, 0.5f, 1.0f);
+    saveCoolingPIDParams(1.5f, 0.3f, 0.8f);
     saveTargetTemp(37.0f);
     saveMaxOutput(35.0f);
+    saveCoolingRateLimit(2.0f);
+    saveDeadband(0.5f);
+    saveSafetyMargin(2.0f);
     saveDebugLevel(0);
     saveFailsafeTimeout(5000);
 

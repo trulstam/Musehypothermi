@@ -6,6 +6,12 @@
 
 class EEPROMManager {
 public:
+    struct PIDParams {
+        float kp;
+        float ki;
+        float kd;
+    };
+
     struct OutputLimits {
         float heatingPercent;
         float coolingPercent;
@@ -19,77 +25,52 @@ public:
 
     bool begin();
 
+    // Legacy single PID helpers (mirror original API)
     void savePIDParams(float kp, float ki, float kd);
     void loadPIDParams(float &kp, float &ki, float &kd);
+
+    // Dedicated asymmetric PID storage
     void saveHeatingPIDParams(float kp, float ki, float kd);
     void loadHeatingPIDParams(float &kp, float &ki, float &kd);
     void saveCoolingPIDParams(float kp, float ki, float kd);
     void loadCoolingPIDParams(float &kp, float &ki, float &kd);
 
-    void saveHeatingPIDParams(float kp, float ki, float kd);
-    void loadHeatingPIDParams(float &kp, float &ki, float &kd);
-
-    void saveCoolingPIDParams(float kp, float ki, float kd);
-    void loadCoolingPIDParams(float &kp, float &ki, float &kd);
-
+    // Temperature target
     void saveTargetTemp(float temp);
     void loadTargetTemp(float &temp);
 
+    // Output limits
     void saveMaxOutput(float maxOutput);
     void loadMaxOutput(float &maxOutput);
     void saveHeatingMaxOutput(float maxOutput);
     void loadHeatingMaxOutput(float &maxOutput);
     void saveCoolingMaxOutput(float maxOutput);
     void loadCoolingMaxOutput(float &maxOutput);
-
-    void saveCoolingRateLimit(float rate);
-    void loadCoolingRateLimit(float &rate);
-
-    void saveDeadband(float deadband);
-    void loadDeadband(float &deadband);
-
-    void saveSafetyMargin(float margin);
-    void loadSafetyMargin(float &margin);
-
-    void saveCoolingRateLimit(float rate);
-    void loadCoolingRateLimit(float &rate);
-
-    void saveDeadband(float deadband);
-    void loadDeadband(float &deadband);
-
-    void saveSafetyMargin(float margin);
-    void loadSafetyMargin(float &margin);
-
-    void saveHeatingMaxOutput(float maxOutput);
-    void loadHeatingMaxOutput(float &maxOutput);
-
-    void saveCoolingMaxOutput(float maxOutput);
-    void loadCoolingMaxOutput(float &maxOutput);
-
     void saveOutputLimits(const OutputLimits &limits);
     void loadOutputLimits(OutputLimits &limits);
 
-    void saveCoolingRateLimit(float rate);
-    void loadCoolingRateLimit(float &rate);
-
-    void saveDeadband(float deadband);
-    void loadDeadband(float &deadband);
-
-    void saveSafetyMargin(float margin);
-    void loadSafetyMargin(float &margin);
-
+    // Safety configuration (asymmetric controller)
     void saveSafetySettings(const SafetySettings &settings);
     void loadSafetySettings(SafetySettings &settings);
 
+    // Inline convenience wrappers operating on the composite safety blob
+    inline void saveCoolingRateLimit(float rate);
+    inline void loadCoolingRateLimit(float &rate);
+    inline void saveDeadband(float deadband);
+    inline void loadDeadband(float &deadband);
+    inline void saveSafetyMargin(float margin);
+    inline void loadSafetyMargin(float &margin);
+
+    // Miscellaneous
     void saveDebugLevel(int debugLevel);
     void loadDebugLevel(int &debugLevel);
-
     void saveFailsafeTimeout(int timeout);
     void loadFailsafeTimeout(int &timeout);
 
     bool factoryReset();
 
 private:
+    // Flat address layout (no Layout struct / namespace)
     static const int addrKp = 0;
     static const int addrKi = addrKp + sizeof(float);
     static const int addrKd = addrKi + sizeof(float);
@@ -112,4 +93,44 @@ private:
     bool isMagicNumberValid() const;
 };
 
-#endif  // EEPROM_MANAGER_H
+// ---- Inline wrappers (use the composite SafetySettings block) ----
+inline void EEPROMManager::saveCoolingRateLimit(float rate) {
+    SafetySettings s{};
+    loadSafetySettings(s);
+    s.coolingRateLimit = rate;
+    saveSafetySettings(s);
+}
+
+inline void EEPROMManager::loadCoolingRateLimit(float &rate) {
+    SafetySettings s{};
+    loadSafetySettings(s);
+    rate = s.coolingRateLimit;
+}
+
+inline void EEPROMManager::saveDeadband(float deadband) {
+    SafetySettings s{};
+    loadSafetySettings(s);
+    s.deadband = deadband;
+    saveSafetySettings(s);
+}
+
+inline void EEPROMManager::loadDeadband(float &deadband) {
+    SafetySettings s{};
+    loadSafetySettings(s);
+    deadband = s.deadband;
+}
+
+inline void EEPROMManager::saveSafetyMargin(float margin) {
+    SafetySettings s{};
+    loadSafetySettings(s);
+    s.safetyMargin = margin;
+    saveSafetySettings(s);
+}
+
+inline void EEPROMManager::loadSafetyMargin(float &margin) {
+    SafetySettings s{};
+    loadSafetySettings(s);
+    margin = s.safetyMargin;
+}
+
+#endif // EEPROM_MANAGER_H

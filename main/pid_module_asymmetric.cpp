@@ -382,8 +382,7 @@ void AsymmetricPIDModule::setEmergencyStop(bool enabled) {
 void AsymmetricPIDModule::setCoolingRateLimit(float rate, bool persist) {
     maxCoolingRate = rate;
 
-    if (persist && eeprom) {
-        eeprom->saveCoolingRateLimit(rate);
+    if (persist) {
         saveAsymmetricParams();
     }
 

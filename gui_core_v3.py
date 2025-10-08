@@ -1081,6 +1081,11 @@ class MainWindow(QMainWindow):
         control_layout.addWidget(self.stopPIDButton)
         control_group.setLayout(control_layout)
         layout.addWidget(control_group)
+
+        # ASYMMETRIC PID CONTROLS
+        self.asymmetric_controls = AsymmetricPIDControls(self)
+        layout.addWidget(self.asymmetric_controls)
+
         layout.addStretch()
         return panel
 

@@ -1,0 +1,93 @@
+{
+    "metadata": {},
+    "events": [
+        {
+            "timestamp": "2025-10-08 10:06:52",
+            "event": "Connected to COM5"
+        },
+        {
+            "timestamp": "2025-10-08 10:06:52",
+            "event": "\u2705 Failsafe cleared after heartbeat recovery"
+        },
+        {
+            "timestamp": "2025-10-08 10:07:23",
+            "event": "SET: pid_max_output \u2192 100.0%"
+        },
+        {
+            "timestamp": "2025-10-08 10:07:35",
+            "event": "SET: PID \u2192 Kp=1.0, Ki=1.0, Kd=1.0"
+        },
+        {
+            "timestamp": "2025-10-08 10:07:35",
+            "event": "\ud83d\udd25 Heating PID parameters updated"
+        },
+        {
+            "timestamp": "2025-10-08 10:07:35",
+            "event": "\ud83d\udd25 Heating PID parameters updated"
+        },
+        {
+            "timestamp": "2025-10-08 10:07:35",
+            "event": "\ud83d\udd25 Heating PID parameters updated"
+        },
+        {
+            "timestamp": "2025-10-08 10:07:39",
+            "event": "CMD: save_eeprom"
+        },
+        {
+            "timestamp": "2025-10-08 10:07:44",
+            "event": "CMD: save_eeprom"
+        },
+        {
+            "timestamp": "2025-10-08 10:07:50",
+            "event": "CMD: pid \u2192 start"
+        },
+        {
+            "timestamp": "2025-10-08 10:07:50",
+            "event": "\ud83d\ude80 Asymmetric PID started"
+        },
+        {
+            "timestamp": "2025-10-08 10:07:50",
+            "event": "\u2744\ufe0f Switched to COOLING mode"
+        },
+        {
+            "timestamp": "2025-10-08 10:08:08",
+            "event": "SET: PID \u2192 Kp=1.0, Ki=1.0, Kd=1.0"
+        },
+        {
+            "timestamp": "2025-10-08 10:08:08",
+            "event": "\u2744\ufe0f Cooling PID parameters updated"
+        },
+        {
+            "timestamp": "2025-10-08 10:08:08",
+            "event": "\u2744\ufe0f Cooling PID parameters updated"
+        },
+        {
+            "timestamp": "2025-10-08 10:08:08",
+            "event": "\u2744\ufe0f Cooling PID parameters updated"
+        },
+        {
+            "timestamp": "2025-10-08 10:08:31",
+            "event": "CMD: save_eeprom"
+        },
+        {
+            "timestamp": "2025-10-08 10:08:39",
+            "event": "CMD: pid \u2192 start"
+        },
+        {
+            "timestamp": "2025-10-08 10:08:39",
+            "event": "\ud83d\ude80 Asymmetric PID started"
+        },
+        {
+            "timestamp": "2025-10-08 10:08:55",
+            "event": "SET: target_temp \u2192 20.00\u00b0C"
+        },
+        {
+            "timestamp": "2025-10-08 10:09:28",
+            "event": "CMD: pid \u2192 start"
+        },
+        {
+            "timestamp": "2025-10-08 10:09:28",
+            "event": "\ud83d\ude80 Asymmetric PID started"
+        }
+    ]
+}

@@ -14,3 +14,26 @@ timestamp,event
 2025-10-08 12:21:57,SET: target_temp → 25.00°C
 2025-10-08 12:22:01,CMD: pid → start
 2025-10-08 12:22:01,🚀 Asymmetric PID started
+2025-10-08 12:22:48,CMD: pid → stop
+2025-10-08 12:22:48,⏹️ Asymmetric PID stopped
+2025-10-08 12:22:52,SET: pid_max_output → 100.0%
+2025-10-08 12:22:56,CMD: pid → start
+2025-10-08 12:22:56,🚀 Asymmetric PID started
+2025-10-08 12:23:34,"SET: PID → Kp=2.0, Ki=1.0, Kd=1.0"
+2025-10-08 12:23:34,🔥 Heating PID parameters updated
+2025-10-08 12:23:34,🔥 Heating PID parameters updated
+2025-10-08 12:23:34,🔥 Heating PID parameters updated
+2025-10-08 12:23:37,CMD: save_eeprom
+2025-10-08 12:24:04,"ASYMMETRIC_CMD: set_cooling_pid → {'kp': 0.8, 'ki': 0.02, 'kd': 3.0}"
+2025-10-08 12:24:08,"ASYMMETRIC_CMD: set_heating_pid → {'kp': 2.5, 'ki': 0.2, 'kd': 1.2}"
+2025-10-08 12:29:24,ASYMMETRIC_CMD: emergency_stop → {'enabled': True}
+2025-10-08 12:29:39,CMD: panic triggered
+2025-10-08 12:29:39,⏹️ Asymmetric PID stopped
+2025-10-08 12:29:39,⏹️ Asymmetric PID stopped
+2025-10-08 12:29:39,⚠️ FAILSAFE TRIGGERED: gui_panic_triggered
+2025-10-08 12:29:54,Disconnected
+2025-10-08 12:29:58,Connected to COM5
+2025-10-08 12:30:07,CMD: panic triggered
+2025-10-08 12:30:15,CMD: failsafe_clear
+2025-10-08 12:30:15,✅ Failsafe manually cleared via GUI
+2025-10-08 12:30:20,Disconnected

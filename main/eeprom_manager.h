@@ -20,6 +20,19 @@ public:
 
     void saveMaxOutput(float maxOutput);
     void loadMaxOutput(float &maxOutput);
+    void saveHeatingMaxOutput(float maxOutput);
+    void loadHeatingMaxOutput(float &maxOutput);
+    void saveCoolingMaxOutput(float maxOutput);
+    void loadCoolingMaxOutput(float &maxOutput);
+
+    void saveCoolingRateLimit(float rate);
+    void loadCoolingRateLimit(float &rate);
+
+    void saveDeadband(float deadband);
+    void loadDeadband(float &deadband);
+
+    void saveSafetyMargin(float margin);
+    void loadSafetyMargin(float &margin);
 
     void saveCoolingRateLimit(float rate);
     void loadCoolingRateLimit(float &rate);
@@ -43,8 +56,9 @@ private:
     static const int addrKi = addrKp + sizeof(float);
     static const int addrKd = addrKi + sizeof(float);
     static const int addrTargetTemp = addrKd + sizeof(float);
-    static const int addrMaxOutput = addrTargetTemp + sizeof(float);
-    static const int addrDebugLevel = addrMaxOutput + sizeof(float);
+    static const int addrHeatingMaxOutput = addrTargetTemp + sizeof(float);
+    static const int addrCoolingMaxOutput = addrHeatingMaxOutput + sizeof(float);
+    static const int addrDebugLevel = addrCoolingMaxOutput + sizeof(float);
     static const int addrFailsafeTimeout = addrDebugLevel + sizeof(int);
     static const int addrMagic = addrFailsafeTimeout + sizeof(int);
     static const int addrCoolingKp = addrMagic + sizeof(uint32_t);

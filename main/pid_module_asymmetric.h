@@ -47,7 +47,7 @@ public:
     // PID parameter management
     void setCoolingPID(float kp, float ki, float kd, bool persist = true);
     void setHeatingPID(float kp, float ki, float kd, bool persist = true);
-    void setOutputLimits(float coolingLimit, float heatingLimit);
+    void setOutputLimits(float coolingLimit, float heatingLimit, bool persist = true);
     void setSafetyParams(float deadband, float safetyMargin, bool persist = true);
     
     // Getters for compatibility with original PIDModule

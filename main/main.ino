@@ -1,13 +1,13 @@
 #include <Arduino.h>
 #include "comm_api.h"
 #include "task_scheduler.h"
-#include "pid_module.h"
+#include "pid_module_asymmetric.h"
 #include "sensor_module.h"
 #include "pressure_module.h"
 #include "eeprom_manager.h"
 
 // === Eksterne moduler ===
-PIDModule pid;
+AsymmetricPIDModule pid;
 SensorModule sensors;
 PressureModule pressure;
 EEPROMManager eeprom;

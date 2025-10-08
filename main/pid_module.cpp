@@ -11,8 +11,7 @@
 extern SensorModule sensors;
 extern CommAPI comm;
 
-// Global PWM tracker for simulation
-int currentPwmOutput = 0;
+// Global PWM tracker for simulation (defined in pid_module_asymmetric.cpp)
 
 PIDModule::PIDModule()
   : pid(&Input, &Output, &Setpoint, 2.0, 0.5, 1.0, DIRECT),

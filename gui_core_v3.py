@@ -857,25 +857,39 @@ class MainWindow(QMainWindow):
         
         self.startPIDButton = QPushButton("▶️ START")
         self.startPIDButton.clicked.connect(lambda: self.send_and_log_cmd("pid", "start"))
+        self.startPIDButton.setCursor(Qt.PointingHandCursor)
         self.startPIDButton.setStyleSheet("""
-            QPushButton { 
-                background-color: #28a745; 
-                color: white; 
-                font-weight: bold; 
+            QPushButton {
+                background-color: #28a745;
+                color: white;
+                font-weight: bold;
                 padding: 8px;
                 border-radius: 5px;
             }
+            QPushButton:hover {
+                background-color: #34c759;
+            }
+            QPushButton:pressed {
+                background-color: #1e7e34;
+            }
         """)
-        
+
         self.stopPIDButton = QPushButton("⏹️ STOP")
         self.stopPIDButton.clicked.connect(lambda: self.send_and_log_cmd("pid", "stop"))
+        self.stopPIDButton.setCursor(Qt.PointingHandCursor)
         self.stopPIDButton.setStyleSheet("""
-            QPushButton { 
-                background-color: #dc3545; 
-                color: white; 
-                font-weight: bold; 
+            QPushButton {
+                background-color: #dc3545;
+                color: white;
+                font-weight: bold;
                 padding: 8px;
                 border-radius: 5px;
+            }
+            QPushButton:hover {
+                background-color: #ff5c6c;
+            }
+            QPushButton:pressed {
+                background-color: #b02a37;
             }
         """)
         

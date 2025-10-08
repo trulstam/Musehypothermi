@@ -1,0 +1,32 @@
+timestamp,event
+2025-10-08 20:03:16,Connected to COM3
+2025-10-08 20:03:20,Disconnected
+2025-10-08 20:03:23,Connected to COM5
+2025-10-08 20:03:23,✅ Failsafe cleared after heartbeat recovery
+2025-10-08 20:03:35,SET: target_temp → 37.00°C
+2025-10-08 20:03:50,CMD: pid → start
+2025-10-08 20:03:50,🚀 Asymmetric PID started
+2025-10-08 20:04:17,SET: target_temp → 37.00°C
+2025-10-08 20:04:33,SET: target_temp → 37.00°C
+2025-10-08 20:04:46,SET: target_temp → 37.00°C
+2025-10-08 20:04:51,SET: target_temp → 20.00°C
+2025-10-08 20:04:52,❄️ Switched to cooling mode
+2025-10-08 20:10:43,SET: pid_max_output → 20.0%
+2025-10-08 20:12:30,SET: target_temp → 37.00°C
+2025-10-08 20:12:31,Emergency stop engaged
+2025-10-08 20:12:31,🚨 Safety margin exceeded during cooling
+2025-10-08 20:13:06,SET: target_temp → 27.00°C
+2025-10-08 20:13:12,SET: target_temp → 20.00°C
+2025-10-08 20:13:17,CMD: pid → stop
+2025-10-08 20:13:17,⏹️ Asymmetric PID stopped
+2025-10-08 20:13:31,CMD: pid → start
+2025-10-08 20:13:31,🚀 Asymmetric PID started
+2025-10-08 20:13:32,⏹️ Asymmetric PID stopped
+2025-10-08 20:16:01,CMD: failsafe_clear
+2025-10-08 20:16:03,CMD: failsafe_clear
+2025-10-08 20:16:08,CMD: panic triggered
+2025-10-08 20:16:08,⏹️ Asymmetric PID stopped
+2025-10-08 20:16:08,⏹️ Asymmetric PID stopped
+2025-10-08 20:16:08,⚠️ FAILSAFE TRIGGERED: gui_panic_triggered
+2025-10-08 20:16:13,CMD: failsafe_clear
+2025-10-08 20:16:13,✅ Failsafe manually cleared via GUI

@@ -1010,8 +1010,32 @@ class MainWindow(QMainWindow):
         conn_layout.addLayout(emergency_row)
         conn_group.setLayout(conn_layout)
         layout.addWidget(conn_group)
-
-        # PID CONTROL (moved directly under serial connection)
+        
+        # ASYMMETRIC PID CONTROLS
+        self.asymmetric_controls = AsymmetricPIDControls(self)
+        layout.addWidget(self.asymmetric_controls)
+        
+        # TARGET TEMPERATURE
+        target_group = QGroupBox("🎯 Target Temperature")
+        target_layout = QHBoxLayout()
+        
+        self.setpointInput = QLineEdit("37.0")
+        self.setpointInput.setFixedWidth(60)
+        
+        self.setSetpointButton = QPushButton("Set Target")
+        self.setSetpointButton.clicked.connect(self.set_manual_setpoint)
+        self.setSetpointButton.setStyleSheet("background-color: #28a745; color: white; font-weight: bold;")
+        
+        target_layout.addWidget(QLabel("Target:"))
+        target_layout.addWidget(self.setpointInput)
+        target_layout.addWidget(QLabel("°C"))
+        target_layout.addWidget(self.setSetpointButton)
+        target_layout.addStretch()
+        
+        target_group.setLayout(target_layout)
+        layout.addWidget(target_group)
+        
+        # PID CONTROL
         control_group = QGroupBox("🚀 PID Control")
         control_layout = QHBoxLayout()
 
@@ -1057,11 +1081,6 @@ class MainWindow(QMainWindow):
         control_layout.addWidget(self.stopPIDButton)
         control_group.setLayout(control_layout)
         layout.addWidget(control_group)
-
-        # ASYMMETRIC PID CONTROLS
-        self.asymmetric_controls = AsymmetricPIDControls(self)
-        layout.addWidget(self.asymmetric_controls)
-
         layout.addStretch()
         return panel
 

@@ -21,6 +21,10 @@ public:
 
     void savePIDParams(float kp, float ki, float kd);
     void loadPIDParams(float &kp, float &ki, float &kd);
+    void saveHeatingPIDParams(float kp, float ki, float kd);
+    void loadHeatingPIDParams(float &kp, float &ki, float &kd);
+    void saveCoolingPIDParams(float kp, float ki, float kd);
+    void loadCoolingPIDParams(float &kp, float &ki, float &kd);
 
     void saveHeatingPIDParams(float kp, float ki, float kd);
     void loadHeatingPIDParams(float &kp, float &ki, float &kd);
@@ -33,6 +37,28 @@ public:
 
     void saveMaxOutput(float maxOutput);
     void loadMaxOutput(float &maxOutput);
+    void saveHeatingMaxOutput(float maxOutput);
+    void loadHeatingMaxOutput(float &maxOutput);
+    void saveCoolingMaxOutput(float maxOutput);
+    void loadCoolingMaxOutput(float &maxOutput);
+
+    void saveCoolingRateLimit(float rate);
+    void loadCoolingRateLimit(float &rate);
+
+    void saveDeadband(float deadband);
+    void loadDeadband(float &deadband);
+
+    void saveSafetyMargin(float margin);
+    void loadSafetyMargin(float &margin);
+
+    void saveCoolingRateLimit(float rate);
+    void loadCoolingRateLimit(float &rate);
+
+    void saveDeadband(float deadband);
+    void loadDeadband(float &deadband);
+
+    void saveSafetyMargin(float margin);
+    void loadSafetyMargin(float &margin);
 
     void saveHeatingMaxOutput(float maxOutput);
     void loadHeatingMaxOutput(float &maxOutput);

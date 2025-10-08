@@ -202,11 +202,25 @@ class MainWindow(QMainWindow):
         self.abortAutotuneButton.setVisible(False)
 
     def set_max_output_limit(self):
-        value, ok = QInputDialog.getDouble(self, "Set Max Output Limit", "Enter max output % (0–100):", 20.0, 0.0, 100.0, 1)
+        try:
+            current_limit = float(self.maxOutputLabel.text().replace('%', '').strip())
+        except ValueError:
+            current_limit = 20.0
+
+        value, ok = QInputDialog.getDouble(
+            self,
+            "Set Max Output Limit",
+            "Enter max output % (0–100):",
+            current_limit,
+            0.0,
+            100.0,
+            1,
+        )
         if ok:
             self.serial_manager.sendSET("pid_max_output", value)
             self.event_logger.log_event(f"SET: pid_max_output → {value:.1f}%")
             self.log(f"⚙️ Max output limit set to {value:.1f}%")
+            self.maxOutputLabel.setText(f"{value:.1f}%")
 
     def log(self, message):
         try:
@@ -227,6 +241,14 @@ class MainWindow(QMainWindow):
             self.kiInput.setText(str(ki))
             self.kdInput.setText(str(kd))
             self.pidParamsLabel.setText(f"Kp: {kp}, Ki: {ki}, Kd: {kd}")
+
+        if "pid_max_output" in data:
+            max_output = float(data["pid_max_output"])
+            self.maxOutputLabel.setText(f"{max_output:.1f}%")
+
+        if "pid_output_limit" in data:
+            max_output = float(data["pid_output_limit"])
+            self.maxOutputLabel.setText(f"{max_output:.1f}%")
 
         if "autotune_active" in data:
             is_active = data["autotune_active"]

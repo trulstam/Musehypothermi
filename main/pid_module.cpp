@@ -7,6 +7,7 @@
 #include <Arduino.h>
 #include <ArduinoJson.h>
 #include <PID_v1.h>
+#include <math.h>
 
 extern SensorModule sensors;
 extern CommAPI comm;
@@ -14,9 +15,28 @@ extern CommAPI comm;
 // Global PWM tracker for simulation
 int currentPwmOutput = 0;
 
+namespace {
+constexpr float DEFAULT_KP = 2.0f;
+constexpr float DEFAULT_KI = 0.5f;
+constexpr float DEFAULT_KD = 1.0f;
+constexpr float DEFAULT_MAX_OUTPUT = 20.0f;
+
+bool pidParamsInvalid(float kp, float ki, float kd) {
+    bool allZero = (kp == 0.0f && ki == 0.0f && kd == 0.0f);
+    bool anyNegative = (kp < 0.0f || ki < 0.0f || kd < 0.0f);
+    bool anyNan = isnan(kp) || isnan(ki) || isnan(kd);
+    return allZero || anyNegative || anyNan;
+}
+
+bool maxOutputInvalid(float value) {
+    bool invalidRange = (value <= 0.0f || value > 100.0f);
+    return invalidRange || isnan(value);
+}
+} // namespace
+
 PIDModule::PIDModule()
-  : pid(&Input, &Output, &Setpoint, 2.0, 0.5, 1.0, DIRECT),
-    kp(2.0), ki(0.5), kd(1.0), maxOutputPercent(20.0),
+  : pid(&Input, &Output, &Setpoint, DEFAULT_KP, DEFAULT_KI, DEFAULT_KD, DIRECT),
+    kp(DEFAULT_KP), ki(DEFAULT_KI), kd(DEFAULT_KD), maxOutputPercent(DEFAULT_MAX_OUTPUT),
     active(false), autotuneActive(false), autotuneStatus("idle"),
     Input(0), Output(0), Setpoint(37.0),
     profileLength(0), currentProfileStep(0), profileStartMillis(0), profileActive(false),
@@ -27,6 +47,13 @@ void PIDModule::begin(EEPROMManager &eepromManager) {
 
     float eKp, eKi, eKd;
     eeprom->loadPIDParams(eKp, eKi, eKd);
+    if (pidParamsInvalid(eKp, eKi, eKd)) {
+        eKp = DEFAULT_KP;
+        eKi = DEFAULT_KI;
+        eKd = DEFAULT_KD;
+        eeprom->savePIDParams(eKp, eKi, eKd);
+        comm.sendEvent("\u26a0\ufe0f PID parameters invalid - restored to safe defaults");
+    }
     setKp(eKp);
     setKi(eKi);
     setKd(eKd);
@@ -35,12 +62,19 @@ void PIDModule::begin(EEPROMManager &eepromManager) {
     eeprom->loadTargetTemp(tTemp);
     setTargetTemp(tTemp);
 
+    float storedMaxOutput;
+    eeprom->loadMaxOutput(storedMaxOutput);
+    if (maxOutputInvalid(storedMaxOutput)) {
+        storedMaxOutput = DEFAULT_MAX_OUTPUT;
+        eeprom->saveMaxOutput(storedMaxOutput);
+        comm.sendEvent("\u26a0\ufe0f PID max output invalid - restored to safe default");
+    }
+    setMaxOutputPercent(storedMaxOutput);
+
     pwm.begin();
 
     pid.SetSampleTime(100);
     pid.SetMode(MANUAL);
-
-    applyOutputLimit();
 }
 
 void PIDModule::update(double currentTemp) {

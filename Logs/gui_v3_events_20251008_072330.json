@@ -1,4 +1,13 @@
 {
     "metadata": {},
-    "events": []
+    "events": [
+        {
+            "timestamp": "2025-10-08 07:23:38",
+            "event": "Connected to COM5"
+        },
+        {
+            "timestamp": "2025-10-08 07:25:35",
+            "event": "Disconnected"
+        }
+    ]
 }

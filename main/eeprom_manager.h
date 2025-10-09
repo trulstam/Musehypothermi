@@ -27,31 +27,31 @@ public:
 
     // Legacy single PID helpers (mirror original API)
     void savePIDParams(float kp, float ki, float kd);
-    void loadPIDParams(float &kp, float &ki, float &kd);
+    void loadPIDParams(float &kp, float &ki, float &kd) const;
 
     // Dedicated asymmetric PID storage
     void saveHeatingPIDParams(float kp, float ki, float kd);
-    void loadHeatingPIDParams(float &kp, float &ki, float &kd);
+    void loadHeatingPIDParams(float &kp, float &ki, float &kd) const;
     void saveCoolingPIDParams(float kp, float ki, float kd);
-    void loadCoolingPIDParams(float &kp, float &ki, float &kd);
+    void loadCoolingPIDParams(float &kp, float &ki, float &kd) const;
 
     // Temperature target
     void saveTargetTemp(float temp);
-    void loadTargetTemp(float &temp);
+    void loadTargetTemp(float &temp) const;
 
     // Output limits
     void saveMaxOutput(float maxOutput);
-    void loadMaxOutput(float &maxOutput);
+    void loadMaxOutput(float &maxOutput) const;
     void saveHeatingMaxOutput(float maxOutput);
-    void loadHeatingMaxOutput(float &maxOutput);
+    void loadHeatingMaxOutput(float &maxOutput) const;
     void saveCoolingMaxOutput(float maxOutput);
-    void loadCoolingMaxOutput(float &maxOutput);
+    void loadCoolingMaxOutput(float &maxOutput) const;
     void saveOutputLimits(const OutputLimits &limits);
-    void loadOutputLimits(OutputLimits &limits);
+    void loadOutputLimits(OutputLimits &limits) const;
 
     // Safety configuration (asymmetric controller)
     void saveSafetySettings(const SafetySettings &settings);
-    void loadSafetySettings(SafetySettings &settings);
+    void loadSafetySettings(SafetySettings &settings) const;
 
     // Inline convenience wrappers operating on the composite safety blob
     inline void saveCoolingRateLimit(float rate);
@@ -63,9 +63,9 @@ public:
 
     // Miscellaneous
     void saveDebugLevel(int debugLevel);
-    void loadDebugLevel(int &debugLevel);
+    void loadDebugLevel(int &debugLevel) const;
     void saveFailsafeTimeout(int timeout);
-    void loadFailsafeTimeout(int &timeout);
+    void loadFailsafeTimeout(int &timeout) const;
 
     bool factoryReset();
 

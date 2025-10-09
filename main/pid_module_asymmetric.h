@@ -144,7 +144,8 @@ private:
     void applySafetyConstraints();
     void applyRateLimiting();
     void applyOutputSmoothing();
-    
+    void resetOutputState();
+
     // PID switching logic
     void updatePIDMode(double error);
     void switchToCoolingPID();

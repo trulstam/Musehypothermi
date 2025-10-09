@@ -36,27 +36,15 @@ void EEPROMManager::loadPIDParams(float &kp, float &ki, float &kd) const {
 }
 
 void EEPROMManager::saveHeatingPIDParams(float kp, float ki, float kd) {
-    EEPROM.put(Layout::addrKp, kp);
-    EEPROM.put(Layout::addrKi, ki);
-    EEPROM.put(Layout::addrKd, kd);
+    EEPROM.put(addrKp, kp);
+    EEPROM.put(addrKi, ki);
+    EEPROM.put(addrKd, kd);
 }
 
 void EEPROMManager::loadHeatingPIDParams(float &kp, float &ki, float &kd) const {
-    EEPROM.get(Layout::addrKp, kp);
-    EEPROM.get(Layout::addrKi, ki);
-    EEPROM.get(Layout::addrKd, kd);
-}
-
-void EEPROMManager::saveCoolingPIDParams(float kp, float ki, float kd) {
-    EEPROM.put(Layout::addrCoolingKp, kp);
-    EEPROM.put(Layout::addrCoolingKi, ki);
-    EEPROM.put(Layout::addrCoolingKd, kd);
-}
-
-void EEPROMManager::loadCoolingPIDParams(float &kp, float &ki, float &kd) const {
-    EEPROM.get(Layout::addrCoolingKp, kp);
-    EEPROM.get(Layout::addrCoolingKi, ki);
-    EEPROM.get(Layout::addrCoolingKd, kd);
+    EEPROM.get(addrKp, kp);
+    EEPROM.get(addrKi, ki);
+    EEPROM.get(addrKd, kd);
 }
 
 void EEPROMManager::saveCoolingPIDParams(float kp, float ki, float kd) {
@@ -65,18 +53,18 @@ void EEPROMManager::saveCoolingPIDParams(float kp, float ki, float kd) {
     EEPROM.put(addrCoolingKd, kd);
 }
 
-void EEPROMManager::loadCoolingPIDParams(float &kp, float &ki, float &kd) {
+void EEPROMManager::loadCoolingPIDParams(float &kp, float &ki, float &kd) const {
     EEPROM.get(addrCoolingKp, kp);
     EEPROM.get(addrCoolingKi, ki);
     EEPROM.get(addrCoolingKd, kd);
 }
 
 void EEPROMManager::saveTargetTemp(float temp) {
-    EEPROM.put(Layout::addrTargetTemp, temp);
+    EEPROM.put(addrTargetTemp, temp);
 }
 
 void EEPROMManager::loadTargetTemp(float &temp) const {
-    EEPROM.get(Layout::addrTargetTemp, temp);
+    EEPROM.get(addrTargetTemp, temp);
 }
 
 void EEPROMManager::saveMaxOutput(float maxOutput) {
@@ -89,19 +77,19 @@ void EEPROMManager::loadMaxOutput(float &maxOutput) const {
 }
 
 void EEPROMManager::saveHeatingMaxOutput(float maxOutput) {
-    EEPROM.put(Layout::addrHeatingMaxOutput, maxOutput);
+    EEPROM.put(addrHeatingMaxOutput, maxOutput);
 }
 
 void EEPROMManager::loadHeatingMaxOutput(float &maxOutput) const {
-    EEPROM.get(Layout::addrHeatingMaxOutput, maxOutput);
+    EEPROM.get(addrHeatingMaxOutput, maxOutput);
 }
 
 void EEPROMManager::saveCoolingMaxOutput(float maxOutput) {
-    EEPROM.put(Layout::addrCoolingMaxOutput, maxOutput);
+    EEPROM.put(addrCoolingMaxOutput, maxOutput);
 }
 
 void EEPROMManager::loadCoolingMaxOutput(float &maxOutput) const {
-    EEPROM.get(Layout::addrCoolingMaxOutput, maxOutput);
+    EEPROM.get(addrCoolingMaxOutput, maxOutput);
 }
 
 void EEPROMManager::saveOutputLimits(const OutputLimits &limits) {
@@ -115,31 +103,31 @@ void EEPROMManager::loadOutputLimits(OutputLimits &limits) const {
 }
 
 void EEPROMManager::saveSafetySettings(const SafetySettings &settings) {
-    EEPROM.put(Layout::addrCoolingRateLimit, settings.coolingRateLimit);
-    EEPROM.put(Layout::addrDeadband, settings.deadband);
-    EEPROM.put(Layout::addrSafetyMargin, settings.safetyMargin);
+    EEPROM.put(addrCoolingRateLimit, settings.coolingRateLimit);
+    EEPROM.put(addrDeadband, settings.deadband);
+    EEPROM.put(addrSafetyMargin, settings.safetyMargin);
 }
 
 void EEPROMManager::loadSafetySettings(SafetySettings &settings) const {
-    EEPROM.get(Layout::addrCoolingRateLimit, settings.coolingRateLimit);
-    EEPROM.get(Layout::addrDeadband, settings.deadband);
-    EEPROM.get(Layout::addrSafetyMargin, settings.safetyMargin);
+    EEPROM.get(addrCoolingRateLimit, settings.coolingRateLimit);
+    EEPROM.get(addrDeadband, settings.deadband);
+    EEPROM.get(addrSafetyMargin, settings.safetyMargin);
 }
 
 void EEPROMManager::saveDebugLevel(int debugLevel) {
-    EEPROM.put(Layout::addrDebugLevel, debugLevel);
+    EEPROM.put(addrDebugLevel, debugLevel);
 }
 
 void EEPROMManager::loadDebugLevel(int &debugLevel) const {
-    EEPROM.get(Layout::addrDebugLevel, debugLevel);
+    EEPROM.get(addrDebugLevel, debugLevel);
 }
 
 void EEPROMManager::saveFailsafeTimeout(int timeout) {
-    EEPROM.put(Layout::addrFailsafeTimeout, timeout);
+    EEPROM.put(addrFailsafeTimeout, timeout);
 }
 
 void EEPROMManager::loadFailsafeTimeout(int &timeout) const {
-    EEPROM.get(Layout::addrFailsafeTimeout, timeout);
+    EEPROM.get(addrFailsafeTimeout, timeout);
 }
 
 bool EEPROMManager::factoryReset() {
@@ -163,7 +151,7 @@ bool EEPROMManager::factoryReset() {
 }
 
 void EEPROMManager::saveMagicNumber() {
-    EEPROM.put(Layout::addrMagic, MAGIC_NUMBER);
+    EEPROM.put(addrMagic, MAGIC_NUMBER);
 }
 
 bool EEPROMManager::isMagicNumberValid() const {

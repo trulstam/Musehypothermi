@@ -79,7 +79,7 @@ bool shouldRestoreSafetyMargin(float margin) {
 
 AsymmetricPIDModule::AsymmetricPIDModule()
     : coolingPID(&Input, &coolingOutput, &Setpoint,
-                 kDefaultCoolingKp, kDefaultCoolingKi, kDefaultCoolingKd, REVERSE),
+                 kDefaultCoolingKp, kDefaultCoolingKi, kDefaultCoolingKd, DIRECT),
       heatingPID(&Input, &heatingOutput, &Setpoint,
                  kDefaultHeatingKp, kDefaultHeatingKi, kDefaultHeatingKd, DIRECT),
       Input(0.0), Setpoint(kDefaultTargetTemp), rawPIDOutput(0.0), finalOutput(0.0),

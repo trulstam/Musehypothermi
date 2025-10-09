@@ -1015,26 +1015,6 @@ class MainWindow(QMainWindow):
         self.asymmetric_controls = AsymmetricPIDControls(self)
         layout.addWidget(self.asymmetric_controls)
         
-        # TARGET TEMPERATURE
-        target_group = QGroupBox("🎯 Target Temperature")
-        target_layout = QHBoxLayout()
-        
-        self.setpointInput = QLineEdit("37.0")
-        self.setpointInput.setFixedWidth(60)
-        
-        self.setSetpointButton = QPushButton("Set Target")
-        self.setSetpointButton.clicked.connect(self.set_manual_setpoint)
-        self.setSetpointButton.setStyleSheet("background-color: #28a745; color: white; font-weight: bold;")
-        
-        target_layout.addWidget(QLabel("Target:"))
-        target_layout.addWidget(self.setpointInput)
-        target_layout.addWidget(QLabel("°C"))
-        target_layout.addWidget(self.setSetpointButton)
-        target_layout.addStretch()
-        
-        target_group.setLayout(target_layout)
-        layout.addWidget(target_group)
-        
         # PID CONTROL
         control_group = QGroupBox("🚀 PID Control")
         control_layout = QHBoxLayout()
@@ -1082,9 +1062,27 @@ class MainWindow(QMainWindow):
         control_group.setLayout(control_layout)
         layout.addWidget(control_group)
 
-        # ASYMMETRIC PID CONTROLS
-        self.asymmetric_controls = AsymmetricPIDControls(self)
-        layout.addWidget(self.asymmetric_controls)
+        # TARGET TEMPERATURE CONTROLS
+        target_group = QGroupBox("🎯 Target Temperature")
+        target_layout = QHBoxLayout()
+        target_layout.setSpacing(12)
+
+        self.setpointInput = QLineEdit("37.0")
+        self.setpointInput.setMinimumWidth(120)
+        self.setpointInput.setAlignment(Qt.AlignCenter)
+
+        self.setSetpointButton = QPushButton("Set Target")
+        self.setSetpointButton.clicked.connect(self.set_manual_setpoint)
+        self.setSetpointButton.setStyleSheet("background-color: #28a745; color: white; font-weight: bold;")
+
+        target_layout.addWidget(QLabel("Target:"))
+        target_layout.addWidget(self.setpointInput)
+        target_layout.addWidget(QLabel("°C"))
+        target_layout.addWidget(self.setSetpointButton)
+        target_layout.addStretch()
+
+        target_group.setLayout(target_layout)
+        layout.addWidget(target_group)
 
         layout.addStretch()
         return panel
@@ -1272,28 +1270,6 @@ class MainWindow(QMainWindow):
 
         advanced_group.setLayout(advanced_layout)
         layout.addWidget(advanced_group)
-
-        # Target temperature placed beneath system utilities
-        target_group = QGroupBox("🎯 Target Temperature")
-        target_layout = QHBoxLayout()
-        target_layout.setSpacing(12)
-
-        self.setpointInput = QLineEdit("37.0")
-        self.setpointInput.setMinimumWidth(120)
-        self.setpointInput.setAlignment(Qt.AlignCenter)
-
-        self.setSetpointButton = QPushButton("Set Target")
-        self.setSetpointButton.clicked.connect(self.set_manual_setpoint)
-        self.setSetpointButton.setStyleSheet("background-color: #28a745; color: white; font-weight: bold;")
-
-        target_layout.addWidget(QLabel("Target:"))
-        target_layout.addWidget(self.setpointInput)
-        target_layout.addWidget(QLabel("°C"))
-        target_layout.addWidget(self.setSetpointButton)
-        target_layout.addStretch()
-
-        target_group.setLayout(target_layout)
-        layout.addWidget(target_group)
 
         layout.addStretch()
         return panel

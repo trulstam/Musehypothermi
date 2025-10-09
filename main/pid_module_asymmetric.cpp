@@ -153,11 +153,11 @@ void AsymmetricPIDModule::update(double /*currentTemp*/) {
     }
 
     double error = Setpoint - Input;
+    updatePIDMode(error);
+
     if (!checkSafetyLimits(Input, Setpoint)) {
         return;
     }
-
-    updatePIDMode(error);
 
     if (coolingMode) {
         coolingPID.Compute();

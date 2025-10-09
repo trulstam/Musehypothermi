@@ -130,10 +130,7 @@ void AsymmetricPIDModule::update(double /*currentTemp*/) {
     unsigned long now = millis();
 
     if (!active) {
-        finalOutput = 0.0;
-        rawPIDOutput = 0.0;
-        pwm.setDutyCycle(0);
-        currentPwmOutput = 0;
+        resetOutputState();
         return;
     }
 
@@ -203,6 +200,7 @@ void AsymmetricPIDModule::updatePIDMode(double error) {
 void AsymmetricPIDModule::switchToCoolingPID() {
     coolingMode = true;
     heatingPID.SetMode(MANUAL);
+    resetOutputState();
     coolingPID.SetTunings(currentParams.kp_cooling,
                           currentParams.ki_cooling,
                           currentParams.kd_cooling);
@@ -214,6 +212,7 @@ void AsymmetricPIDModule::switchToCoolingPID() {
 void AsymmetricPIDModule::switchToHeatingPID() {
     coolingMode = false;
     coolingPID.SetMode(MANUAL);
+    resetOutputState();
     heatingPID.SetTunings(currentParams.kp_heating,
                           currentParams.ki_heating,
                           currentParams.kd_heating);
@@ -266,6 +265,16 @@ void AsymmetricPIDModule::applyOutputSmoothing() {
     finalOutput = (outputSmoothingFactor * lastOutput) +
                   ((1.0 - outputSmoothingFactor) * rawPIDOutput);
     lastOutput = finalOutput;
+}
+
+void AsymmetricPIDModule::resetOutputState() {
+    rawPIDOutput = 0.0;
+    finalOutput = 0.0;
+    coolingOutput = 0.0;
+    heatingOutput = 0.0;
+    lastOutput = 0.0;
+    pwm.setDutyCycle(0);
+    currentPwmOutput = 0;
 }
 
 // --- Compatibility-style getters (preserve existing API) ---
@@ -368,9 +377,7 @@ void AsymmetricPIDModule::setEmergencyStop(bool enabled) {
 
     if (enabled) {
         active = false;
-        finalOutput = 0.0;
-        rawPIDOutput = 0.0;
-        pwm.setDutyCycle(0);
+        resetOutputState();
         digitalWrite(8, LOW);
         digitalWrite(7, LOW);
         comm.sendEvent("Emergency stop engaged");
@@ -601,6 +608,7 @@ bool AsymmetricPIDModule::isDebugEnabled() {
 void AsymmetricPIDModule::start() {
     clearFailsafe();
     active = true;
+    resetOutputState();
     coolingPID.SetMode(AUTOMATIC);
     heatingPID.SetMode(AUTOMATIC);
     comm.sendEvent("🚀 Asymmetric PID started");
@@ -610,11 +618,7 @@ void AsymmetricPIDModule::stop() {
     coolingPID.SetMode(MANUAL);
     heatingPID.SetMode(MANUAL);
     active = false;
-    finalOutput = 0.0;
-    rawPIDOutput = 0.0;
-    coolingOutput = 0.0;
-    heatingOutput = 0.0;
-    pwm.setDutyCycle(0);
+    resetOutputState();
     digitalWrite(8, LOW);
     digitalWrite(7, LOW);
     comm.sendEvent("⏹️ Asymmetric PID stopped");

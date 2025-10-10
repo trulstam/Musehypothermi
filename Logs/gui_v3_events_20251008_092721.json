@@ -1,0 +1,97 @@
+{
+    "metadata": {},
+    "events": [
+        {
+            "timestamp": "2025-10-08 09:27:28",
+            "event": "Connected to COM5"
+        },
+        {
+            "timestamp": "2025-10-08 09:27:28",
+            "event": "\u2705 Failsafe cleared after heartbeat recovery"
+        },
+        {
+            "timestamp": "2025-10-08 09:28:07",
+            "event": "CMD: pid \u2192 start"
+        },
+        {
+            "timestamp": "2025-10-08 09:28:07",
+            "event": "\ud83d\ude80 Asymmetric PID started"
+        },
+        {
+            "timestamp": "2025-10-08 09:28:07",
+            "event": "\u2744\ufe0f Switched to COOLING mode"
+        },
+        {
+            "timestamp": "2025-10-08 09:28:15",
+            "event": "CMD: pid \u2192 start"
+        },
+        {
+            "timestamp": "2025-10-08 09:28:15",
+            "event": "\ud83d\ude80 Asymmetric PID started"
+        },
+        {
+            "timestamp": "2025-10-08 09:28:31",
+            "event": "CMD: pid \u2192 start"
+        },
+        {
+            "timestamp": "2025-10-08 09:28:31",
+            "event": "\ud83d\ude80 Asymmetric PID started"
+        },
+        {
+            "timestamp": "2025-10-08 09:29:15",
+            "event": "SET: pid_max_output \u2192 20.0%"
+        },
+        {
+            "timestamp": "2025-10-08 09:29:26",
+            "event": "CMD: pid \u2192 start"
+        },
+        {
+            "timestamp": "2025-10-08 09:29:26",
+            "event": "\ud83d\ude80 Asymmetric PID started"
+        },
+        {
+            "timestamp": "2025-10-08 09:29:48",
+            "event": "SET: pid_max_output \u2192 100.0%"
+        },
+        {
+            "timestamp": "2025-10-08 09:29:54",
+            "event": "CMD: pid \u2192 start"
+        },
+        {
+            "timestamp": "2025-10-08 09:29:54",
+            "event": "\ud83d\ude80 Asymmetric PID started"
+        },
+        {
+            "timestamp": "2025-10-08 09:30:52",
+            "event": "CMD: pid \u2192 stop"
+        },
+        {
+            "timestamp": "2025-10-08 09:30:52",
+            "event": "\u23f9\ufe0f Asymmetric PID stopped"
+        },
+        {
+            "timestamp": "2025-10-08 09:31:00",
+            "event": "SET: pid_max_output \u2192 100.0%"
+        },
+        {
+            "timestamp": "2025-10-08 09:31:02",
+            "event": "CMD: pid \u2192 start"
+        },
+        {
+            "timestamp": "2025-10-08 09:31:02",
+            "event": "\ud83d\ude80 Asymmetric PID started"
+        },
+        {
+            "timestamp": "2025-10-08 09:31:13",
+            "event": "CMD: pid \u2192 stop"
+        },
+        {
+            "timestamp": "2025-10-08 09:31:13",
+            "event": "\u23f9\ufe0f Asymmetric PID stopped"
+        },
+        {
+            "timestamp": "2025-10-08 09:31:20",
+            "event": "Disconnected"
+        }
+    ]
+}

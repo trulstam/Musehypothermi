@@ -1,13 +1,13 @@
 #include <Arduino.h>
 #include "comm_api.h"
 #include "task_scheduler.h"
-#include "pid_module.h"
+#include "pid_module_asymmetric.h"
 #include "sensor_module.h"
 #include "pressure_module.h"
 #include "eeprom_manager.h"
 
 // === Eksterne moduler ===
-PIDModule pid;
+AsymmetricPIDModule pid;
 SensorModule sensors;
 PressureModule pressure;
 EEPROMManager eeprom;
@@ -19,13 +19,15 @@ void setup() {
     Serial.begin(115200);
     delay(200);  // Stabiliser USB/Serial tilkobling (valgfritt)
 
+    bool resetOccurred = eeprom.begin();
+
     // Start Sensorer, Pustemonitor, PID-regulering
     sensors.begin();
     pressure.begin();
     pid.begin(eeprom);
 
     // Start kommunikasjonsgrensesnitt + EEPROM factory reset-sjekk + events
-    comm.begin(Serial);
+    comm.begin(Serial, resetOccurred);
 
     // Init system tasks (heartbeat, failsafe, etc.)
     initTasks();

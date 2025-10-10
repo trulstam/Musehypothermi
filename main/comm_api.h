@@ -7,7 +7,7 @@
 class CommAPI {
 public:
     CommAPI(Stream &serialStream);
-    void begin(Stream &serialStream);
+    void begin(Stream &serialStream, bool factoryResetOccurred = false);
     void process();
 
     void sendData();                           // Live data (plate temp, rectal, PID, pust)
@@ -23,6 +23,7 @@ public:
 
 private:
     void handleCommand(const String &jsonString);
+    void parseProfile(JsonArray arr);
 
     Stream *serial;
     String buffer;

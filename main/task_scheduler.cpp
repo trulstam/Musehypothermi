@@ -2,7 +2,7 @@
 // File: task_scheduler.cpp
 
 #include "task_scheduler.h"
-#include "pid_module.h"
+#include "pid_module_asymmetric.h"  // Changed from pid_module.h
 #include "sensor_module.h"
 #include "pressure_module.h"
 #include "profile_manager.h"
@@ -12,7 +12,7 @@
 #include <Arduino.h>
 
 // === Eksterne moduler ===
-extern PIDModule pid;
+extern AsymmetricPIDModule pid;  // Changed from PIDModule
 extern SensorModule sensors;
 extern PressureModule pressure;
 extern ProfileManager profileManager;
@@ -148,7 +148,7 @@ void runTasks() {
     // === PID / AUTOTUNE UPDATE ===
     if (now - lastPIDUpdate >= 100) {
         if (pid.isAutotuneActive()) {
-            pid.runAutotune();
+            pid.runAsymmetricAutotune();  // Changed from runAutotune()
         } else if (pid.isActive()) {
             pid.update(sensors.getRectalTemp());
         }

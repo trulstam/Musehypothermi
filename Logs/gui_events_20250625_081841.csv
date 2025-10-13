@@ -1,7 +1,0 @@
-timestamp,event
-2025-06-25 08:19:05,CMD: pid -> start
-2025-06-25 08:19:13,CMD: pid -> stop
-2025-06-25 08:19:25,CMD: pid -> start
-2025-06-25 08:19:29,CMD: pid -> stop
-2025-06-25 08:19:41,CMD: pid -> start
-2025-06-25 08:20:19,CMD: pid -> stop

@@ -1,8 +1,0 @@
-timestamp,event
-2025-10-08 15:47:06,Connected to COM5
-2025-10-08 15:47:07,✅ Failsafe cleared after heartbeat recovery
-2025-10-08 15:47:35,CMD: pid → start
-2025-10-08 15:47:35,🚀 Asymmetric PID started
-2025-10-08 15:48:08,SET: target_temp → 25.00°C
-2025-10-08 15:48:33,SET: target_temp → 20.00°C
-2025-10-08 15:48:33,❄️ Switched to cooling mode

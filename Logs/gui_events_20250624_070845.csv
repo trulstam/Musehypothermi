@@ -1,4 +1,0 @@
-timestamp,event
-2025-06-24 07:08:55,Connected to COM5
-2025-06-24 07:09:11,Autotune started: step response (21% PWM)
-2025-06-24 07:11:42,Autotune complete: new PID parameters calculated

@@ -27,13 +27,11 @@ CommAPI::CommAPI(Stream &serialStream) {
     buffer = "";
 }
 
-void CommAPI::begin(Stream &serialStream) {
+void CommAPI::begin(Stream &serialStream, bool factoryResetOccurred) {
     serial = &serialStream;
     buffer = "";
 
-    // Sjekk EEPROM status og send event til GUI
-    bool resetOccurred = eeprom.begin();
-    if (resetOccurred) {
+    if (factoryResetOccurred) {
         sendEvent("🚨 EEPROM invalid - factory reset performed on boot");
     } else {
         sendEvent("✅ EEPROM validated - no reset required");

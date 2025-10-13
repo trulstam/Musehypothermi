@@ -4,8 +4,13 @@ import json
 import threading
 import time
 
-class SerialManager:
+from PySide6.QtCore import QObject, Signal
+
+class SerialManager(QObject):
+    data_received = Signal(dict)
+
     def __init__(self, port=None, baud=115200, heartbeat_interval=2, failsafe_timeout=5):
+        super().__init__()
         self.port = port
         self.baud = baud
         self.heartbeat_interval = heartbeat_interval
@@ -19,9 +24,25 @@ class SerialManager:
         self.last_data_time = time.time()
         self.failsafe_triggered = False
         self.latest_data = None
+        self._on_data_received = None
 
-        # Optional callback
-        self.on_data_received = None
+    @property
+    def on_data_received(self):
+        return self._on_data_received
+
+    @on_data_received.setter
+    def on_data_received(self, callback):
+        if self._on_data_received:
+            try:
+                self.data_received.disconnect(self._on_data_received)
+            except (TypeError, RuntimeError):
+                pass
+        self._on_data_received = callback
+        if callback:
+            try:
+                self.data_received.connect(callback)
+            except TypeError as exc:
+                print(f"⚠️ Failed to connect on_data_received callback: {exc}")
 
     def connect(self, port):
         self.port = port
@@ -98,11 +119,11 @@ class SerialManager:
     def read_serial_loop(self):
         while self.keep_running:
             line = self.read()
-            if line and self.on_data_received:
+            if line:
                 try:
                     data = json.loads(line)
                     self.latest_data = data
-                    self.on_data_received(data)
+                    self._queue_payload(data)
                 except json.JSONDecodeError as e:
                     print(f"⚠️ JSON decode error: {e} → Line: {line}")
 
@@ -121,8 +142,7 @@ class SerialManager:
     def trigger_failsafe(self):
         self.failsafe_triggered = True
         print("🚨 Failsafe triggered! No data received in timeout period.")
-        if self.on_data_received:
-            self.on_data_received({"response": "Failsafe triggered"})
+        self._queue_payload({"response": "Failsafe triggered"})
 
     def readData(self):
         return self.latest_data
@@ -130,3 +150,11 @@ class SerialManager:
     def close(self):
         self.disconnect()
         print("✅ SerialManager closed.")
+
+    def _queue_payload(self, payload):
+        if not isinstance(payload, dict):
+            print("⚠️ Ignoring non-dict payload")
+            return
+        self.last_data_time = time.time()
+        self.failsafe_triggered = False
+        self.data_received.emit(dict(payload))

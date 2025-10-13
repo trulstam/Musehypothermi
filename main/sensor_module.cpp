@@ -2,9 +2,9 @@
 #include "sensor_module.h"
 #include <Arduino.h>
 #include <math.h>
-#include "pid_module.h"
+#include "pid_module_asymmetric.h"
 
-extern PIDModule pid;
+extern AsymmetricPIDModule pid;
 
 static double coolingPlateTemp = 22.0;
 static double rectalTemp = 37.0;

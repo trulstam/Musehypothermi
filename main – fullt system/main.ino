@@ -19,13 +19,15 @@ void setup() {
     Serial.begin(115200);
     delay(200);  // Stabiliser USB/Serial tilkobling (valgfritt)
 
+    bool resetOccurred = eeprom.begin();
+
     // Start Sensorer, Pustemonitor, PID-regulering
     sensors.begin();
     pressure.begin();
     pid.begin(eeprom);
 
     // Start kommunikasjonsgrensesnitt + EEPROM factory reset-sjekk + events
-    comm.begin(Serial);
+    comm.begin(Serial, resetOccurred);
 
     // Init system tasks (heartbeat, failsafe, etc.)
     initTasks();

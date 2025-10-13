@@ -9,11 +9,39 @@
 #include <PID_v1.h>
 #include <math.h>
 
+namespace {
+constexpr float kDefaultKp = 2.0f;
+constexpr float kDefaultKi = 0.5f;
+constexpr float kDefaultKd = 1.0f;
+constexpr float kDefaultTargetTemp = 37.0f;
+constexpr float kDefaultMaxOutputPercent = 35.0f;
+
+bool isInvalidPidValue(float value) {
+    return isnan(value) || isinf(value) || value < 0.0f;
+}
+
+bool shouldRestorePidDefaults(float kp, float ki, float kd) {
+    if (isInvalidPidValue(kp) || isInvalidPidValue(ki) || isInvalidPidValue(kd)) {
+        return true;
+    }
+
+    // Treat an all-zero triplet as an uninitialised/invalid EEPROM payload.
+    return kp == 0.0f && ki == 0.0f && kd == 0.0f;
+}
+
+bool shouldRestoreTarget(float target) {
+    return isnan(target) || isinf(target) || target < 30.0f || target > 40.0f;
+}
+
+bool shouldRestoreMaxOutput(float maxOutput) {
+    return isnan(maxOutput) || isinf(maxOutput) || maxOutput <= 0.0f || maxOutput > 100.0f;
+}
+}  // namespace
+
 extern SensorModule sensors;
 extern CommAPI comm;
 
-// Global PWM tracker for simulation
-int currentPwmOutput = 0;
+// Global PWM tracker for simulation (defined in pid_module_asymmetric.cpp)
 
 namespace {
 constexpr float DEFAULT_KP = 2.0f;
@@ -35,41 +63,53 @@ bool maxOutputInvalid(float value) {
 } // namespace
 
 PIDModule::PIDModule()
-  : pid(&Input, &Output, &Setpoint, DEFAULT_KP, DEFAULT_KI, DEFAULT_KD, DIRECT),
-    kp(DEFAULT_KP), ki(DEFAULT_KI), kd(DEFAULT_KD), maxOutputPercent(DEFAULT_MAX_OUTPUT),
+  : pid(&Input, &Output, &Setpoint, kDefaultKp, kDefaultKi, kDefaultKd, DIRECT),
+    kp(kDefaultKp), ki(kDefaultKi), kd(kDefaultKd), maxOutputPercent(kDefaultMaxOutputPercent),
     active(false), autotuneActive(false), autotuneStatus("idle"),
-    Input(0), Output(0), Setpoint(37.0),
+    Input(0), Output(0), Setpoint(kDefaultTargetTemp),
     profileLength(0), currentProfileStep(0), profileStartMillis(0), profileActive(false),
-    debugEnabled(false), actualPlateTarget(37.0) {}
+    debugEnabled(false), actualPlateTarget(kDefaultTargetTemp) {}
 
 void PIDModule::begin(EEPROMManager &eepromManager) {
     eeprom = &eepromManager;
 
     float eKp, eKi, eKd;
     eeprom->loadPIDParams(eKp, eKi, eKd);
-    if (pidParamsInvalid(eKp, eKi, eKd)) {
-        eKp = DEFAULT_KP;
-        eKi = DEFAULT_KI;
-        eKd = DEFAULT_KD;
+    bool restoredDefaults = false;
+
+    if (shouldRestorePidDefaults(eKp, eKi, eKd)) {
+        eKp = kDefaultKp;
+        eKi = kDefaultKi;
+        eKd = kDefaultKd;
         eeprom->savePIDParams(eKp, eKi, eKd);
-        comm.sendEvent("\u26a0\ufe0f PID parameters invalid - restored to safe defaults");
+        restoredDefaults = true;
     }
+
     setKp(eKp);
     setKi(eKi);
     setKd(eKd);
 
     float tTemp;
     eeprom->loadTargetTemp(tTemp);
+    if (shouldRestoreTarget(tTemp)) {
+        tTemp = kDefaultTargetTemp;
+        eeprom->saveTargetTemp(tTemp);
+        restoredDefaults = true;
+    }
     setTargetTemp(tTemp);
 
-    float storedMaxOutput;
-    eeprom->loadMaxOutput(storedMaxOutput);
-    if (maxOutputInvalid(storedMaxOutput)) {
-        storedMaxOutput = DEFAULT_MAX_OUTPUT;
-        eeprom->saveMaxOutput(storedMaxOutput);
-        comm.sendEvent("\u26a0\ufe0f PID max output invalid - restored to safe default");
+    float maxOutput;
+    eeprom->loadMaxOutput(maxOutput);
+    if (shouldRestoreMaxOutput(maxOutput)) {
+        maxOutput = kDefaultMaxOutputPercent;
+        eeprom->saveMaxOutput(maxOutput);
+        restoredDefaults = true;
     }
-    setMaxOutputPercent(storedMaxOutput);
+    setMaxOutputPercent(maxOutput);
+
+    if (restoredDefaults) {
+        Serial.println(F("[PID] Restored default parameters due to invalid EEPROM data"));
+    }
 
     pwm.begin();
 
@@ -289,7 +329,7 @@ float PIDModule::getActivePlateTarget() { return actualPlateTarget; }
 float PIDModule::getMaxOutputPercent() { return maxOutputPercent; }
 float PIDModule::getOutput() { return Output; }
 float PIDModule::getCurrentInput() { return Input; }
-float PIDModule::getPwmOutput() { return Output; }
+float PIDModule::getPwmOutput() { return currentPwmOutput; }
 
 void PIDModule::applyOutputLimit() {
     int pwmMax = MAX_PWM * (maxOutputPercent / 100.0);
@@ -302,15 +342,19 @@ void PIDModule::applyPIDOutput() {
 }
 
 void PIDModule::setPeltierOutput(double outVal) {
-    int pwmVal = constrain((int)abs(outVal), 0, MAX_PWM);
-    currentPwmOutput = (outVal < 0) ? -pwmVal : pwmVal;  // Lagre med fortegn
-    
-    comm.sendStatus("pwm_applied", pwmVal);
+    int pwmMax = MAX_PWM * (maxOutputPercent / 100.0f);
+    pwmMax = constrain(pwmMax, 0, MAX_PWM);
 
-    if (outVal > 0) {
+    double limitedOut = constrain(outVal, -pwmMax, pwmMax);
+    int pwmVal = constrain(static_cast<int>(abs(limitedOut)), 0, pwmMax);
+    currentPwmOutput = (limitedOut < 0) ? -pwmVal : pwmVal;  // Lagre med fortegn
+
+    comm.sendStatus("pwm_applied", currentPwmOutput);
+
+    if (currentPwmOutput > 0) {
         digitalWrite(8, LOW);
         digitalWrite(7, HIGH);
-    } else if (outVal < 0) {
+    } else if (currentPwmOutput < 0) {
         digitalWrite(8, HIGH);
         digitalWrite(7, LOW);
     } else {
@@ -318,7 +362,7 @@ void PIDModule::setPeltierOutput(double outVal) {
         digitalWrite(7, LOW);
     }
 
-    pwm.setDutyCycle(pwmVal);
+    pwm.setDutyCycle(abs(currentPwmOutput));
 }
 
 void PIDModule::loadProfile(ProfileStep* steps, int length) {}

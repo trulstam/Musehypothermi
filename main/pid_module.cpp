@@ -43,6 +43,25 @@ extern CommAPI comm;
 
 // Global PWM tracker for simulation (defined in pid_module_asymmetric.cpp)
 
+namespace {
+constexpr float DEFAULT_KP = 2.0f;
+constexpr float DEFAULT_KI = 0.5f;
+constexpr float DEFAULT_KD = 1.0f;
+constexpr float DEFAULT_MAX_OUTPUT = 20.0f;
+
+bool pidParamsInvalid(float kp, float ki, float kd) {
+    bool allZero = (kp == 0.0f && ki == 0.0f && kd == 0.0f);
+    bool anyNegative = (kp < 0.0f || ki < 0.0f || kd < 0.0f);
+    bool anyNan = isnan(kp) || isnan(ki) || isnan(kd);
+    return allZero || anyNegative || anyNan;
+}
+
+bool maxOutputInvalid(float value) {
+    bool invalidRange = (value <= 0.0f || value > 100.0f);
+    return invalidRange || isnan(value);
+}
+} // namespace
+
 PIDModule::PIDModule()
   : pid(&Input, &Output, &Setpoint, kDefaultKp, kDefaultKi, kDefaultKd, DIRECT),
     kp(kDefaultKp), ki(kDefaultKi), kd(kDefaultKd), maxOutputPercent(kDefaultMaxOutputPercent),

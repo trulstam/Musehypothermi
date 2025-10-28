@@ -45,7 +45,12 @@ void CommAPI::process() {
 }
 
 void CommAPI::handleCommand(const String &jsonString) {
-    StaticJsonDocument<1024> doc;
+    // The profile upload payload can easily exceed 1 KB when 10 steps are
+    // transferred. A too-small document caused the JSON deserialisation to
+    // fail silently, which meant the controller never received the profile
+    // (and thus ignored subsequent start commands). Allocate a larger buffer
+    // so we can parse complete profile uploads without errors.
+    StaticJsonDocument<3072> doc;
     DeserializationError error = deserializeJson(doc, jsonString);
 
     if (error) {

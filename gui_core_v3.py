@@ -281,43 +281,6 @@ class AsymmetricPIDControls(QWidget):
         self.external_rate_label: Optional[QLabel] = None
         self.external_emergency_label: Optional[QLabel] = None
         
-        # Asymmetric Autotune
-        autotune_group = QGroupBox("🎯 Asymmetric Autotune")
-        autotune_layout = QVBoxLayout()
-        
-        autotune_info = QLabel(
-            "Firmware still reports placeholder autotune events –"
-            " PID gains are not adjusted automatically yet."
-        )
-        autotune_info.setWordWrap(True)
-        autotune_info.setStyleSheet("color: #6c757d; font-size: 10px;")
-        autotune_layout.addWidget(autotune_info)
-
-        status_row = QHBoxLayout()
-        status_label = QLabel("Status:")
-        status_label.setStyleSheet("font-weight: bold;")
-        self.autotune_status_value = QLabel("Idle")
-        self.autotune_status_value.setStyleSheet("color: #6c757d; font-weight: bold;")
-        status_row.addWidget(status_label)
-        status_row.addWidget(self.autotune_status_value)
-        status_row.addStretch()
-        autotune_layout.addLayout(status_row)
-        
-        self.start_asymmetric_autotune_button = QPushButton("🎯 Start Asymmetric Autotune")
-        self.start_asymmetric_autotune_button.clicked.connect(self.start_asymmetric_autotune)
-        self.start_asymmetric_autotune_button.setStyleSheet("background-color: #6f42c1; color: white; font-weight: bold;")
-        
-        self.abort_asymmetric_autotune_button = QPushButton("⛔ Abort Autotune")
-        self.abort_asymmetric_autotune_button.clicked.connect(self.abort_asymmetric_autotune)
-        self.abort_asymmetric_autotune_button.setStyleSheet("background-color: #fd7e14; color: white; font-weight: bold;")
-        self.abort_asymmetric_autotune_button.setVisible(False)
-        
-        autotune_layout.addWidget(self.start_asymmetric_autotune_button)
-        autotune_layout.addWidget(self.abort_asymmetric_autotune_button)
-        
-        autotune_group.setLayout(autotune_layout)
-        layout.addWidget(autotune_group)
-        
         layout.addStretch()
         self.setLayout(layout)
 
@@ -417,27 +380,6 @@ class AsymmetricPIDControls(QWidget):
                         "color: #28a745; font-weight: bold;",
                     )
             
-            # Handle asymmetric autotune status
-            if "asymmetric_autotune_active" in data:
-                if data["asymmetric_autotune_active"]:
-                    self.start_asymmetric_autotune_button.setVisible(False)
-                    self.abort_asymmetric_autotune_button.setVisible(True)
-                else:
-                    self.start_asymmetric_autotune_button.setVisible(True)
-                    self.abort_asymmetric_autotune_button.setVisible(False)
-
-            if "autotune_status" in data:
-                status = str(data["autotune_status"]).replace("_", " ").title()
-                status_style = "color: #6c757d; font-weight: bold;"
-                if status.lower().startswith("run"):
-                    status_style = "color: #17a2b8; font-weight: bold;"
-                elif status.lower() in {"done", "complete"}:
-                    status_style = "color: #28a745; font-weight: bold;"
-                elif status.lower().startswith("abort"):
-                    status_style = "color: #dc3545; font-weight: bold;"
-                self.autotune_status_value.setText(status)
-                self.autotune_status_value.setStyleSheet(status_style)
-
             # Sync parameter fields when not being edited
             if all(key in data for key in ["pid_cooling_kp", "pid_cooling_ki", "pid_cooling_kd"]):
                 if not self.kp_cooling_input.hasFocus():
@@ -617,30 +559,6 @@ class AsymmetricPIDControls(QWidget):
         except ValueError as e:
             QMessageBox.warning(self, "Invalid Input", f"Safety margin error: {e}")
 
-    def start_asymmetric_autotune(self):
-        """Start asymmetric autotune with safety confirmation"""
-        reply = QMessageBox.question(
-            self, "🎯 Asymmetric Autotune",
-            "Start asymmetric autotune?\n\n"
-            "This will:\n"
-            "1. Test heating response (safe)\n"
-            "2. Test cooling response (conservative)\n"
-            "3. Calculate optimal PID parameters\n\n"
-            "Process will take 5-10 minutes.",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No
-        )
-        
-        if reply == QMessageBox.Yes:
-            if self.parent.send_asymmetric_command("start_asymmetric_autotune", {}):
-                self.parent.log("🎯 Starting asymmetric autotune...", "command")
-    
-    def abort_asymmetric_autotune(self):
-        """Abort asymmetric autotune"""
-        if self.parent.send_asymmetric_command("abort_asymmetric_autotune", {}):
-            self.parent.log("⛔ Asymmetric autotune aborted", "warning")
-
-
 # ============================================================================
 # Autotune wizard implementation
 # ============================================================================
@@ -805,6 +723,17 @@ class AutotuneDataAnalyzer:
 
 class AutotuneWizardTab(QWidget):
     """Guided autotune workflow with live analysis and UI."""
+
+    HEATING_LIMITS = {
+        "kp": (0.5, 5.0),
+        "ki": (0.05, 1.0),
+        "kd": (0.1, 3.0),
+    }
+    COOLING_LIMITS = {
+        "kp": (0.1, 2.0),
+        "ki": (0.01, 0.1),
+        "kd": (0.5, 5.0),
+    }
 
     def __init__(self, parent: 'MainWindow') -> None:
         super().__init__(parent)
@@ -998,6 +927,12 @@ class AutotuneWizardTab(QWidget):
         explanation.setStyleSheet("color: #495057;")
         layout.addWidget(explanation)
 
+        self.limit_notice = QLabel("")
+        self.limit_notice.setWordWrap(True)
+        self.limit_notice.setStyleSheet("color: #d39e00; font-style: italic;")
+        self.limit_notice.hide()
+        layout.addWidget(self.limit_notice)
+
         buttons = QHBoxLayout()
         self.apply_button = QPushButton("Aktiver varme-PID")
         self.apply_button.setStyleSheet("background-color: #28a745; color: white; font-weight: bold;")
@@ -1160,6 +1095,16 @@ class AutotuneWizardTab(QWidget):
         kp = self.kp_spin.value()
         ki = self.ki_spin.value()
         kd = self.kd_spin.value()
+        kp, ki, kd, heat_adj = self._sanitize_heating_values(kp, ki, kd)
+        self._update_limit_notice(heat_adj)
+        self.kp_spin.setValue(kp)
+        self.ki_spin.setValue(ki)
+        self.kd_spin.setValue(kd)
+        if heat_adj:
+            self.parent.log(
+                "⚠️ Autotune-verdier klippet til sikre grenser (varme): " + ", ".join(heat_adj),
+                "warning",
+            )
         self.parent.asymmetric_controls.kp_heating_input.setText(f"{kp:.3f}")
         self.parent.asymmetric_controls.ki_heating_input.setText(f"{ki:.4f}")
         self.parent.asymmetric_controls.kd_heating_input.setText(f"{kd:.3f}")
@@ -1169,14 +1114,33 @@ class AutotuneWizardTab(QWidget):
         kp = self.kp_spin.value()
         ki = self.ki_spin.value()
         kd = self.kd_spin.value()
+        kp, ki, kd, heat_adj = self._sanitize_heating_values(kp, ki, kd)
+        self.kp_spin.setValue(kp)
+        self.ki_spin.setValue(ki)
+        self.kd_spin.setValue(kd)
         self.parent.asymmetric_controls.kp_heating_input.setText(f"{kp:.3f}")
         self.parent.asymmetric_controls.ki_heating_input.setText(f"{ki:.4f}")
         self.parent.asymmetric_controls.kd_heating_input.setText(f"{kd:.3f}")
         self.parent.asymmetric_controls.set_heating_pid()
 
-        self.parent.asymmetric_controls.kp_cooling_input.setText(f"{(kp * 0.5):.3f}")
-        self.parent.asymmetric_controls.ki_cooling_input.setText(f"{(ki * 0.5):.4f}")
-        self.parent.asymmetric_controls.kd_cooling_input.setText(f"{(kd * 0.5):.3f}")
+        cool_kp = kp * 0.5
+        cool_ki = ki * 0.5
+        cool_kd = kd * 0.5
+        cool_kp, cool_ki, cool_kd, cool_adj = self._sanitize_cooling_values(cool_kp, cool_ki, cool_kd)
+        if heat_adj or cool_adj:
+            combined = []
+            if heat_adj:
+                combined.append("varme: " + ", ".join(heat_adj))
+            if cool_adj:
+                combined.append("kjøling: " + ", ".join(cool_adj))
+            self.parent.log(
+                "⚠️ Autotune-verdier klippet til sikre grenser (" + " | ".join(combined) + ")",
+                "warning",
+            )
+        self._update_limit_notice(heat_adj, cool_adj)
+        self.parent.asymmetric_controls.kp_cooling_input.setText(f"{cool_kp:.3f}")
+        self.parent.asymmetric_controls.ki_cooling_input.setText(f"{cool_ki:.4f}")
+        self.parent.asymmetric_controls.kd_cooling_input.setText(f"{cool_kd:.3f}")
         self.parent.asymmetric_controls.set_cooling_pid()
 
     def receive_data(self, data: Dict[str, Any]) -> None:
@@ -1267,9 +1231,18 @@ class AutotuneWizardTab(QWidget):
         )
         self.results_summary.setText(summary)
 
-        self.kp_spin.setValue(results['kp'])
-        self.ki_spin.setValue(results['ki'])
-        self.kd_spin.setValue(results['kd'])
+        kp, ki, kd, adjustments = self._sanitize_heating_values(
+            results['kp'], results['ki'], results['kd']
+        )
+        self.kp_spin.setValue(kp)
+        self.ki_spin.setValue(ki)
+        self.kd_spin.setValue(kd)
+        self._update_limit_notice(adjustments)
+        if adjustments:
+            self.parent.log(
+                "⚠️ Autotune-verdier klippet til sikre grenser (varme): " + ", ".join(adjustments),
+                "warning",
+            )
 
         if self._result_axes is not None and self._result_canvas is not None:
             self._result_axes.clear()
@@ -1293,6 +1266,67 @@ class AutotuneWizardTab(QWidget):
         """Expose results rendering to the parent GUI."""
         self.collecting = False
         self._present_results(results)
+
+    @staticmethod
+    def _clamp_value(value: float, bounds: Tuple[float, float]) -> Tuple[float, bool]:
+        lower, upper = bounds
+        clamped = min(max(value, lower), upper)
+        return clamped, abs(clamped - value) > 1e-6
+
+    def _sanitize_heating_values(
+        self, kp: float, ki: float, kd: float
+    ) -> Tuple[float, float, float, List[str]]:
+        adjustments: List[str] = []
+
+        kp, changed = self._clamp_value(kp, self.HEATING_LIMITS["kp"])
+        if changed:
+            adjustments.append(f"Kp → {kp:.2f}")
+
+        ki, changed = self._clamp_value(ki, self.HEATING_LIMITS["ki"])
+        if changed:
+            adjustments.append(f"Ki → {ki:.3f}")
+
+        kd, changed = self._clamp_value(kd, self.HEATING_LIMITS["kd"])
+        if changed:
+            adjustments.append(f"Kd → {kd:.2f}")
+
+        return kp, ki, kd, adjustments
+
+    def _sanitize_cooling_values(
+        self, kp: float, ki: float, kd: float
+    ) -> Tuple[float, float, float, List[str]]:
+        adjustments: List[str] = []
+
+        kp, changed = self._clamp_value(kp, self.COOLING_LIMITS["kp"])
+        if changed:
+            adjustments.append(f"Kp → {kp:.2f}")
+
+        ki, changed = self._clamp_value(ki, self.COOLING_LIMITS["ki"])
+        if changed:
+            adjustments.append(f"Ki → {ki:.3f}")
+
+        kd, changed = self._clamp_value(kd, self.COOLING_LIMITS["kd"])
+        if changed:
+            adjustments.append(f"Kd → {kd:.2f}")
+
+        return kp, ki, kd, adjustments
+
+    def _update_limit_notice(
+        self, heating_adjustments: List[str], cooling_adjustments: Optional[List[str]] = None
+    ) -> None:
+        messages: List[str] = []
+        if heating_adjustments:
+            messages.append("Varme: " + ", ".join(heating_adjustments))
+        if cooling_adjustments:
+            messages.append("Kjøling: " + ", ".join(cooling_adjustments))
+
+        if messages:
+            self.limit_notice.setText(
+                "⚠️ Verdier utenfor sikre grenser er justert automatisk – " + " | ".join(messages)
+            )
+            self.limit_notice.show()
+        else:
+            self.limit_notice.hide()
 
     def _restore_original_target(self) -> None:
         if self._original_target is None:
@@ -2563,30 +2597,6 @@ class MainWindow(QMainWindow):
                 
         except (ValueError, KeyError) as e:
             print(f"Autotune results error: {e}")
-
-    # ====== CONTROL METHODS ======
-
-    def start_autotune(self):
-        """Start autotune"""
-        try:
-            if not self.connection_established:
-                self.log("❌ Not connected", "error")
-                return
-            
-            if self.send_and_log_cmd("pid", "autotune"):
-                self.log("🎯 Autotune started", "command")
-                
-        except Exception as e:
-            self.log(f"❌ Autotune start error: {e}", "error")
-
-    def abort_autotune(self):
-        """Abort autotune"""
-        try:
-            if self.send_and_log_cmd("pid", "abort_autotune"):
-                self.log("⛔ Autotune aborted", "warning")
-
-        except Exception as e:
-            self.log(f"❌ Autotune abort error: {e}", "error")
 
     def send_target_temperature(self, value: float, *, source: str = "", silent: bool = False) -> bool:
         """Send new plate target temperature with consistent logging."""

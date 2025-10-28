@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
     QFormLayout, QLineEdit, QSplitter,
     QProgressBar, QCheckBox, QSpinBox, QGridLayout,
     QTabWidget, QScrollArea, QFrame, QDialog,
-    QDialogButtonBox, QDoubleSpinBox
+    QDialogButtonBox, QDoubleSpinBox, QStackedWidget
 )
 from PySide6.QtCore import QTimer, Qt, Signal
 from PySide6.QtGui import QFont, QPalette, QColor
@@ -90,7 +90,7 @@ class MaxOutputDialog(QDialog):
 
 class AsymmetricPIDControls(QWidget):
     """Enhanced controls for asymmetric PID system"""
-    
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.parent = parent
@@ -642,6 +642,535 @@ class AsymmetricPIDControls(QWidget):
 
 
 # ============================================================================
+# Autotune wizard implementation
+# ============================================================================
+
+class AutotuneDataAnalyzer:
+    """Collect samples and compute Ziegler-Nichols inspired PID values."""
+
+    MIN_SAMPLES = 40
+    STABLE_WINDOW = 25
+
+    def __init__(self) -> None:
+        self.reset()
+
+    def reset(self) -> None:
+        self.start_timestamp: Optional[float] = None
+        self.timestamps: List[float] = []
+        self.temperatures: List[float] = []
+        self.outputs: List[float] = []
+
+    def add_sample(self, timestamp: float, temperature: float, output: float) -> None:
+        if self.start_timestamp is None:
+            self.start_timestamp = timestamp
+
+        elapsed = max(0.0, timestamp - self.start_timestamp)
+        self.timestamps.append(elapsed)
+        self.temperatures.append(temperature)
+        self.outputs.append(output)
+
+    def has_enough_samples(self) -> bool:
+        return len(self.timestamps) >= self.MIN_SAMPLES
+
+    def is_stable(self, tolerance: float = 0.05) -> bool:
+        if len(self.temperatures) < self.STABLE_WINDOW:
+            return False
+
+        recent = self.temperatures[-self.STABLE_WINDOW:]
+        if not recent:
+            return False
+
+        return (max(recent) - min(recent)) <= tolerance
+
+    def max_rate(self) -> float:
+        if len(self.timestamps) < 2:
+            return 0.0
+
+        max_rate = 0.0
+        for idx in range(1, len(self.timestamps)):
+            dt = self.timestamps[idx] - self.timestamps[idx - 1]
+            if dt <= 0:
+                continue
+            rate = (self.temperatures[idx] - self.temperatures[idx - 1]) / dt
+            if rate > max_rate:
+                max_rate = rate
+        return max_rate
+
+    @staticmethod
+    def _moving_average(values: List[float], window: int = 10) -> float:
+        if not values:
+            return 0.0
+        if len(values) < window:
+            return sum(values) / len(values)
+        return sum(values[-window:]) / float(window)
+
+    def _estimate_dead_time(self, start_temp: float, final_temp: float) -> float:
+        if not self.timestamps:
+            return 0.0
+
+        delta = final_temp - start_temp
+        if abs(delta) < 1e-6:
+            return 0.0
+
+        threshold = start_temp + 0.05 * delta
+        for t, temp in zip(self.timestamps, self.temperatures):
+            if (delta > 0 and temp >= threshold) or (delta < 0 and temp <= threshold):
+                return max(0.0, t)
+        return 0.0
+
+    def _estimate_time_constant(self, start_temp: float, final_temp: float) -> float:
+        if not self.timestamps:
+            return 0.0
+
+        delta = final_temp - start_temp
+        if abs(delta) < 1e-6:
+            return 0.0
+
+        target = start_temp + 0.63 * delta
+        for t, temp in zip(self.timestamps, self.temperatures):
+            if (delta > 0 and temp >= target) or (delta < 0 and temp <= target):
+                return max(0.0, t)
+        return self.timestamps[-1]
+
+    def _estimate_settling_time(self, final_temp: float, tolerance: float = 0.1) -> float:
+        if not self.timestamps:
+            return 0.0
+
+        for idx in range(len(self.timestamps) - 1, -1, -1):
+            window = self.temperatures[idx:]
+            if not window:
+                continue
+            if max(abs(val - final_temp) for val in window) <= tolerance:
+                return self.timestamps[idx]
+        return self.timestamps[-1]
+
+    def compute_results(self) -> Optional[Dict[str, float]]:
+        if not self.has_enough_samples():
+            return None
+
+        initial_temp = self.temperatures[0]
+        final_temp = self._moving_average(self.temperatures, 10)
+        delta_temp = final_temp - initial_temp
+        if abs(delta_temp) < 0.05:
+            return None
+
+        initial_output = self._moving_average(self.outputs, 12)
+        final_output = self._moving_average(self.outputs, 4)
+        output_span = max(self.outputs) - min(self.outputs)
+        if abs(output_span) < 1.0:
+            output_span = final_output - initial_output
+
+        if abs(output_span) < 1e-3:
+            return None
+
+        step_fraction = output_span / 100.0
+        process_gain = delta_temp / step_fraction if step_fraction else 0.0
+
+        dead_time = self._estimate_dead_time(initial_temp, final_temp)
+        t63 = self._estimate_time_constant(initial_temp, final_temp)
+        time_constant = max(0.1, t63 - dead_time)
+
+        kp = 0.0
+        ki = 0.0
+        kd = 0.0
+        if process_gain != 0 and dead_time > 0:
+            kp = 1.2 * time_constant / (process_gain * dead_time)
+            ki = kp / (2.0 * dead_time)
+            kd = kp * dead_time * 0.5
+
+        kp = float(np.clip(kp, 0.01, 20.0))
+        ki = float(np.clip(ki, 0.001, 5.0))
+        kd = float(np.clip(kd, 0.0, 10.0))
+
+        overshoot = max(self.temperatures) - final_temp
+        max_rate = self.max_rate()
+        settling_time = self._estimate_settling_time(final_temp)
+
+        return {
+            "kp": kp,
+            "ki": ki,
+            "kd": kd,
+            "process_gain": process_gain,
+            "dead_time": dead_time,
+            "time_constant": time_constant,
+            "delta_temp": delta_temp,
+            "overshoot": overshoot,
+            "max_rate": max_rate,
+            "settling_time": settling_time,
+            "initial_temp": initial_temp,
+            "final_temp": final_temp,
+            "output_span": output_span,
+        }
+
+
+class AutotuneWizardTab(QWidget):
+    """Guided autotune workflow with live analysis and UI."""
+
+    def __init__(self, parent: 'MainWindow') -> None:
+        super().__init__(parent)
+        self.parent = parent
+        self.analyzer = AutotuneDataAnalyzer()
+        self.collecting = False
+        self._last_plot_update = 0.0
+        self._canvas: Optional[FigureCanvas] = None
+        self._axes_temp = None
+        self._axes_output = None
+        self._result_axes = None
+        self._result_canvas: Optional[FigureCanvas] = None
+        self._autotune_command_sent = False
+
+        self._init_ui()
+
+    def _init_ui(self) -> None:
+        layout = QVBoxLayout(self)
+        self.stack = QStackedWidget()
+        layout.addWidget(self.stack)
+
+        intro = self._build_intro_page()
+        collect = self._build_collect_page()
+        results = self._build_results_page()
+
+        self.stack.addWidget(intro)
+        self.stack.addWidget(collect)
+        self.stack.addWidget(results)
+
+    def _build_intro_page(self) -> QWidget:
+        page = QWidget()
+        vbox = QVBoxLayout(page)
+        vbox.setSpacing(18)
+
+        title = QLabel("Autotune wizard")
+        title.setAlignment(Qt.AlignCenter)
+        title.setStyleSheet("font-size: 20px; font-weight: bold;")
+        vbox.addWidget(title)
+
+        description = QLabel(
+            "Denne wizzarden analyserer systemresponsen og foreslår nye PID-verdier.\n"
+            "• Trykk start for å sende autotune-kommando til kontrolleren.\n"
+            "• Følg grafene til systemet stabiliserer seg.\n"
+            "• Evaluer verdiene og aktiver dem når du er fornøyd."
+        )
+        description.setWordWrap(True)
+        description.setAlignment(Qt.AlignCenter)
+        description.setStyleSheet("color: #495057;")
+        vbox.addWidget(description)
+
+        self.start_button = QPushButton("Start autotune")
+        self.start_button.setStyleSheet(
+            "background-color: #28a745; color: white; font-weight: bold; padding: 8px 24px;"
+        )
+        self.start_button.clicked.connect(self.start_sequence)
+        self.start_button.setCursor(Qt.PointingHandCursor)
+
+        button_row = QHBoxLayout()
+        button_row.addStretch()
+        button_row.addWidget(self.start_button)
+        button_row.addStretch()
+        vbox.addLayout(button_row)
+
+        info = QLabel(
+            "Tips: sørg for stabile startforhold før du starter. Wizzarden følger en Ziegler-Nichols stegrespons."
+        )
+        info.setWordWrap(True)
+        info.setStyleSheet("background: #f8f9fa; border: 1px solid #dee2e6; padding: 12px; border-radius: 6px;")
+        vbox.addWidget(info)
+
+        vbox.addStretch(1)
+        return page
+
+    def _build_collect_page(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setSpacing(12)
+
+        header = QLabel("Steg 2 – måling av respons")
+        header.setStyleSheet("font-size: 18px; font-weight: bold;")
+        layout.addWidget(header)
+
+        self.collect_status = QLabel("Venter på respons...")
+        self.collect_status.setStyleSheet("color: #17a2b8; font-weight: bold;")
+        layout.addWidget(self.collect_status)
+
+        self.metric_label = QLabel("ΔT: –  |  Hastighet: –  |  Overshoot: –")
+        self.metric_label.setStyleSheet("color: #495057;")
+        layout.addWidget(self.metric_label)
+
+        figure = Figure(figsize=(6, 4))
+        self._canvas = FigureCanvas(figure)
+        self._axes_temp = figure.add_subplot(211)
+        self._axes_output = figure.add_subplot(212, sharex=self._axes_temp)
+        self._axes_temp.set_ylabel("Temp [°C]")
+        self._axes_output.set_ylabel("PID [%]")
+        self._axes_output.set_xlabel("Tid [s]")
+        self._axes_temp.grid(True, alpha=0.3)
+        self._axes_output.grid(True, alpha=0.3)
+        layout.addWidget(self._canvas)
+
+        buttons = QHBoxLayout()
+        self.abort_button = QPushButton("Avbryt")
+        self.abort_button.setStyleSheet("background-color: #dc3545; color: white;")
+        self.abort_button.clicked.connect(self.abort_sequence)
+
+        self.finish_button = QPushButton("Analyser nå")
+        self.finish_button.setStyleSheet("background-color: #007bff; color: white;")
+        self.finish_button.setEnabled(False)
+        self.finish_button.clicked.connect(self.complete_measurement)
+
+        buttons.addStretch()
+        buttons.addWidget(self.abort_button)
+        buttons.addWidget(self.finish_button)
+        layout.addLayout(buttons)
+
+        hint = QLabel("Wizzarden stopper automatisk når temperaturen er stabil i 25 målepunkter (±0.05 °C).")
+        hint.setStyleSheet("color: #6c757d; font-size: 11px;")
+        layout.addWidget(hint)
+
+        return page
+
+    def _build_results_page(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setSpacing(14)
+
+        header = QLabel("Steg 3 – foreslåtte PID-verdier")
+        header.setStyleSheet("font-size: 18px; font-weight: bold;")
+        layout.addWidget(header)
+
+        self.results_summary = QLabel("Ingen resultater enda")
+        self.results_summary.setWordWrap(True)
+        self.results_summary.setStyleSheet(
+            "background: #f1f3f5; border: 1px solid #dee2e6; padding: 12px; border-radius: 6px;"
+        )
+        layout.addWidget(self.results_summary)
+
+        form = QFormLayout()
+        form.setLabelAlignment(Qt.AlignRight)
+
+        self.kp_spin = QDoubleSpinBox()
+        self.kp_spin.setRange(0.0, 20.0)
+        self.kp_spin.setDecimals(3)
+        self.kp_spin.setSingleStep(0.05)
+
+        self.ki_spin = QDoubleSpinBox()
+        self.ki_spin.setRange(0.0, 5.0)
+        self.ki_spin.setDecimals(4)
+        self.ki_spin.setSingleStep(0.01)
+
+        self.kd_spin = QDoubleSpinBox()
+        self.kd_spin.setRange(0.0, 10.0)
+        self.kd_spin.setDecimals(3)
+        self.kd_spin.setSingleStep(0.05)
+
+        form.addRow("Kp (varme):", self.kp_spin)
+        form.addRow("Ki (varme):", self.ki_spin)
+        form.addRow("Kd (varme):", self.kd_spin)
+        layout.addLayout(form)
+
+        explanation = QLabel(
+            "Justeringstips:\n"
+            "• Høyere Kp gir raskere respons, men mer overshoot.\n"
+            "• Høyere Ki fjerner steady-state-feil, men kan gi oscillasjoner.\n"
+            "• Høyere Kd demper overshoot og stabiliserer responsen."
+        )
+        explanation.setWordWrap(True)
+        explanation.setStyleSheet("color: #495057;")
+        layout.addWidget(explanation)
+
+        buttons = QHBoxLayout()
+        self.apply_button = QPushButton("Aktiver varme-PID")
+        self.apply_button.setStyleSheet("background-color: #28a745; color: white; font-weight: bold;")
+        self.apply_button.clicked.connect(self.apply_to_heating)
+
+        self.apply_both_button = QPushButton("Aktiver begge")
+        self.apply_both_button.setStyleSheet("background-color: #6f42c1; color: white; font-weight: bold;")
+        self.apply_both_button.clicked.connect(self.apply_to_both)
+
+        self.restart_button = QPushButton("Kjør på nytt")
+        self.restart_button.clicked.connect(self.reset_wizard)
+
+        buttons.addStretch()
+        buttons.addWidget(self.apply_button)
+        buttons.addWidget(self.apply_both_button)
+        buttons.addWidget(self.restart_button)
+        layout.addLayout(buttons)
+
+        result_canvas = FigureCanvas(Figure(figsize=(6, 3)))
+        self._result_canvas = result_canvas
+        self._result_axes = result_canvas.figure.add_subplot(111)
+        self._result_axes.set_title("Temperaturrespons")
+        self._result_axes.set_xlabel("Tid [s]")
+        self._result_axes.set_ylabel("Temp [°C]")
+        self._result_axes.grid(True, alpha=0.3)
+        layout.addWidget(result_canvas)
+
+        return page
+
+    def start_sequence(self) -> None:
+        if not self.parent.connection_established:
+            QMessageBox.warning(self, "Ikke tilkoblet", "Koble til kontrolleren før du starter autotune.")
+            return
+
+        self.analyzer.reset()
+        self.collecting = True
+        self._autotune_command_sent = False
+        self._clear_plots()
+        self.collect_status.setText("Sender autotune...")
+        self.collect_status.setStyleSheet("color: #17a2b8; font-weight: bold;")
+        self.metric_label.setText("ΔT: –  |  Hastighet: –  |  Overshoot: –")
+        self.finish_button.setEnabled(False)
+        self.stack.setCurrentIndex(1)
+
+        if self.parent.send_asymmetric_command("start_asymmetric_autotune", {}):
+            self.parent.log("🎯 Autotune wizard startet", "command")
+            self._autotune_command_sent = True
+
+    def abort_sequence(self) -> None:
+        if self.collecting and self._autotune_command_sent:
+            self.parent.send_asymmetric_command("abort_asymmetric_autotune", {})
+            self.parent.log("⛔ Autotune wizard avbrutt", "warning")
+        self.collecting = False
+        self.stack.setCurrentIndex(0)
+
+    def complete_measurement(self) -> None:
+        results = self.analyzer.compute_results()
+        if not results:
+            QMessageBox.information(
+                self,
+                "Manglende data",
+                "Wizzarden trenger mer variert data før analysen kan fullføres.",
+            )
+            return
+
+        self.collecting = False
+        self._present_results(results)
+
+    def reset_wizard(self) -> None:
+        self.stack.setCurrentIndex(0)
+
+    def apply_to_heating(self) -> None:
+        kp = self.kp_spin.value()
+        ki = self.ki_spin.value()
+        kd = self.kd_spin.value()
+        self.parent.asymmetric_controls.kp_heating_input.setText(f"{kp:.3f}")
+        self.parent.asymmetric_controls.ki_heating_input.setText(f"{ki:.4f}")
+        self.parent.asymmetric_controls.kd_heating_input.setText(f"{kd:.3f}")
+        self.parent.asymmetric_controls.set_heating_pid()
+
+    def apply_to_both(self) -> None:
+        kp = self.kp_spin.value()
+        ki = self.ki_spin.value()
+        kd = self.kd_spin.value()
+        self.parent.asymmetric_controls.kp_heating_input.setText(f"{kp:.3f}")
+        self.parent.asymmetric_controls.ki_heating_input.setText(f"{ki:.4f}")
+        self.parent.asymmetric_controls.kd_heating_input.setText(f"{kd:.3f}")
+        self.parent.asymmetric_controls.set_heating_pid()
+
+        self.parent.asymmetric_controls.kp_cooling_input.setText(f"{(kp * 0.5):.3f}")
+        self.parent.asymmetric_controls.ki_cooling_input.setText(f"{(ki * 0.5):.4f}")
+        self.parent.asymmetric_controls.kd_cooling_input.setText(f"{(kd * 0.5):.3f}")
+        self.parent.asymmetric_controls.set_cooling_pid()
+
+    def receive_data(self, data: Dict[str, Any]) -> None:
+        if not self.collecting:
+            return
+        if "cooling_plate_temp" not in data or "pid_output" not in data:
+            return
+
+        timestamp = time.time()
+        temp = float(data["cooling_plate_temp"])
+        output = float(data.get("pid_output", 0.0))
+        self.analyzer.add_sample(timestamp, temp, output)
+
+        now = time.time()
+        if now - self._last_plot_update > 0.5:
+            self._last_plot_update = now
+            self._update_collect_plot()
+
+        if self.analyzer.has_enough_samples():
+            metrics = self.analyzer.compute_results()
+            if metrics:
+                self.metric_label.setText(
+                    f"ΔT: {metrics['delta_temp']:.2f} °C  |  Hastighet: {metrics['max_rate']:.3f} °C/s  |  Overshoot: {metrics['overshoot']:.2f} °C"
+                )
+                self.finish_button.setEnabled(True)
+
+                if self.analyzer.is_stable():
+                    self.collect_status.setText("Stabilt - analyserer...")
+                    self.collect_status.setStyleSheet("color: #28a745; font-weight: bold;")
+                    self.collecting = False
+                    self._present_results(metrics)
+            else:
+                self.finish_button.setEnabled(False)
+
+    def _update_collect_plot(self) -> None:
+        if not self._canvas:
+            return
+
+        self._axes_temp.clear()
+        self._axes_output.clear()
+        self._axes_temp.set_ylabel("Temp [°C]")
+        self._axes_output.set_ylabel("PID [%]")
+        self._axes_output.set_xlabel("Tid [s]")
+        self._axes_temp.grid(True, alpha=0.3)
+        self._axes_output.grid(True, alpha=0.3)
+
+        self._axes_temp.plot(self.analyzer.timestamps, self.analyzer.temperatures, color="#ff6b35")
+        self._axes_output.plot(self.analyzer.timestamps, self.analyzer.outputs, color="#1e90ff")
+        self._canvas.draw()
+
+    def _clear_plots(self) -> None:
+        if self._axes_temp is not None:
+            self._axes_temp.clear()
+            self._axes_temp.set_ylabel("Temp [°C]")
+            self._axes_temp.grid(True, alpha=0.3)
+        if self._axes_output is not None:
+            self._axes_output.clear()
+            self._axes_output.set_ylabel("PID [%]")
+            self._axes_output.set_xlabel("Tid [s]")
+            self._axes_output.grid(True, alpha=0.3)
+        if self._canvas is not None:
+            self._canvas.draw()
+
+    def _present_results(self, results: Dict[str, float]) -> None:
+        self.stack.setCurrentIndex(2)
+
+        summary = (
+            f"ΔT: {results['delta_temp']:.2f} °C\n"
+            f"Hastighet: {results['max_rate']:.3f} °C/s\n"
+            f"Overshoot: {results['overshoot']:.2f} °C\n"
+            f"Settlingstid: {results['settling_time']:.1f} s\n"
+            f"Prosessgain: {results['process_gain']:.2f}\n"
+            f"Dødtid L: {results['dead_time']:.2f} s  |  Tidskonstant T: {results['time_constant']:.2f} s"
+        )
+        self.results_summary.setText(summary)
+
+        self.kp_spin.setValue(results['kp'])
+        self.ki_spin.setValue(results['ki'])
+        self.kd_spin.setValue(results['kd'])
+
+        if self._result_axes is not None and self._result_canvas is not None:
+            self._result_axes.clear()
+            self._result_axes.set_title("Temperaturrespons")
+            self._result_axes.set_xlabel("Tid [s]")
+            self._result_axes.set_ylabel("Temp [°C]")
+            self._result_axes.grid(True, alpha=0.3)
+            self._result_axes.plot(
+                self.analyzer.timestamps,
+                self.analyzer.temperatures,
+                color="#ff6b35",
+                label="Plate temp",
+            )
+            self._result_axes.legend()
+            self._result_canvas.draw()
+
+    def display_results(self, results: Dict[str, float]) -> None:
+        """Expose results rendering to the parent GUI."""
+        self.collecting = False
+        self._present_results(results)
+
+
+
+# ============================================================================
 # 2. KEEP ALL THE EXISTING CLASSES (MatplotlibGraphWidget, etc.) UNCHANGED
 # ============================================================================
 
@@ -952,6 +1481,7 @@ class MainWindow(QMainWindow):
             # Create tabs
             self.create_control_tab()
             self.create_monitoring_tab()
+            self.create_autotune_tab()
             self.create_profile_tab()
             
             # ============================================================================
@@ -1378,6 +1908,11 @@ class MainWindow(QMainWindow):
         
         self.tab_widget.addTab(monitoring_widget, "📈 Monitoring")
 
+    def create_autotune_tab(self):
+        """Create autotune wizard tab"""
+        self.autotune_wizard = AutotuneWizardTab(self)
+        self.tab_widget.addTab(self.autotune_wizard, "🎯 Autotune")
+
     def create_profile_tab(self):
         """Create profile tab"""
         profile_widget = QWidget()
@@ -1548,7 +2083,10 @@ class MainWindow(QMainWindow):
             # ============================================================================
             if hasattr(self, 'asymmetric_controls'):
                 self.asymmetric_controls.update_status(data)
-            
+
+            if hasattr(self, 'autotune_wizard'):
+                self.autotune_wizard.receive_data(data)
+
             # Update graphs
             if self.connection_established and hasattr(self, 'graph_widget'):
                 self.update_live_graph_data(data)
@@ -1835,6 +2373,9 @@ class MainWindow(QMainWindow):
                     self.asymmetric_controls.kp_heating_input.setText(f"{kp:.3f}")
                     self.asymmetric_controls.ki_heating_input.setText(f"{ki:.3f}")
                     self.asymmetric_controls.kd_heating_input.setText(f"{kd:.3f}")
+
+                if hasattr(self, "autotune_wizard"):
+                    self.autotune_wizard.display_results(results)
 
                 QMessageBox.information(
                     self,

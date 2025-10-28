@@ -2564,30 +2564,6 @@ class MainWindow(QMainWindow):
         except (ValueError, KeyError) as e:
             print(f"Autotune results error: {e}")
 
-    # ====== CONTROL METHODS ======
-
-    def start_autotune(self):
-        """Start autotune"""
-        try:
-            if not self.connection_established:
-                self.log("❌ Not connected", "error")
-                return
-            
-            if self.send_and_log_cmd("pid", "autotune"):
-                self.log("🎯 Autotune started", "command")
-                
-        except Exception as e:
-            self.log(f"❌ Autotune start error: {e}", "error")
-
-    def abort_autotune(self):
-        """Abort autotune"""
-        try:
-            if self.send_and_log_cmd("pid", "abort_autotune"):
-                self.log("⛔ Autotune aborted", "warning")
-
-        except Exception as e:
-            self.log(f"❌ Autotune abort error: {e}", "error")
-
     def send_target_temperature(self, value: float, *, source: str = "", silent: bool = False) -> bool:
         """Send new plate target temperature with consistent logging."""
         try:

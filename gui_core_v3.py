@@ -724,6 +724,17 @@ class AutotuneDataAnalyzer:
 class AutotuneWizardTab(QWidget):
     """Guided autotune workflow with live analysis and UI."""
 
+    HEATING_LIMITS = {
+        "kp": (0.5, 5.0),
+        "ki": (0.05, 1.0),
+        "kd": (0.1, 3.0),
+    }
+    COOLING_LIMITS = {
+        "kp": (0.1, 2.0),
+        "ki": (0.01, 0.1),
+        "kd": (0.5, 5.0),
+    }
+
     def __init__(self, parent: 'MainWindow') -> None:
         super().__init__(parent)
         self.parent = parent
@@ -916,6 +927,12 @@ class AutotuneWizardTab(QWidget):
         explanation.setStyleSheet("color: #495057;")
         layout.addWidget(explanation)
 
+        self.limit_notice = QLabel("")
+        self.limit_notice.setWordWrap(True)
+        self.limit_notice.setStyleSheet("color: #d39e00; font-style: italic;")
+        self.limit_notice.hide()
+        layout.addWidget(self.limit_notice)
+
         buttons = QHBoxLayout()
         self.apply_button = QPushButton("Aktiver varme-PID")
         self.apply_button.setStyleSheet("background-color: #28a745; color: white; font-weight: bold;")
@@ -1078,6 +1095,16 @@ class AutotuneWizardTab(QWidget):
         kp = self.kp_spin.value()
         ki = self.ki_spin.value()
         kd = self.kd_spin.value()
+        kp, ki, kd, heat_adj = self._sanitize_heating_values(kp, ki, kd)
+        self._update_limit_notice(heat_adj)
+        self.kp_spin.setValue(kp)
+        self.ki_spin.setValue(ki)
+        self.kd_spin.setValue(kd)
+        if heat_adj:
+            self.parent.log(
+                "⚠️ Autotune-verdier klippet til sikre grenser (varme): " + ", ".join(heat_adj),
+                "warning",
+            )
         self.parent.asymmetric_controls.kp_heating_input.setText(f"{kp:.3f}")
         self.parent.asymmetric_controls.ki_heating_input.setText(f"{ki:.4f}")
         self.parent.asymmetric_controls.kd_heating_input.setText(f"{kd:.3f}")
@@ -1087,14 +1114,33 @@ class AutotuneWizardTab(QWidget):
         kp = self.kp_spin.value()
         ki = self.ki_spin.value()
         kd = self.kd_spin.value()
+        kp, ki, kd, heat_adj = self._sanitize_heating_values(kp, ki, kd)
+        self.kp_spin.setValue(kp)
+        self.ki_spin.setValue(ki)
+        self.kd_spin.setValue(kd)
         self.parent.asymmetric_controls.kp_heating_input.setText(f"{kp:.3f}")
         self.parent.asymmetric_controls.ki_heating_input.setText(f"{ki:.4f}")
         self.parent.asymmetric_controls.kd_heating_input.setText(f"{kd:.3f}")
         self.parent.asymmetric_controls.set_heating_pid()
 
-        self.parent.asymmetric_controls.kp_cooling_input.setText(f"{(kp * 0.5):.3f}")
-        self.parent.asymmetric_controls.ki_cooling_input.setText(f"{(ki * 0.5):.4f}")
-        self.parent.asymmetric_controls.kd_cooling_input.setText(f"{(kd * 0.5):.3f}")
+        cool_kp = kp * 0.5
+        cool_ki = ki * 0.5
+        cool_kd = kd * 0.5
+        cool_kp, cool_ki, cool_kd, cool_adj = self._sanitize_cooling_values(cool_kp, cool_ki, cool_kd)
+        if heat_adj or cool_adj:
+            combined = []
+            if heat_adj:
+                combined.append("varme: " + ", ".join(heat_adj))
+            if cool_adj:
+                combined.append("kjøling: " + ", ".join(cool_adj))
+            self.parent.log(
+                "⚠️ Autotune-verdier klippet til sikre grenser (" + " | ".join(combined) + ")",
+                "warning",
+            )
+        self._update_limit_notice(heat_adj, cool_adj)
+        self.parent.asymmetric_controls.kp_cooling_input.setText(f"{cool_kp:.3f}")
+        self.parent.asymmetric_controls.ki_cooling_input.setText(f"{cool_ki:.4f}")
+        self.parent.asymmetric_controls.kd_cooling_input.setText(f"{cool_kd:.3f}")
         self.parent.asymmetric_controls.set_cooling_pid()
 
     def receive_data(self, data: Dict[str, Any]) -> None:
@@ -1185,9 +1231,18 @@ class AutotuneWizardTab(QWidget):
         )
         self.results_summary.setText(summary)
 
-        self.kp_spin.setValue(results['kp'])
-        self.ki_spin.setValue(results['ki'])
-        self.kd_spin.setValue(results['kd'])
+        kp, ki, kd, adjustments = self._sanitize_heating_values(
+            results['kp'], results['ki'], results['kd']
+        )
+        self.kp_spin.setValue(kp)
+        self.ki_spin.setValue(ki)
+        self.kd_spin.setValue(kd)
+        self._update_limit_notice(adjustments)
+        if adjustments:
+            self.parent.log(
+                "⚠️ Autotune-verdier klippet til sikre grenser (varme): " + ", ".join(adjustments),
+                "warning",
+            )
 
         if self._result_axes is not None and self._result_canvas is not None:
             self._result_axes.clear()
@@ -1211,6 +1266,67 @@ class AutotuneWizardTab(QWidget):
         """Expose results rendering to the parent GUI."""
         self.collecting = False
         self._present_results(results)
+
+    @staticmethod
+    def _clamp_value(value: float, bounds: Tuple[float, float]) -> Tuple[float, bool]:
+        lower, upper = bounds
+        clamped = min(max(value, lower), upper)
+        return clamped, abs(clamped - value) > 1e-6
+
+    def _sanitize_heating_values(
+        self, kp: float, ki: float, kd: float
+    ) -> Tuple[float, float, float, List[str]]:
+        adjustments: List[str] = []
+
+        kp, changed = self._clamp_value(kp, self.HEATING_LIMITS["kp"])
+        if changed:
+            adjustments.append(f"Kp → {kp:.2f}")
+
+        ki, changed = self._clamp_value(ki, self.HEATING_LIMITS["ki"])
+        if changed:
+            adjustments.append(f"Ki → {ki:.3f}")
+
+        kd, changed = self._clamp_value(kd, self.HEATING_LIMITS["kd"])
+        if changed:
+            adjustments.append(f"Kd → {kd:.2f}")
+
+        return kp, ki, kd, adjustments
+
+    def _sanitize_cooling_values(
+        self, kp: float, ki: float, kd: float
+    ) -> Tuple[float, float, float, List[str]]:
+        adjustments: List[str] = []
+
+        kp, changed = self._clamp_value(kp, self.COOLING_LIMITS["kp"])
+        if changed:
+            adjustments.append(f"Kp → {kp:.2f}")
+
+        ki, changed = self._clamp_value(ki, self.COOLING_LIMITS["ki"])
+        if changed:
+            adjustments.append(f"Ki → {ki:.3f}")
+
+        kd, changed = self._clamp_value(kd, self.COOLING_LIMITS["kd"])
+        if changed:
+            adjustments.append(f"Kd → {kd:.2f}")
+
+        return kp, ki, kd, adjustments
+
+    def _update_limit_notice(
+        self, heating_adjustments: List[str], cooling_adjustments: Optional[List[str]] = None
+    ) -> None:
+        messages: List[str] = []
+        if heating_adjustments:
+            messages.append("Varme: " + ", ".join(heating_adjustments))
+        if cooling_adjustments:
+            messages.append("Kjøling: " + ", ".join(cooling_adjustments))
+
+        if messages:
+            self.limit_notice.setText(
+                "⚠️ Verdier utenfor sikre grenser er justert automatisk – " + " | ".join(messages)
+            )
+            self.limit_notice.show()
+        else:
+            self.limit_notice.hide()
 
     def _restore_original_target(self) -> None:
         if self._original_target is None:

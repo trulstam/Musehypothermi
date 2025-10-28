@@ -68,22 +68,57 @@ class ProfileLoader:
             with open(filepath, "r") as file:
                 data = json.load(file)
 
+                if not isinstance(data, list):
+                    raise ValueError("Profile JSON must contain a list of steps")
+
                 for idx, entry in enumerate(data):
+                    if not isinstance(entry, dict):
+                        raise ValueError(f"Entry {idx + 1} must be an object")
+
                     try:
-                        time_min = float(entry.get("time_min"))
-                        temp_c = float(entry.get("temp_c"))
-                        ramp_min = float(entry.get("ramp_min"))
+                        if {"time_min", "temp_c"}.intersection(entry.keys()):
+                            time_min = float(entry.get("time_min"))
+                            temp_c = float(entry.get("temp_c"))
+                            ramp_min = float(entry.get("ramp_min", 0))
 
-                        self._validate_entry(idx, time_min, temp_c, ramp_min)
+                            self._validate_entry(idx, time_min, temp_c, ramp_min)
 
-                        self.profile.append({
-                            "time_min": time_min,
-                            "temp_c": temp_c,
-                            "ramp_min": ramp_min
-                        })
+                            self.profile.append({
+                                "time_min": time_min,
+                                "temp_c": temp_c,
+                                "ramp_min": ramp_min
+                            })
+                        else:
+                            plate_start = float(entry.get("plate_start_temp"))
+                            plate_end = float(entry.get("plate_end_temp"))
+                            ramp_time_ms = float(entry.get("ramp_time_ms", 0))
+                            total_time_ms = float(entry.get("total_step_time_ms"))
+                            rectal_target = entry.get("rectal_override_target", -1000)
+                            rectal_target = (
+                                float(rectal_target)
+                                if rectal_target is not None
+                                else -1000.0
+                            )
 
-                    except ValueError as ve:
-                        print(f"⚠️ Validation error at entry {idx + 1}: {ve}")
+                            self._validate_step_entry(
+                                idx,
+                                plate_start,
+                                plate_end,
+                                ramp_time_ms,
+                                total_time_ms,
+                                rectal_target,
+                            )
+
+                            self.profile.append({
+                                "plate_start_temp": plate_start,
+                                "plate_end_temp": plate_end,
+                                "ramp_time_ms": ramp_time_ms,
+                                "total_step_time_ms": total_time_ms,
+                                "rectal_override_target": rectal_target,
+                            })
+
+                    except (TypeError, ValueError) as ve:
+                        raise ValueError(f"Invalid value in entry {idx + 1}: {ve}") from ve
 
             msg = f"✅ JSON profile loaded: {filepath}"
             print(msg)
@@ -115,14 +150,36 @@ class ProfileLoader:
                     for key, value in metadata.items():
                         writer.writerow([f"# {key}: {value}"])
 
-                writer.writerow(["# Time(min)", "Temperature(C)", "Ramp(min)"])
+                if self.profile and {"time_min", "temp_c", "ramp_min"}.issubset(
+                    self.profile[0].keys()
+                ):
+                    writer.writerow(["# Time(min)", "Temperature(C)", "Ramp(min)"])
 
-                for step in self.profile:
-                    writer.writerow([
-                        step["time_min"],
-                        step["temp_c"],
-                        step["ramp_min"]
-                    ])
+                    for step in self.profile:
+                        writer.writerow([
+                            step["time_min"],
+                            step["temp_c"],
+                            step["ramp_min"]
+                        ])
+                else:
+                    writer.writerow(
+                        [
+                            "# plate_start_temp",
+                            "plate_end_temp",
+                            "ramp_time_ms",
+                            "rectal_override_target",
+                            "total_step_time_ms",
+                        ]
+                    )
+
+                    for step in self.profile:
+                        writer.writerow([
+                            step.get("plate_start_temp"),
+                            step.get("plate_end_temp"),
+                            step.get("ramp_time_ms", 0),
+                            step.get("rectal_override_target", -1000.0),
+                            step.get("total_step_time_ms"),
+                        ])
 
             msg = f"✅ Profile exported to CSV: {filepath}"
             print(msg)
@@ -175,7 +232,20 @@ class ProfileLoader:
 
         print("📋 Loaded Temperature Profile:")
         for step in self.profile:
-            print(f"  ➡️ Time: {step['time_min']} min, Temp: {step['temp_c']}°C, Ramp: {step['ramp_min']} min")
+            if {"time_min", "temp_c", "ramp_min"}.issubset(step.keys()):
+                print(
+                    f"  ➡️ Time: {step['time_min']} min, Temp: {step['temp_c']}°C, Ramp: {step['ramp_min']} min"
+                )
+            else:
+                print(
+                    "  ➡️ Start: {start}°C, End: {end}°C, Ramp: {ramp} ms, Hold: {hold} ms, Rectal: {rectal}".format(
+                        start=step.get("plate_start_temp"),
+                        end=step.get("plate_end_temp"),
+                        ramp=step.get("ramp_time_ms", 0),
+                        hold=step.get("total_step_time_ms"),
+                        rectal=step.get("rectal_override_target", -1000.0),
+                    )
+                )
 
     def _validate_entry(self, idx, time_min, temp_c, ramp_min):
         """Internal validation for each step entry."""
@@ -187,3 +257,37 @@ class ProfileLoader:
 
         if ramp_min < RAMP_MIN:
             raise ValueError(f"Ramp ({ramp_min}) cannot be below {RAMP_MIN} min")
+
+    def _validate_step_entry(
+        self,
+        idx,
+        plate_start,
+        plate_end,
+        ramp_time_ms,
+        total_time_ms,
+        rectal_target,
+    ):
+        """Validation for controller-ready step definitions."""
+
+        for temp_value, label in (
+            (plate_start, "plate_start_temp"),
+            (plate_end, "plate_end_temp"),
+        ):
+            if not (TEMP_MIN <= temp_value <= TEMP_MAX):
+                raise ValueError(
+                    f"{label} ({temp_value}°C) out of range ({TEMP_MIN}°C to {TEMP_MAX}°C)"
+                )
+
+        if rectal_target != -1000.0 and not (TEMP_MIN <= rectal_target <= TEMP_MAX):
+            raise ValueError(
+                f"rectal_override_target ({rectal_target}°C) out of range ({TEMP_MIN}°C to {TEMP_MAX}°C)"
+            )
+
+        if total_time_ms <= 0:
+            raise ValueError("total_step_time_ms must be positive")
+
+        if ramp_time_ms < 0:
+            raise ValueError("ramp_time_ms cannot be negative")
+
+        if ramp_time_ms > total_time_ms:
+            raise ValueError("ramp_time_ms cannot exceed total_step_time_ms")

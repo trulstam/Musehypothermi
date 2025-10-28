@@ -9,6 +9,7 @@ import time
 import csv
 import os
 import traceback
+import math
 from typing import Dict, List, Optional, Any, Tuple
 
 from PySide6.QtWidgets import (
@@ -667,6 +668,8 @@ class MatplotlibGraphWidget(QWidget):
                                                 label='Rectal Probe', alpha=0.8)
             self.line_target, = self.ax_temp.plot([], [], 'b--', linewidth=2,
                                                 label='Target', alpha=0.7)
+            self.line_rectal_setpoint, = self.ax_temp.plot([], [], 'k-.', linewidth=2,
+                                                          label='Rectal Setpoint', alpha=0.7)
             
             self.line_pid, = self.ax_pid.plot([], [], 'purple', linewidth=2.5, 
                                             label='PID Output', alpha=0.8)
@@ -721,6 +724,15 @@ class MatplotlibGraphWidget(QWidget):
                 self.line_rectal.set_data(time_data, graph_data["rectal_temp"])
             if "target_temp" in graph_data:
                 self.line_target.set_data(time_data, graph_data["target_temp"])
+            if "rectal_target_temp" in graph_data:
+                rectal_targets = graph_data["rectal_target_temp"]
+                if rectal_targets:
+                    self.line_rectal_setpoint.set_data(time_data, rectal_targets)
+                    has_valid = any(math.isfinite(value) for value in rectal_targets)
+                    self.line_rectal_setpoint.set_visible(has_valid)
+                else:
+                    self.line_rectal_setpoint.set_data([], [])
+                    self.line_rectal_setpoint.set_visible(False)
             if "pid_output" in graph_data:
                 self.line_pid.set_data(time_data, graph_data["pid_output"])
             if "breath_rate" in graph_data:
@@ -788,6 +800,7 @@ class MatplotlibGraphWidget(QWidget):
             self.line_plate.set_data([], [])
             self.line_rectal.set_data([], [])
             self.line_target.set_data([], [])
+            self.line_rectal_setpoint.set_data([], [])
             self.line_pid.set_data([], [])
             self.line_breath.set_data([], [])
             
@@ -809,21 +822,33 @@ class MatplotlibGraphWidget(QWidget):
             plate_temps = [37 - 15 * (1 - math.exp(-t/20)) + math.sin(t/5) * 0.8 for t in times]
             rectal_temps = [37 - 8 * (1 - math.exp(-t/30)) + math.sin(t/8) * 0.5 for t in times]
             target_temps = [25 + 5 * math.sin(t/15) for t in times]
+            rectal_targets = [
+                32.0 if t < 20 else 30.0 if t < 35 else 36.0 for t in times
+            ]
             pid_outputs = [50 * math.sin(t/10) + 20 * math.sin(t/3) for t in times]
             breath_rates = [max(5, 150 * math.exp(-t/40) + 10 + math.sin(t/4) * 8) for t in times]
-            
+
             return {
                 "time": times,
                 "plate_temp": plate_temps,
                 "rectal_temp": rectal_temps,
                 "target_temp": target_temps,
+                "rectal_target_temp": rectal_targets,
                 "pid_output": pid_outputs,
                 "breath_rate": breath_rates
             }
-            
+
         except Exception as e:
             print(f"❌ Test data error: {e}")
-            return {"time": [], "plate_temp": [], "rectal_temp": [], "target_temp": [], "pid_output": [], "breath_rate": []}
+            return {
+                "time": [],
+                "plate_temp": [],
+                "rectal_temp": [],
+                "target_temp": [],
+                "rectal_target_temp": [],
+                "pid_output": [],
+                "breath_rate": [],
+            }
 
 
 class MainWindow(QMainWindow):
@@ -861,7 +886,8 @@ class MainWindow(QMainWindow):
             "rectal_temp": [],
             "pid_output": [],
             "breath_rate": [],
-            "target_temp": []
+            "target_temp": [],
+            "rectal_target_temp": [],
         }
 
         self.connection_established = False
@@ -871,6 +897,16 @@ class MainWindow(QMainWindow):
         self.graph_update_count = 0
         self.last_heating_limit = 35.0
         self.last_cooling_limit = 35.0
+        self.profile_data = []
+        self.profile_steps = []
+        self.profile_ready = False
+        self.profile_upload_pending = False
+        self.profile_active = False
+        self.profile_paused = False
+        self.rectal_setpoint_schedule: List[Tuple[float, float, float]] = []
+        self.profile_run_start_time: Optional[float] = None
+        self.profile_pause_time: Optional[float] = None
+        self.profile_elapsed_paused: float = 0.0
 
         print("✅ Data structures initialized")
 
@@ -1408,8 +1444,9 @@ class MainWindow(QMainWindow):
         
         profile_layout.addWidget(log_group)
         profile_layout.addStretch()
-        
+
         self.tab_widget.addTab(profile_widget, "📄 Profile")
+        self._update_profile_button_states()
 
     def init_managers(self):
         """Initialize managers"""
@@ -1592,6 +1629,26 @@ class MainWindow(QMainWindow):
                     self.pidStatusIndicator.setText("⚫ PID Off")
                     self.pidStatusIndicator.setStyleSheet("color: #6c757d; font-weight: bold;")
 
+            profile_state_updated = False
+            if "profile_active" in data:
+                self.profile_active = bool(data["profile_active"])
+                profile_state_updated = True
+            if "profile_paused" in data:
+                self.profile_paused = bool(data["profile_paused"])
+                profile_state_updated = True
+
+            if profile_state_updated:
+                if self.profile_active:
+                    if self.profile_run_start_time is None:
+                        self._mark_profile_started()
+                    if self.profile_paused:
+                        self._mark_profile_paused()
+                    else:
+                        self._mark_profile_resumed()
+                else:
+                    self._mark_profile_stopped()
+                self._update_profile_button_states()
+
         except (ValueError, KeyError) as e:
             print(f"Status indicator error: {e}")
 
@@ -1616,6 +1673,12 @@ class MainWindow(QMainWindow):
             self.graph_data["pid_output"].append(float(data.get("pid_output", 0)))
             self.graph_data["breath_rate"].append(float(data.get("breath_freq_bpm", 0)))
             self.graph_data["target_temp"].append(float(data.get("plate_target_active", 37)))
+
+            rectal_setpoint = self._get_current_rectal_setpoint()
+            if rectal_setpoint is None:
+                self.graph_data["rectal_target_temp"].append(float("nan"))
+            else:
+                self.graph_data["rectal_target_temp"].append(float(rectal_setpoint))
             
             # Trim data
             for key in self.graph_data:
@@ -1639,14 +1702,98 @@ class MainWindow(QMainWindow):
                 self.log(f"📢 EVENT: {event_msg}", "info")
                 self.event_logger.log_event(event_msg)
 
+                event_lower = event_msg.lower()
+                if "profile" in event_lower:
+                    if "started" in event_lower:
+                        self._mark_profile_started()
+                    elif any(
+                        keyword in event_lower
+                        for keyword in ("completed", "stopped", "finished", "aborted")
+                    ):
+                        self._mark_profile_stopped()
+                    elif "paused" in event_lower:
+                        self._mark_profile_paused()
+                    elif "resumed" in event_lower:
+                        self._mark_profile_resumed()
+
             if "response" in data:
                 response_msg = str(data["response"])
                 self.log(f"📥 RESPONSE: {response_msg}", "info")
 
+                response_lower = response_msg.lower()
+
+                if "profile" in response_lower:
+                    if "started" in response_lower:
+                        self._mark_profile_started()
+                    elif any(
+                        keyword in response_lower
+                        for keyword in ("completed", "stopped", "finished", "aborted")
+                    ):
+                        self._mark_profile_stopped()
+                    elif "paused" in response_lower:
+                        self._mark_profile_paused()
+                    elif "resumed" in response_lower:
+                        self._mark_profile_resumed()
+
+                if self.profile_upload_pending and response_lower.startswith("profile"):
+                    self.profile_upload_pending = False
+                    if any(
+                        keyword in response_lower
+                        for keyword in ("loaded", "accepted", "ready", "stored")
+                    ):
+                        self.profile_ready = True
+                        self.profile_active = False
+                        self.profile_paused = False
+                        self._update_profile_button_states()
+                        success_message = "Profile upload confirmed by controller"
+                        self.log(f"✅ {success_message}", "success")
+                        self.event_logger.log_event(success_message)
+                    else:
+                        self.profile_ready = False
+                        self.profile_active = False
+                        self.profile_paused = False
+                        self._update_profile_button_states()
+                        failure_message = f"Profile upload failed: {response_msg}"
+                        self.log(f"❌ {failure_message}", "error")
+                        self.event_logger.log_event(failure_message)
+                        QMessageBox.warning(self, "Profile Upload Failed", response_msg)
+
+                elif (
+                    self.profile_upload_pending
+                    and any(keyword in response_lower for keyword in ("error", "invalid", "failed"))
+                ):
+                    self.profile_upload_pending = False
+                    self.profile_ready = False
+                    self.profile_active = False
+                    self.profile_paused = False
+                    self._update_profile_button_states()
+                    failure_message = f"Profile upload failed: {response_msg}"
+                    self.log(f"❌ {failure_message}", "error")
+                    self.event_logger.log_event(failure_message)
+                    QMessageBox.warning(self, "Profile Upload Failed", response_msg)
+
+                if response_lower == "profile started":
+                    self.profile_ready = True
+                    self.profile_active = True
+                    self.profile_paused = False
+                    self._update_profile_button_states()
+                elif response_lower == "profile paused":
+                    self.profile_active = True
+                    self.profile_paused = True
+                    self._update_profile_button_states()
+                elif response_lower in ("profile resumed", "profile continued"):
+                    self.profile_active = True
+                    self.profile_paused = False
+                    self._update_profile_button_states()
+                elif response_lower == "profile stopped":
+                    self.profile_active = False
+                    self.profile_paused = False
+                    self._update_profile_button_states()
+
             # Handle autotune results
             if "autotune_results" in data:
                 self.handle_autotune_results(data["autotune_results"])
-                
+
         except Exception as e:
             print(f"Event handling error: {e}")
 
@@ -1910,12 +2057,14 @@ class MainWindow(QMainWindow):
                 "rectal_temp": [],
                 "pid_output": [],
                 "breath_rate": [],
-                "target_temp": []
+                "target_temp": [],
+                "rectal_target_temp": [],
             }
-            
+
             self.start_time = None
             self.graph_update_count = 0
-            
+            self._reset_profile_timing()
+
             self.log("🧹 Graphs cleared", "info")
             
         except Exception as e:
@@ -1923,36 +2072,331 @@ class MainWindow(QMainWindow):
 
     # ====== PROFILE METHODS ======
 
+    def _reset_profile_timing(self) -> None:
+        """Clear profile runtime tracking so rectal setpoint resets."""
+
+        self.profile_run_start_time = None
+        self.profile_pause_time = None
+        self.profile_elapsed_paused = 0.0
+
+    def _mark_profile_started(self) -> None:
+        """Record that a profile run just started."""
+
+        self.profile_run_start_time = time.time()
+        self.profile_pause_time = None
+        self.profile_elapsed_paused = 0.0
+
+    def _mark_profile_paused(self) -> None:
+        """Record when a running profile is paused."""
+
+        if self.profile_run_start_time is not None and self.profile_pause_time is None:
+            self.profile_pause_time = time.time()
+
+    def _mark_profile_resumed(self) -> None:
+        """Record when a paused profile resumes."""
+
+        if self.profile_pause_time is not None:
+            self.profile_elapsed_paused += max(0.0, time.time() - self.profile_pause_time)
+            self.profile_pause_time = None
+
+    def _mark_profile_stopped(self) -> None:
+        """Reset timers when a profile run ends."""
+
+        self._reset_profile_timing()
+
+    def _get_profile_elapsed_time(self) -> Optional[float]:
+        """Return runtime of active profile excluding paused duration."""
+
+        if self.profile_run_start_time is None:
+            return None
+
+        now = time.time()
+        elapsed = now - self.profile_run_start_time - self.profile_elapsed_paused
+        if self.profile_pause_time is not None:
+            elapsed -= max(0.0, now - self.profile_pause_time)
+
+        return max(0.0, elapsed)
+
+    def _build_rectal_setpoint_schedule(
+        self, steps: List[Dict[str, Any]]
+    ) -> List[Tuple[float, float, float]]:
+        """Produce timeline of rectal override targets from controller steps."""
+
+        schedule: List[Tuple[float, float, float]] = []
+        cumulative = 0.0
+
+        for step in steps:
+            try:
+                duration = float(step["total_step_time_ms"]) / 1000.0
+            except (KeyError, TypeError, ValueError):
+                duration = 0.0
+
+            raw_target = step.get("rectal_override_target", -1000.0)
+            try:
+                rectal_target = float(raw_target)
+            except (TypeError, ValueError):
+                rectal_target = -1000.0
+
+            if rectal_target > -999.0 and duration > 0:
+                schedule.append((cumulative, cumulative + duration, rectal_target))
+
+            cumulative += max(duration, 0.0)
+
+        return schedule
+
+    def _get_current_rectal_setpoint(self) -> Optional[float]:
+        """Return the active rectal setpoint if a profile is running."""
+
+        if not self.rectal_setpoint_schedule:
+            return None
+
+        elapsed = self._get_profile_elapsed_time()
+        if elapsed is None:
+            return None
+
+        for start, end, value in self.rectal_setpoint_schedule:
+            if start <= elapsed <= end:
+                return value
+
+        return None
+
+    def _refresh_rectal_setpoint_series(self) -> None:
+        """Ensure plotted rectal setpoint matches current schedule."""
+
+        count = len(self.graph_data.get("time", []))
+        self.graph_data["rectal_target_temp"] = [float("nan")] * count
+        if hasattr(self, "graph_widget"):
+            self.graph_widget.update_graphs(self.graph_data)
+
+    def _convert_profile_points_to_steps(self, profile_points: List[Dict[str, Any]]):
+        """Normalize loader output into controller-ready profile steps."""
+
+        if not profile_points:
+            raise ValueError("Loaded profile is empty")
+
+        first_entry = profile_points[0]
+        step_keys = {"plate_start_temp", "plate_end_temp", "total_step_time_ms"}
+
+        if step_keys.issubset(first_entry.keys()):
+            steps: List[Dict[str, Any]] = []
+
+            for index, entry in enumerate(profile_points, start=1):
+                try:
+                    start_temp = float(entry["plate_start_temp"])
+                    end_temp = float(entry["plate_end_temp"])
+                    total_time_ms = int(float(entry["total_step_time_ms"]))
+                    ramp_time_ms = int(float(entry.get("ramp_time_ms", 0)))
+                    rectal_target = entry.get("rectal_override_target", -1000.0)
+                    rectal_target = (
+                        float(rectal_target)
+                        if rectal_target is not None
+                        else -1000.0
+                    )
+                except (KeyError, TypeError, ValueError) as exc:
+                    raise ValueError(
+                        f"Invalid step entry at position {index}: {exc}"
+                    ) from exc
+
+                if total_time_ms <= 0:
+                    raise ValueError(
+                        f"total_step_time_ms must be positive at step {index}"
+                    )
+
+                if ramp_time_ms < 0:
+                    raise ValueError(
+                        f"ramp_time_ms cannot be negative at step {index}"
+                    )
+
+                if ramp_time_ms > total_time_ms:
+                    raise ValueError(
+                        f"ramp_time_ms cannot exceed total_step_time_ms at step {index}"
+                    )
+
+                steps.append(
+                    {
+                        "plate_start_temp": start_temp,
+                        "plate_end_temp": end_temp,
+                        "ramp_time_ms": ramp_time_ms,
+                        "rectal_override_target": rectal_target,
+                        "total_step_time_ms": total_time_ms,
+                    }
+                )
+
+            if len(steps) > 10:
+                raise ValueError("Profile may contain at most 10 steps")
+
+            return steps
+
+        if len(profile_points) < 2:
+            raise ValueError("Profile must contain at least two time points")
+
+        try:
+            ordered_points = sorted(
+                profile_points,
+                key=lambda entry: float(entry["time_min"])
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError("Profile entries must include valid 'time_min' values") from exc
+
+        steps: List[Dict[str, Any]] = []
+
+        for index in range(1, len(ordered_points)):
+            previous = ordered_points[index - 1]
+            current = ordered_points[index]
+
+            try:
+                previous_temp = float(previous["temp_c"])
+                current_temp = float(current["temp_c"])
+                previous_time = float(previous["time_min"])
+                current_time = float(current["time_min"])
+                ramp_minutes = float(current.get("ramp_min", 0.0))
+            except (KeyError, TypeError, ValueError) as exc:
+                raise ValueError(f"Invalid profile entry at position {index + 1}") from exc
+
+            duration_minutes = current_time - previous_time
+            if duration_minutes <= 0:
+                raise ValueError(
+                    f"Profile time at step {index + 1} must be greater than previous step"
+                )
+
+            total_step_time_ms = int(duration_minutes * 60000)
+            ramp_minutes = max(0.0, min(ramp_minutes, duration_minutes))
+            ramp_time_ms = int(ramp_minutes * 60000)
+
+            steps.append({
+                "plate_start_temp": previous_temp,
+                "plate_end_temp": current_temp,
+                "ramp_time_ms": ramp_time_ms,
+                "rectal_override_target": -1000.0,
+                "total_step_time_ms": total_step_time_ms,
+            })
+
+        if len(steps) > 10:
+            raise ValueError("Profile may contain at most 10 steps")
+
+        return steps
+
+    def _update_profile_button_states(self):
+        """Enable or disable profile controls based on current state."""
+
+        if not hasattr(self, "startProfileButton"):
+            return
+
+        connected = self.connection_established
+        uploading = self.profile_upload_pending
+        active = self.profile_active
+        paused = self.profile_paused and active
+        ready = self.profile_ready and connected and not uploading and not active
+
+        self.startProfileButton.setEnabled(ready)
+        self.pauseProfileButton.setEnabled(connected and active and not paused)
+        self.resumeProfileButton.setEnabled(connected and paused)
+        self.stopProfileButton.setEnabled(connected and (active or paused))
+
     def load_profile(self):
-        """Load profile"""
+        """Load temperature profile and upload it to the controller."""
+
         try:
             file_name, _ = QFileDialog.getOpenFileName(
-                self, "Load Profile", "", 
+                self,
+                "Load Profile",
+                "",
                 "JSON Files (*.json);;CSV Files (*.csv)"
             )
-            
-            if file_name:
-                success = False
-                if file_name.endswith('.json'):
-                    success = self.profile_loader.load_profile_json(file_name)
-                elif file_name.endswith('.csv'):
-                    success = self.profile_loader.load_profile_csv(file_name)
-                
-                if success:
-                    filename = os.path.basename(file_name)
-                    self.profileFileLabel.setText(f"✅ {filename}")
-                    self.profileFileLabel.setStyleSheet("color: #28a745; font-weight: bold;")
-                    
-                    # Enable buttons
-                    self.startProfileButton.setEnabled(True)
-                    self.pauseProfileButton.setEnabled(True)
-                    self.resumeProfileButton.setEnabled(True)
-                    self.stopProfileButton.setEnabled(True)
-                    
-                    self.log(f"✅ Profile loaded: {filename}", "success")
-                else:
-                    self.log(f"❌ Profile load failed", "error")
-                    
+
+            if not file_name:
+                return
+
+            success = False
+            if file_name.endswith('.json'):
+                success = self.profile_loader.load_profile_json(file_name)
+            elif file_name.endswith('.csv'):
+                success = self.profile_loader.load_profile_csv(file_name)
+
+            if not success:
+                self.log("❌ Profile load failed", "error")
+                QMessageBox.warning(self, "Load Error", "Failed to load the selected profile file.")
+                return
+
+            self.profile_data = self.profile_loader.get_profile()
+            filename = os.path.basename(file_name)
+            self.profileFileLabel.setText(f"✅ {filename}")
+            self.profileFileLabel.setStyleSheet("color: #28a745; font-weight: bold;")
+
+            try:
+                self.profile_steps = self._convert_profile_points_to_steps(self.profile_data)
+                self.rectal_setpoint_schedule = self._build_rectal_setpoint_schedule(
+                    self.profile_steps
+                )
+                self._refresh_rectal_setpoint_series()
+            except ValueError as exc:
+                self.profile_steps = []
+                self.rectal_setpoint_schedule = []
+                self._refresh_rectal_setpoint_series()
+                self.profile_ready = False
+                self.profile_upload_pending = False
+                self.profile_active = False
+                self.profile_paused = False
+                self._reset_profile_timing()
+                self._update_profile_button_states()
+                error_message = f"Profile conversion error: {exc}"
+                self.log(f"❌ {error_message}", "error")
+                QMessageBox.warning(self, "Profile Error", error_message)
+                return
+
+            if not self.profile_steps:
+                self.rectal_setpoint_schedule = []
+                self._refresh_rectal_setpoint_series()
+                self.profile_ready = False
+                self.profile_upload_pending = False
+                self.profile_active = False
+                self.profile_paused = False
+                self._update_profile_button_states()
+                self.log("❌ Profile did not produce any steps", "error")
+                QMessageBox.warning(
+                    self,
+                    "Profile Error",
+                    "The loaded profile did not produce any controller steps."
+                )
+                return
+
+            self.profile_ready = False
+            self.profile_upload_pending = False
+            self.profile_active = False
+            self.profile_paused = False
+            self._reset_profile_timing()
+            self._update_profile_button_states()
+
+            self.log(f"✅ Profile loaded: {filename}", "success")
+            self.event_logger.log_event(f"Profile loaded: {file_name}")
+
+            if self.connection_established:
+                try:
+                    self.serial_manager.sendSET("profile", self.profile_steps)
+                except Exception as exc:
+                    self.log(f"❌ Failed to upload profile: {exc}", "error")
+                    QMessageBox.warning(
+                        self,
+                        "Upload Error",
+                        f"Failed to upload the profile to the controller.\n{exc}"
+                    )
+                    return
+
+                self.profile_upload_pending = True
+                self._update_profile_button_states()
+                self.log(
+                    f"📤 Uploading {len(self.profile_steps)} profile steps to controller...",
+                    "info",
+                )
+                self.event_logger.log_event(
+                    f"Profile upload requested: {len(self.profile_steps)} steps"
+                )
+            else:
+                self.log(
+                    "⚠️ Connect to the controller to upload the loaded profile.",
+                    "warning",
+                )
+
         except Exception as e:
             self.log(f"❌ Profile error: {e}", "error")
 
@@ -1980,10 +2424,16 @@ class MainWindow(QMainWindow):
                 self.connectionStatusLabel.setStyleSheet("color: red; font-weight: bold;")
                 self.connection_established = False
                 self.start_time = None
-                
+
+                self.profile_ready = False
+                self.profile_upload_pending = False
+                self.profile_active = False
+                self.profile_paused = False
+                self._update_profile_button_states()
+
                 self.log("🔌 Disconnected", "info")
                 self.event_logger.log_event("Disconnected")
-                
+
             else:
                 # Connect
                 port = self.portSelector.currentText()
@@ -1996,13 +2446,35 @@ class MainWindow(QMainWindow):
                     self.connectionStatusLabel.setText(f"✅ Connected to {port}")
                     self.connectionStatusLabel.setStyleSheet("color: green; font-weight: bold;")
                     self.connection_established = True
-                    
+
                     self.log(f"🔌 Connected to {port}", "success")
                     self.event_logger.log_event(f"Connected to {port}")
-                    
+
                     # Start sync
                     self.sync_timer.start(1000)
-                    
+
+                    if self.profile_steps:
+                        try:
+                            self.serial_manager.sendSET("profile", self.profile_steps)
+                        except Exception as exc:
+                            self.log(f"⚠️ Failed to upload stored profile on connect: {exc}", "warning")
+                            self._update_profile_button_states()
+                        else:
+                            self.profile_ready = False
+                            self.profile_upload_pending = True
+                            self.profile_active = False
+                            self.profile_paused = False
+                            self._update_profile_button_states()
+                            self.log(
+                                f"📤 Uploading {len(self.profile_steps)} stored profile steps to controller...",
+                                "info",
+                            )
+                            self.event_logger.log_event(
+                                f"Profile upload requested: {len(self.profile_steps)} steps"
+                            )
+                    else:
+                        self._update_profile_button_states()
+
                 else:
                     QMessageBox.critical(self, "Connection Failed", f"Failed to connect to {port}")
                     self.log(f"❌ Connection failed: {port}", "error")

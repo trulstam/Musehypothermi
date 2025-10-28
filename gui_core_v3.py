@@ -285,9 +285,23 @@ class AsymmetricPIDControls(QWidget):
         autotune_group = QGroupBox("🎯 Asymmetric Autotune")
         autotune_layout = QVBoxLayout()
         
-        autotune_info = QLabel("Will test heating (safe) then cooling (conservative)")
+        autotune_info = QLabel(
+            "Firmware still reports placeholder autotune events –"
+            " PID gains are not adjusted automatically yet."
+        )
+        autotune_info.setWordWrap(True)
         autotune_info.setStyleSheet("color: #6c757d; font-size: 10px;")
         autotune_layout.addWidget(autotune_info)
+
+        status_row = QHBoxLayout()
+        status_label = QLabel("Status:")
+        status_label.setStyleSheet("font-weight: bold;")
+        self.autotune_status_value = QLabel("Idle")
+        self.autotune_status_value.setStyleSheet("color: #6c757d; font-weight: bold;")
+        status_row.addWidget(status_label)
+        status_row.addWidget(self.autotune_status_value)
+        status_row.addStretch()
+        autotune_layout.addLayout(status_row)
         
         self.start_asymmetric_autotune_button = QPushButton("🎯 Start Asymmetric Autotune")
         self.start_asymmetric_autotune_button.clicked.connect(self.start_asymmetric_autotune)
@@ -411,6 +425,18 @@ class AsymmetricPIDControls(QWidget):
                 else:
                     self.start_asymmetric_autotune_button.setVisible(True)
                     self.abort_asymmetric_autotune_button.setVisible(False)
+
+            if "autotune_status" in data:
+                status = str(data["autotune_status"]).replace("_", " ").title()
+                status_style = "color: #6c757d; font-weight: bold;"
+                if status.lower().startswith("run"):
+                    status_style = "color: #17a2b8; font-weight: bold;"
+                elif status.lower() in {"done", "complete"}:
+                    status_style = "color: #28a745; font-weight: bold;"
+                elif status.lower().startswith("abort"):
+                    status_style = "color: #dc3545; font-weight: bold;"
+                self.autotune_status_value.setText(status)
+                self.autotune_status_value.setStyleSheet(status_style)
 
             # Sync parameter fields when not being edited
             if all(key in data for key in ["pid_cooling_kp", "pid_cooling_ki", "pid_cooling_kd"]):

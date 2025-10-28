@@ -9,6 +9,7 @@ import time
 import csv
 import os
 import traceback
+import math
 from typing import Dict, List, Optional, Any, Tuple
 
 from PySide6.QtWidgets import (
@@ -667,6 +668,8 @@ class MatplotlibGraphWidget(QWidget):
                                                 label='Rectal Probe', alpha=0.8)
             self.line_target, = self.ax_temp.plot([], [], 'b--', linewidth=2,
                                                 label='Target', alpha=0.7)
+            self.line_rectal_setpoint, = self.ax_temp.plot([], [], 'k-.', linewidth=2,
+                                                          label='Rectal Setpoint', alpha=0.7)
             
             self.line_pid, = self.ax_pid.plot([], [], 'purple', linewidth=2.5, 
                                             label='PID Output', alpha=0.8)
@@ -721,6 +724,15 @@ class MatplotlibGraphWidget(QWidget):
                 self.line_rectal.set_data(time_data, graph_data["rectal_temp"])
             if "target_temp" in graph_data:
                 self.line_target.set_data(time_data, graph_data["target_temp"])
+            if "rectal_target_temp" in graph_data:
+                rectal_targets = graph_data["rectal_target_temp"]
+                if rectal_targets:
+                    self.line_rectal_setpoint.set_data(time_data, rectal_targets)
+                    has_valid = any(math.isfinite(value) for value in rectal_targets)
+                    self.line_rectal_setpoint.set_visible(has_valid)
+                else:
+                    self.line_rectal_setpoint.set_data([], [])
+                    self.line_rectal_setpoint.set_visible(False)
             if "pid_output" in graph_data:
                 self.line_pid.set_data(time_data, graph_data["pid_output"])
             if "breath_rate" in graph_data:
@@ -788,6 +800,7 @@ class MatplotlibGraphWidget(QWidget):
             self.line_plate.set_data([], [])
             self.line_rectal.set_data([], [])
             self.line_target.set_data([], [])
+            self.line_rectal_setpoint.set_data([], [])
             self.line_pid.set_data([], [])
             self.line_breath.set_data([], [])
             
@@ -809,21 +822,33 @@ class MatplotlibGraphWidget(QWidget):
             plate_temps = [37 - 15 * (1 - math.exp(-t/20)) + math.sin(t/5) * 0.8 for t in times]
             rectal_temps = [37 - 8 * (1 - math.exp(-t/30)) + math.sin(t/8) * 0.5 for t in times]
             target_temps = [25 + 5 * math.sin(t/15) for t in times]
+            rectal_targets = [
+                32.0 if t < 20 else 30.0 if t < 35 else 36.0 for t in times
+            ]
             pid_outputs = [50 * math.sin(t/10) + 20 * math.sin(t/3) for t in times]
             breath_rates = [max(5, 150 * math.exp(-t/40) + 10 + math.sin(t/4) * 8) for t in times]
-            
+
             return {
                 "time": times,
                 "plate_temp": plate_temps,
                 "rectal_temp": rectal_temps,
                 "target_temp": target_temps,
+                "rectal_target_temp": rectal_targets,
                 "pid_output": pid_outputs,
                 "breath_rate": breath_rates
             }
-            
+
         except Exception as e:
             print(f"❌ Test data error: {e}")
-            return {"time": [], "plate_temp": [], "rectal_temp": [], "target_temp": [], "pid_output": [], "breath_rate": []}
+            return {
+                "time": [],
+                "plate_temp": [],
+                "rectal_temp": [],
+                "target_temp": [],
+                "rectal_target_temp": [],
+                "pid_output": [],
+                "breath_rate": [],
+            }
 
 
 class MainWindow(QMainWindow):
@@ -861,7 +886,8 @@ class MainWindow(QMainWindow):
             "rectal_temp": [],
             "pid_output": [],
             "breath_rate": [],
-            "target_temp": []
+            "target_temp": [],
+            "rectal_target_temp": [],
         }
 
         self.connection_established = False
@@ -877,6 +903,10 @@ class MainWindow(QMainWindow):
         self.profile_upload_pending = False
         self.profile_active = False
         self.profile_paused = False
+        self.rectal_setpoint_schedule: List[Tuple[float, float, float]] = []
+        self.profile_run_start_time: Optional[float] = None
+        self.profile_pause_time: Optional[float] = None
+        self.profile_elapsed_paused: float = 0.0
 
         print("✅ Data structures initialized")
 
@@ -1608,6 +1638,15 @@ class MainWindow(QMainWindow):
                 profile_state_updated = True
 
             if profile_state_updated:
+                if self.profile_active:
+                    if self.profile_run_start_time is None:
+                        self._mark_profile_started()
+                    if self.profile_paused:
+                        self._mark_profile_paused()
+                    else:
+                        self._mark_profile_resumed()
+                else:
+                    self._mark_profile_stopped()
                 self._update_profile_button_states()
 
         except (ValueError, KeyError) as e:
@@ -1634,6 +1673,12 @@ class MainWindow(QMainWindow):
             self.graph_data["pid_output"].append(float(data.get("pid_output", 0)))
             self.graph_data["breath_rate"].append(float(data.get("breath_freq_bpm", 0)))
             self.graph_data["target_temp"].append(float(data.get("plate_target_active", 37)))
+
+            rectal_setpoint = self._get_current_rectal_setpoint()
+            if rectal_setpoint is None:
+                self.graph_data["rectal_target_temp"].append(float("nan"))
+            else:
+                self.graph_data["rectal_target_temp"].append(float(rectal_setpoint))
             
             # Trim data
             for key in self.graph_data:
@@ -1657,11 +1702,38 @@ class MainWindow(QMainWindow):
                 self.log(f"📢 EVENT: {event_msg}", "info")
                 self.event_logger.log_event(event_msg)
 
+                event_lower = event_msg.lower()
+                if "profile" in event_lower:
+                    if "started" in event_lower:
+                        self._mark_profile_started()
+                    elif any(
+                        keyword in event_lower
+                        for keyword in ("completed", "stopped", "finished", "aborted")
+                    ):
+                        self._mark_profile_stopped()
+                    elif "paused" in event_lower:
+                        self._mark_profile_paused()
+                    elif "resumed" in event_lower:
+                        self._mark_profile_resumed()
+
             if "response" in data:
                 response_msg = str(data["response"])
                 self.log(f"📥 RESPONSE: {response_msg}", "info")
 
                 response_lower = response_msg.lower()
+
+                if "profile" in response_lower:
+                    if "started" in response_lower:
+                        self._mark_profile_started()
+                    elif any(
+                        keyword in response_lower
+                        for keyword in ("completed", "stopped", "finished", "aborted")
+                    ):
+                        self._mark_profile_stopped()
+                    elif "paused" in response_lower:
+                        self._mark_profile_paused()
+                    elif "resumed" in response_lower:
+                        self._mark_profile_resumed()
 
                 if self.profile_upload_pending and response_lower.startswith("profile"):
                     self.profile_upload_pending = False
@@ -1985,18 +2057,116 @@ class MainWindow(QMainWindow):
                 "rectal_temp": [],
                 "pid_output": [],
                 "breath_rate": [],
-                "target_temp": []
+                "target_temp": [],
+                "rectal_target_temp": [],
             }
-            
+
             self.start_time = None
             self.graph_update_count = 0
-            
+            self._reset_profile_timing()
+
             self.log("🧹 Graphs cleared", "info")
             
         except Exception as e:
             self.log(f"❌ Clear error: {e}", "error")
 
     # ====== PROFILE METHODS ======
+
+    def _reset_profile_timing(self) -> None:
+        """Clear profile runtime tracking so rectal setpoint resets."""
+
+        self.profile_run_start_time = None
+        self.profile_pause_time = None
+        self.profile_elapsed_paused = 0.0
+
+    def _mark_profile_started(self) -> None:
+        """Record that a profile run just started."""
+
+        self.profile_run_start_time = time.time()
+        self.profile_pause_time = None
+        self.profile_elapsed_paused = 0.0
+
+    def _mark_profile_paused(self) -> None:
+        """Record when a running profile is paused."""
+
+        if self.profile_run_start_time is not None and self.profile_pause_time is None:
+            self.profile_pause_time = time.time()
+
+    def _mark_profile_resumed(self) -> None:
+        """Record when a paused profile resumes."""
+
+        if self.profile_pause_time is not None:
+            self.profile_elapsed_paused += max(0.0, time.time() - self.profile_pause_time)
+            self.profile_pause_time = None
+
+    def _mark_profile_stopped(self) -> None:
+        """Reset timers when a profile run ends."""
+
+        self._reset_profile_timing()
+
+    def _get_profile_elapsed_time(self) -> Optional[float]:
+        """Return runtime of active profile excluding paused duration."""
+
+        if self.profile_run_start_time is None:
+            return None
+
+        now = time.time()
+        elapsed = now - self.profile_run_start_time - self.profile_elapsed_paused
+        if self.profile_pause_time is not None:
+            elapsed -= max(0.0, now - self.profile_pause_time)
+
+        return max(0.0, elapsed)
+
+    def _build_rectal_setpoint_schedule(
+        self, steps: List[Dict[str, Any]]
+    ) -> List[Tuple[float, float, float]]:
+        """Produce timeline of rectal override targets from controller steps."""
+
+        schedule: List[Tuple[float, float, float]] = []
+        cumulative = 0.0
+
+        for step in steps:
+            try:
+                duration = float(step["total_step_time_ms"]) / 1000.0
+            except (KeyError, TypeError, ValueError):
+                duration = 0.0
+
+            raw_target = step.get("rectal_override_target", -1000.0)
+            try:
+                rectal_target = float(raw_target)
+            except (TypeError, ValueError):
+                rectal_target = -1000.0
+
+            if rectal_target > -999.0 and duration > 0:
+                schedule.append((cumulative, cumulative + duration, rectal_target))
+
+            cumulative += max(duration, 0.0)
+
+        return schedule
+
+    def _get_current_rectal_setpoint(self) -> Optional[float]:
+        """Return the active rectal setpoint if a profile is running."""
+
+        if not self.rectal_setpoint_schedule:
+            return None
+
+        elapsed = self._get_profile_elapsed_time()
+        if elapsed is None:
+            return None
+
+        for start, end, value in self.rectal_setpoint_schedule:
+            if start <= elapsed <= end:
+                return value
+
+        return None
+
+    def _refresh_rectal_setpoint_series(self) -> None:
+        """Ensure plotted rectal setpoint matches current schedule."""
+
+        count = len(self.graph_data.get("time", []))
+        self.graph_data["rectal_target_temp"] = [float("nan")] * count
+        if hasattr(self, "graph_widget"):
+            self.graph_widget.update_graphs(self.graph_data)
 
     def _convert_profile_points_to_steps(self, profile_points: List[Dict[str, Any]]):
         """Normalize loader output into controller-ready profile steps."""
@@ -2155,12 +2325,19 @@ class MainWindow(QMainWindow):
 
             try:
                 self.profile_steps = self._convert_profile_points_to_steps(self.profile_data)
+                self.rectal_setpoint_schedule = self._build_rectal_setpoint_schedule(
+                    self.profile_steps
+                )
+                self._refresh_rectal_setpoint_series()
             except ValueError as exc:
                 self.profile_steps = []
+                self.rectal_setpoint_schedule = []
+                self._refresh_rectal_setpoint_series()
                 self.profile_ready = False
                 self.profile_upload_pending = False
                 self.profile_active = False
                 self.profile_paused = False
+                self._reset_profile_timing()
                 self._update_profile_button_states()
                 error_message = f"Profile conversion error: {exc}"
                 self.log(f"❌ {error_message}", "error")
@@ -2168,6 +2345,8 @@ class MainWindow(QMainWindow):
                 return
 
             if not self.profile_steps:
+                self.rectal_setpoint_schedule = []
+                self._refresh_rectal_setpoint_series()
                 self.profile_ready = False
                 self.profile_upload_pending = False
                 self.profile_active = False
@@ -2185,6 +2364,7 @@ class MainWindow(QMainWindow):
             self.profile_upload_pending = False
             self.profile_active = False
             self.profile_paused = False
+            self._reset_profile_timing()
             self._update_profile_button_states()
 
             self.log(f"✅ Profile loaded: {filename}", "success")

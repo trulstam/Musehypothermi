@@ -1,0 +1,64 @@
+[
+  {
+    "plate_start_temp": 37,
+    "plate_end_temp": 34,
+    "ramp_time_ms": 0,
+    "rectal_override_target": -1000,
+    "total_step_time_ms": 12000
+  },
+  {
+    "plate_start_temp": 34,
+    "plate_end_temp": 30,
+    "ramp_time_ms": 6000,
+    "rectal_override_target": 32,
+    "total_step_time_ms": 18000
+  },
+  {
+    "plate_start_temp": 30,
+    "plate_end_temp": 26,
+    "ramp_time_ms": 0,
+    "rectal_override_target": 28,
+    "total_step_time_ms": 12000
+  },
+  {
+    "plate_start_temp": 26,
+    "plate_end_temp": 20,
+    "ramp_time_ms": 9000,
+    "rectal_override_target": -1000,
+    "total_step_time_ms": 18000
+  },
+  {
+    "plate_start_temp": 20,
+    "plate_end_temp": 14,
+    "ramp_time_ms": 6000,
+    "rectal_override_target": 18,
+    "total_step_time_ms": 18000
+  },
+  {
+    "plate_start_temp": 14,
+    "plate_end_temp": 14,
+    "ramp_time_ms": 0,
+    "rectal_override_target": -1000,
+    "total_step_time_ms": 12000
+  },
+  {
+    "plate_start_temp": 14,
+    "plate_end_temp": 24,
+    "ramp_time_ms": 3000,
+    "rectal_override_target": 22,
+    "total_step_time_ms": 12000
+  },
+  {
+    "plate_start_temp": 24,
+    "plate_end_temp": 30,
+    "ramp_time_ms": 0,
+    "rectal_override_target": -1000,
+    "total_step_time_ms": 9000
+  },
+  {
+    "plate_start_temp": 30,
+    "plate_end_temp": 37,
+    "ramp_time_ms": 6000,
+    "rectal_override_target": 36.5,
+    "total_step_time_ms": 21000
+]

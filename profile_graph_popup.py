@@ -376,19 +376,27 @@ class MainWindow(QMainWindow):
             start_temp = float(step["plate_start_temp"])
             end_temp = float(step["plate_end_temp"])
             total_time_s = float(step["total_step_time_ms"]) / 1000.0
+            rectal_target = float(step.get("rectal_override_target", -1000.0))
+            has_rectal_target = rectal_target > -999.0
 
-            graph_points.append({
+            start_point = {
                 "time": cumulative_time,
                 "temp": start_temp,
                 "actualPlateTarget": start_temp,
-            })
+            }
+            if has_rectal_target:
+                start_point["rectalSetpoint"] = rectal_target
+            graph_points.append(start_point)
 
             cumulative_time += total_time_s
-            graph_points.append({
+            end_point = {
                 "time": cumulative_time,
                 "temp": end_temp,
                 "actualPlateTarget": end_temp,
-            })
+            }
+            if has_rectal_target:
+                end_point["rectalSetpoint"] = rectal_target
+            graph_points.append(end_point)
 
         return graph_points
 

@@ -818,6 +818,7 @@ class AutotuneWizardTab(QWidget):
         self._result_axes = None
         self._result_canvas: Optional[FigureCanvas] = None
         self._original_target: Optional[float] = None
+        self._autotune_command_sent = False
 
         self._init_ui()
 
@@ -1038,8 +1039,28 @@ class AutotuneWizardTab(QWidget):
         self.metric_label.setText("ΔT: –  |  Hastighet: –  |  Overshoot: –")
         self.finish_button.setEnabled(False)
         self.stack.setCurrentIndex(1)
+        self._autotune_command_sent = False
 
         latest_data = getattr(self.parent, "last_status_data", {}) or {}
+        autotune_active = bool(latest_data.get("asymmetric_autotune_active")) or bool(
+            latest_data.get("autotune_active")
+        )
+
+        if autotune_active:
+            self.collecting = False
+            self._original_target = None
+            self._autotune_command_sent = True
+            self._clear_plots()
+            self.collect_status.setText("Firmware-autotune kjører – venter på resultater...")
+            self.collect_status.setStyleSheet("color: #17a2b8; font-weight: bold;")
+            self.metric_label.setText("Resultater vises når kontrolleren er ferdig.")
+            self.finish_button.setEnabled(False)
+            self.parent.log(
+                "🎯 Autotune-wizard følger firmware-autotune – avvent resultater fra kontrolleren.",
+                "info",
+            )
+            return
+
         plate_temp = self.parent.current_plate_temp
         if plate_temp is None:
             plate_temp = float(latest_data.get("cooling_plate_temp", float("nan")))
@@ -1107,6 +1128,10 @@ class AutotuneWizardTab(QWidget):
         if self.collecting:
             self.parent.log("⛔ Autotune wizard avbrutt", "warning")
         self.collecting = False
+        if self._autotune_command_sent:
+            if self.parent.send_asymmetric_command("abort_asymmetric_autotune", {}):
+                self.parent.log("⛔ Firmware-autotune avbrutt fra wizard", "warning")
+            self._autotune_command_sent = False
         self._restore_original_target()
         self.stack.setCurrentIndex(0)
 
@@ -1126,6 +1151,7 @@ class AutotuneWizardTab(QWidget):
     def reset_wizard(self) -> None:
         self.stack.setCurrentIndex(0)
         self.collecting = False
+        self._autotune_command_sent = False
         self._restore_original_target()
 
     def apply_to_heating(self) -> None:
@@ -1152,6 +1178,20 @@ class AutotuneWizardTab(QWidget):
         self.parent.asymmetric_controls.set_cooling_pid()
 
     def receive_data(self, data: Dict[str, Any]) -> None:
+        if self._autotune_command_sent:
+            status_raw = str(data.get("autotune_status", "")).strip()
+            if status_raw:
+                status_readable = status_raw.replace("_", " ").title()
+                self.collect_status.setText(f"Firmware-autotune: {status_readable}")
+                lower = status_readable.lower()
+                if lower.startswith("abort") or lower in {"aborted", "idle"}:
+                    self.metric_label.setText("Autotune avbrutt av kontrolleren.")
+                    self._autotune_command_sent = False
+                elif lower in {"done", "complete", "finished"}:
+                    self.metric_label.setText("Resultater mottatt fra kontrolleren.")
+                    self._autotune_command_sent = False
+            return
+
         if not self.collecting:
             return
         if "cooling_plate_temp" not in data or "pid_output" not in data:
@@ -1244,6 +1284,7 @@ class AutotuneWizardTab(QWidget):
             self._result_axes.legend()
             self._result_canvas.draw()
 
+        self._autotune_command_sent = False
         self._restore_original_target()
 
     def display_results(self, results: Dict[str, float]) -> None:

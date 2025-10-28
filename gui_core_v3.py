@@ -849,6 +849,8 @@ class AutotuneWizardTab(QWidget):
             "Denne wizzarden analyserer systemresponsen og foreslår nye PID-verdier.\n"
             "• Wizzarden setter automatisk et temperatursprang og følger reaksjonen.\n"
             "• Sørg for at systemet er stabilt før start, og velg ønsket retning.\n"
+            "• Trykk start for å sende autotune-kommando til kontrolleren.\n"
+            "• Følg grafene til systemet stabiliserer seg.\n"
             "• Evaluer verdiene og aktiver dem når du er fornøyd."
         )
         description.setWordWrap(True)

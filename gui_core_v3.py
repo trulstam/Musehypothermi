@@ -817,6 +817,7 @@ class AutotuneWizardTab(QWidget):
         self._axes_output = None
         self._result_axes = None
         self._result_canvas: Optional[FigureCanvas] = None
+        self._original_target: Optional[float] = None
         self._autotune_command_sent = False
 
         self._init_ui()
@@ -846,6 +847,8 @@ class AutotuneWizardTab(QWidget):
 
         description = QLabel(
             "Denne wizzarden analyserer systemresponsen og foreslår nye PID-verdier.\n"
+            "• Wizzarden setter automatisk et temperatursprang og følger reaksjonen.\n"
+            "• Sørg for at systemet er stabilt før start, og velg ønsket retning.\n"
             "• Trykk start for å sende autotune-kommando til kontrolleren.\n"
             "• Følg grafene til systemet stabiliserer seg.\n"
             "• Evaluer verdiene og aktiver dem når du er fornøyd."
@@ -854,6 +857,25 @@ class AutotuneWizardTab(QWidget):
         description.setAlignment(Qt.AlignCenter)
         description.setStyleSheet("color: #495057;")
         vbox.addWidget(description)
+
+        config_group = QGroupBox("Oppsett for stegtest")
+        config_layout = QFormLayout()
+
+        self.step_spin = QDoubleSpinBox()
+        self.step_spin.setRange(0.5, 15.0)
+        self.step_spin.setDecimals(1)
+        self.step_spin.setSingleStep(0.5)
+        self.step_spin.setSuffix(" °C")
+        self.step_spin.setValue(3.0)
+        config_layout.addRow("Stegstørrelse:", self.step_spin)
+
+        self.direction_combo = QComboBox()
+        self.direction_combo.addItem("Varme (øke mål)", "heating")
+        self.direction_combo.addItem("Kjøling (senke mål)", "cooling")
+        config_layout.addRow("Retning:", self.direction_combo)
+
+        config_group.setLayout(config_layout)
+        vbox.addWidget(config_group)
 
         self.start_button = QPushButton("Start autotune")
         self.start_button.setStyleSheet(
@@ -869,7 +891,7 @@ class AutotuneWizardTab(QWidget):
         vbox.addLayout(button_row)
 
         info = QLabel(
-            "Tips: sørg for stabile startforhold før du starter. Wizzarden følger en Ziegler-Nichols stegrespons."
+            "Tips: La systemet stabilisere seg nær målet før du starter. Stegstørrelsen brukes til å lage en Ziegler-Nichols stegrespons."
         )
         info.setWordWrap(True)
         info.setStyleSheet("background: #f8f9fa; border: 1px solid #dee2e6; padding: 12px; border-radius: 6px;")
@@ -1012,23 +1034,107 @@ class AutotuneWizardTab(QWidget):
 
         self.analyzer.reset()
         self.collecting = True
-        self._autotune_command_sent = False
+        self._last_plot_update = 0.0
         self._clear_plots()
-        self.collect_status.setText("Sender autotune...")
+        self.collect_status.setText("Setter steg...")
         self.collect_status.setStyleSheet("color: #17a2b8; font-weight: bold;")
         self.metric_label.setText("ΔT: –  |  Hastighet: –  |  Overshoot: –")
         self.finish_button.setEnabled(False)
         self.stack.setCurrentIndex(1)
+        self._autotune_command_sent = False
 
-        if self.parent.send_asymmetric_command("start_asymmetric_autotune", {}):
-            self.parent.log("🎯 Autotune wizard startet", "command")
+        latest_data = getattr(self.parent, "last_status_data", {}) or {}
+        autotune_active = bool(latest_data.get("asymmetric_autotune_active")) or bool(
+            latest_data.get("autotune_active")
+        )
+
+        if autotune_active:
+            self.collecting = False
+            self._original_target = None
             self._autotune_command_sent = True
+            self._clear_plots()
+            self.collect_status.setText("Firmware-autotune kjører – venter på resultater...")
+            self.collect_status.setStyleSheet("color: #17a2b8; font-weight: bold;")
+            self.metric_label.setText("Resultater vises når kontrolleren er ferdig.")
+            self.finish_button.setEnabled(False)
+            self.parent.log(
+                "🎯 Autotune-wizard følger firmware-autotune – avvent resultater fra kontrolleren.",
+                "info",
+            )
+            return
+
+        plate_temp = self.parent.current_plate_temp
+        if plate_temp is None:
+            plate_temp = float(latest_data.get("cooling_plate_temp", float("nan")))
+
+        target_temp = self.parent.current_target_temp
+        if target_temp is None:
+            target_temp = float(latest_data.get("plate_target_active", float("nan")))
+
+        if plate_temp is None or math.isnan(plate_temp):
+            QMessageBox.warning(self, "Ingen data", "Ingen temperaturdata er tilgjengelig ennå. Vent på statusoppdatering før du starter.")
+            self.collecting = False
+            self.stack.setCurrentIndex(0)
+            return
+
+        if target_temp is None or math.isnan(target_temp):
+            target_temp = plate_temp
+
+        self._original_target = target_temp
+        direction = self.direction_combo.currentData()
+        step = self.step_spin.value()
+
+        target_min = -10.0
+        target_max = 50.0
+
+        if direction == "heating":
+            base = max(target_temp, plate_temp)
+            new_target = min(target_max, base + step)
+        else:
+            base = min(target_temp, plate_temp)
+            new_target = max(target_min, base - step)
+
+        if abs(new_target - base) < 1e-6:
+            QMessageBox.warning(
+                self,
+                "Ugyldig steg",
+                "Valgt steg kunne ikke beregnes innenfor temperaturområdet. Juster størrelsen eller retningen.",
+            )
+            self.collecting = False
+            self.stack.setCurrentIndex(0)
+            return
+
+        if not self.parent.pid_running:
+            self.parent.send_and_log_cmd("pid", "start")
+
+        if not self.parent.send_target_temperature(
+            new_target,
+            source="autotune steg",
+            silent=True,
+        ):
+            QMessageBox.warning(self, "Kunne ikke sette mål", "Måltemperaturen kunne ikke oppdateres.")
+            self.collecting = False
+            self.stack.setCurrentIndex(0)
+            return
+
+        self.collect_status.setText(
+            f"Steg aktivt: mål {new_target:.1f} °C (fra {self._original_target:.1f} °C)"
+        )
+        self.parent.log(
+            f"🎯 Autotune steg start: {self._original_target:.1f} → {new_target:.1f} °C ({'oppvarming' if direction == 'heating' else 'nedkjøling'})",
+            "info",
+        )
+        self.parent.request_status()
 
     def abort_sequence(self) -> None:
-        if self.collecting and self._autotune_command_sent:
-            self.parent.send_asymmetric_command("abort_asymmetric_autotune", {})
+        if self.collecting:
             self.parent.log("⛔ Autotune wizard avbrutt", "warning")
         self.collecting = False
+        if self._autotune_command_sent:
+            if self.parent.send_asymmetric_command("abort_asymmetric_autotune", {}):
+                self.parent.log("⛔ Firmware-autotune avbrutt fra wizard", "warning")
+            self._autotune_command_sent = False
+        self._restore_original_target()
         self.stack.setCurrentIndex(0)
 
     def complete_measurement(self) -> None:
@@ -1046,6 +1152,9 @@ class AutotuneWizardTab(QWidget):
 
     def reset_wizard(self) -> None:
         self.stack.setCurrentIndex(0)
+        self.collecting = False
+        self._autotune_command_sent = False
+        self._restore_original_target()
 
     def apply_to_heating(self) -> None:
         kp = self.kp_spin.value()
@@ -1071,6 +1180,20 @@ class AutotuneWizardTab(QWidget):
         self.parent.asymmetric_controls.set_cooling_pid()
 
     def receive_data(self, data: Dict[str, Any]) -> None:
+        if self._autotune_command_sent:
+            status_raw = str(data.get("autotune_status", "")).strip()
+            if status_raw:
+                status_readable = status_raw.replace("_", " ").title()
+                self.collect_status.setText(f"Firmware-autotune: {status_readable}")
+                lower = status_readable.lower()
+                if lower.startswith("abort") or lower in {"aborted", "idle"}:
+                    self.metric_label.setText("Autotune avbrutt av kontrolleren.")
+                    self._autotune_command_sent = False
+                elif lower in {"done", "complete", "finished"}:
+                    self.metric_label.setText("Resultater mottatt fra kontrolleren.")
+                    self._autotune_command_sent = False
+            return
+
         if not self.collecting:
             return
         if "cooling_plate_temp" not in data or "pid_output" not in data:
@@ -1163,10 +1286,33 @@ class AutotuneWizardTab(QWidget):
             self._result_axes.legend()
             self._result_canvas.draw()
 
+        self._autotune_command_sent = False
+        self._restore_original_target()
+
     def display_results(self, results: Dict[str, float]) -> None:
         """Expose results rendering to the parent GUI."""
         self.collecting = False
         self._present_results(results)
+
+    def _restore_original_target(self) -> None:
+        if self._original_target is None:
+            return
+
+        current_target = self.parent.current_target_temp
+        if current_target is not None and abs(current_target - self._original_target) < 0.05:
+            self._original_target = None
+            return
+
+        if self.parent.send_target_temperature(
+            self._original_target,
+            source="autotune gjenopprett",
+            silent=True,
+        ):
+            self.parent.log(
+                f"🎯 Autotune: måltemperatur tilbake til {self._original_target:.1f} °C",
+                "info",
+            )
+        self._original_target = None
 
 
 
@@ -1462,6 +1608,11 @@ class MainWindow(QMainWindow):
         self.profile_run_start_time: Optional[float] = None
         self.profile_pause_time: Optional[float] = None
         self.profile_elapsed_paused: float = 0.0
+        self.current_plate_temp: Optional[float] = None
+        self.current_target_temp: Optional[float] = None
+        self.pid_mode: Optional[str] = None
+        self.pid_running: bool = False
+        self.last_status_data: Dict[str, Any] = {}
 
         print("✅ Data structures initialized")
 
@@ -2077,7 +2228,8 @@ class MainWindow(QMainWindow):
             
             # Update status indicators
             self.update_status_indicators(data)
-            
+            self.last_status_data = dict(data)
+
             # ============================================================================
             # 6. ADD THIS LINE TO UPDATE ASYMMETRIC CONTROLS
             # ============================================================================
@@ -2106,6 +2258,7 @@ class MainWindow(QMainWindow):
             if "cooling_plate_temp" in data:
                 temp = float(data["cooling_plate_temp"])
                 self.plateTempDisplay.setText(f"{temp:.1f}°C")
+                self.current_plate_temp = temp
 
             if "anal_probe_temp" in data:
                 temp = float(data["anal_probe_temp"])
@@ -2118,11 +2271,12 @@ class MainWindow(QMainWindow):
             if "plate_target_active" in data:
                 target = float(data["plate_target_active"])
                 self.targetTempDisplay.setText(f"{target:.1f}°C")
+                self.current_target_temp = target
 
             if "breath_freq_bpm" in data:
                 breath = float(data["breath_freq_bpm"])
                 self.breathRateDisplay.setText(f"{breath:.0f} BPM")
-                
+
         except (ValueError, KeyError) as e:
             print(f"Display update error: {e}")
 
@@ -2183,10 +2337,28 @@ class MainWindow(QMainWindow):
                     self.failsafeIndicator.setText("🟢 Safe")
                     self.failsafeIndicator.setStyleSheet("color: #28a745; font-weight: bold;")
 
+            mode_value = None
+            if "pid_mode" in data:
+                mode_value = str(data["pid_mode"])
+                self.pid_mode = mode_value
+
             # PID status
             if "pid_output" in data:
                 output = abs(float(data["pid_output"]))
-                if output > 0.1:
+                pid_active = output > 0.1
+                if mode_value is None and self.pid_mode is not None:
+                    mode_value = self.pid_mode
+
+                if mode_value:
+                    lowered = mode_value.lower()
+                    if lowered in {"off", "stopped", "idle"}:
+                        pid_active = False
+                    else:
+                        pid_active = True
+
+                self.pid_running = pid_active
+
+                if pid_active:
                     self.pidStatusIndicator.setText("🟢 PID On")
                     self.pidStatusIndicator.setStyleSheet("color: #28a745; font-weight: bold;")
                 else:
@@ -2412,31 +2584,52 @@ class MainWindow(QMainWindow):
         try:
             if self.send_and_log_cmd("pid", "abort_autotune"):
                 self.log("⛔ Autotune aborted", "warning")
-                
+
         except Exception as e:
             self.log(f"❌ Autotune abort error: {e}", "error")
+
+    def send_target_temperature(self, value: float, *, source: str = "", silent: bool = False) -> bool:
+        """Send new plate target temperature with consistent logging."""
+        try:
+            if not (-10.0 <= value <= 50.0):
+                raise ValueError("Temperature must be -10°C to 50°C")
+
+            if not self.connection_established:
+                if not silent:
+                    self.log("❌ Not connected", "error")
+                return False
+
+            self.serial_manager.sendSET("target_temp", value)
+            event_msg = f"SET: target_temp → {value:.2f}°C"
+            if source:
+                event_msg += f" ({source})"
+            self.event_logger.log_event(event_msg)
+
+            message = f"✅ Target set: {value:.2f}°C"
+            if source:
+                message += f" ({source})"
+            self.log(message, "info" if silent else "success")
+            return True
+
+        except ValueError as e:
+            if not silent:
+                QMessageBox.warning(self, "Invalid Input", f"Temperature error: {e}")
+            self.log(f"❌ Target set error: {e}", "error")
+        except Exception as e:
+            self.log(f"❌ Target set error: {e}", "error")
+
+        return False
 
     def set_manual_setpoint(self):
         """Set target temperature"""
         try:
             value = float(self.setpointInput.text())
-            
-            if not (-10 <= value <= 50):
-                raise ValueError("Temperature must be -10°C to 50°C")
-            
-            if not self.connection_established:
-                self.log("❌ Not connected", "error")
-                return
-                
-            self.serial_manager.sendSET("target_temp", value)
-            self.event_logger.log_event(f"SET: target_temp → {value:.2f}°C")
-            self.log(f"✅ Target set: {value:.2f}°C", "success")
-            
-        except ValueError as e:
-            QMessageBox.warning(self, "Invalid Input", f"Temperature error: {e}")
-            self.log(f"❌ Invalid temperature: {e}", "error")
-        except Exception as e:
-            self.log(f"❌ Target set error: {e}", "error")
+        except ValueError:
+            QMessageBox.warning(self, "Invalid Input", "Temperature error: could not parse value")
+            self.log("❌ Invalid temperature: could not parse value", "error")
+            return
+
+        self.send_target_temperature(value)
 
     def set_max_output_limit(self):
         """Set max output limit"""

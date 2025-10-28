@@ -281,43 +281,6 @@ class AsymmetricPIDControls(QWidget):
         self.external_rate_label: Optional[QLabel] = None
         self.external_emergency_label: Optional[QLabel] = None
         
-        # Asymmetric Autotune
-        autotune_group = QGroupBox("🎯 Asymmetric Autotune")
-        autotune_layout = QVBoxLayout()
-        
-        autotune_info = QLabel(
-            "Firmware still reports placeholder autotune events –"
-            " PID gains are not adjusted automatically yet."
-        )
-        autotune_info.setWordWrap(True)
-        autotune_info.setStyleSheet("color: #6c757d; font-size: 10px;")
-        autotune_layout.addWidget(autotune_info)
-
-        status_row = QHBoxLayout()
-        status_label = QLabel("Status:")
-        status_label.setStyleSheet("font-weight: bold;")
-        self.autotune_status_value = QLabel("Idle")
-        self.autotune_status_value.setStyleSheet("color: #6c757d; font-weight: bold;")
-        status_row.addWidget(status_label)
-        status_row.addWidget(self.autotune_status_value)
-        status_row.addStretch()
-        autotune_layout.addLayout(status_row)
-        
-        self.start_asymmetric_autotune_button = QPushButton("🎯 Start Asymmetric Autotune")
-        self.start_asymmetric_autotune_button.clicked.connect(self.start_asymmetric_autotune)
-        self.start_asymmetric_autotune_button.setStyleSheet("background-color: #6f42c1; color: white; font-weight: bold;")
-        
-        self.abort_asymmetric_autotune_button = QPushButton("⛔ Abort Autotune")
-        self.abort_asymmetric_autotune_button.clicked.connect(self.abort_asymmetric_autotune)
-        self.abort_asymmetric_autotune_button.setStyleSheet("background-color: #fd7e14; color: white; font-weight: bold;")
-        self.abort_asymmetric_autotune_button.setVisible(False)
-        
-        autotune_layout.addWidget(self.start_asymmetric_autotune_button)
-        autotune_layout.addWidget(self.abort_asymmetric_autotune_button)
-        
-        autotune_group.setLayout(autotune_layout)
-        layout.addWidget(autotune_group)
-        
         layout.addStretch()
         self.setLayout(layout)
 
@@ -417,27 +380,6 @@ class AsymmetricPIDControls(QWidget):
                         "color: #28a745; font-weight: bold;",
                     )
             
-            # Handle asymmetric autotune status
-            if "asymmetric_autotune_active" in data:
-                if data["asymmetric_autotune_active"]:
-                    self.start_asymmetric_autotune_button.setVisible(False)
-                    self.abort_asymmetric_autotune_button.setVisible(True)
-                else:
-                    self.start_asymmetric_autotune_button.setVisible(True)
-                    self.abort_asymmetric_autotune_button.setVisible(False)
-
-            if "autotune_status" in data:
-                status = str(data["autotune_status"]).replace("_", " ").title()
-                status_style = "color: #6c757d; font-weight: bold;"
-                if status.lower().startswith("run"):
-                    status_style = "color: #17a2b8; font-weight: bold;"
-                elif status.lower() in {"done", "complete"}:
-                    status_style = "color: #28a745; font-weight: bold;"
-                elif status.lower().startswith("abort"):
-                    status_style = "color: #dc3545; font-weight: bold;"
-                self.autotune_status_value.setText(status)
-                self.autotune_status_value.setStyleSheet(status_style)
-
             # Sync parameter fields when not being edited
             if all(key in data for key in ["pid_cooling_kp", "pid_cooling_ki", "pid_cooling_kd"]):
                 if not self.kp_cooling_input.hasFocus():
@@ -616,30 +558,6 @@ class AsymmetricPIDControls(QWidget):
 
         except ValueError as e:
             QMessageBox.warning(self, "Invalid Input", f"Safety margin error: {e}")
-
-    def start_asymmetric_autotune(self):
-        """Start asymmetric autotune with safety confirmation"""
-        reply = QMessageBox.question(
-            self, "🎯 Asymmetric Autotune",
-            "Start asymmetric autotune?\n\n"
-            "This will:\n"
-            "1. Test heating response (safe)\n"
-            "2. Test cooling response (conservative)\n"
-            "3. Calculate optimal PID parameters\n\n"
-            "Process will take 5-10 minutes.",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No
-        )
-        
-        if reply == QMessageBox.Yes:
-            if self.parent.send_asymmetric_command("start_asymmetric_autotune", {}):
-                self.parent.log("🎯 Starting asymmetric autotune...", "command")
-    
-    def abort_asymmetric_autotune(self):
-        """Abort asymmetric autotune"""
-        if self.parent.send_asymmetric_command("abort_asymmetric_autotune", {}):
-            self.parent.log("⛔ Asymmetric autotune aborted", "warning")
-
 
 # ============================================================================
 # Autotune wizard implementation

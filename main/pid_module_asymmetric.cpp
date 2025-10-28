@@ -430,10 +430,20 @@ void AsymmetricPIDModule::startAutotune() {
     startAsymmetricAutotune();
 }
 
-void AsymmetricPIDModule::startAsymmetricAutotune() {
+void AsymmetricPIDModule::startAsymmetricAutotune(float requestedStepPercent, const char* direction) {
     if (autotuneActive) {
+        comm.sendEvent("⚠️ Asymmetric autotune already running");
         return;
     }
+
+    String directionStr = direction ? String(direction) : String("heating");
+    directionStr.toLowerCase();
+    if (directionStr == "cooling") {
+        comm.sendEvent("⚠️ Cooling autotune er ikke implementert enda");
+        autotuneStatusString = "aborted";
+        return;
+    }
+
     coolingPID.SetMode(MANUAL);
     heatingPID.SetMode(MANUAL);
     active = false;
@@ -443,14 +453,22 @@ void AsymmetricPIDModule::startAsymmetricAutotune() {
     autotuneActive = true;
     autotuneStatusString = "running";
 
-    autotuneStepPercent = constrain(fabs(currentParams.heating_limit), 5.0f, 35.0f);
-    if (autotuneStepPercent <= 0.0f) {
-        autotuneStepPercent = 20.0f;
+    float heatingLimit = fabs(currentParams.heating_limit);
+    if (heatingLimit < 5.0f) {
+        heatingLimit = 5.0f;
     }
+    float maxStep = heatingLimit < 35.0f ? heatingLimit : 35.0f;
+    float stepPercent = requestedStepPercent;
+    if (isnan(stepPercent) || stepPercent <= 0.0f) {
+        stepPercent = heatingLimit * 0.35f;
+    }
+    stepPercent = constrain(stepPercent, 5.0f, maxStep);
 
-    applyManualOutputPercent(autotuneStepPercent);
+    autotuneStepPercent = stepPercent;
+    applyManualOutputPercent(stepPercent);
+
     String message = "🎯 Asymmetric autotune started: applying ";
-    message += String(autotuneStepPercent, 1);
+    message += String(stepPercent, 1);
     message += "% heating step";
     comm.sendEvent(message);
 }

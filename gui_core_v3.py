@@ -776,7 +776,7 @@ class AutotuneWizardTab(QWidget):
 
         description = QLabel(
             "Denne wizzarden analyserer systemresponsen og foreslår nye PID-verdier.\n"
-            "• Wizzarden setter automatisk et temperatursprang og følger reaksjonen.\n"
+            "• Kontrolleren kjører et manuelt varme-steg mens wizzarden logger reaksjonen.\n"
             "• Sørg for at systemet er stabilt før start, og velg ønsket retning.\n"
             "• Trykk start for å sende autotune-kommando til kontrolleren.\n"
             "• Følg grafene til systemet stabiliserer seg.\n"
@@ -971,7 +971,7 @@ class AutotuneWizardTab(QWidget):
         self.collecting = True
         self._last_plot_update = 0.0
         self._clear_plots()
-        self.collect_status.setText("Setter steg...")
+        self.collect_status.setText("Forbereder firmware-autotune...")
         self.collect_status.setStyleSheet("color: #17a2b8; font-weight: bold;")
         self.metric_label.setText("ΔT: –  |  Hastighet: –  |  Overshoot: –")
         self.finish_button.setEnabled(False)
@@ -1019,44 +1019,35 @@ class AutotuneWizardTab(QWidget):
         direction = self.direction_combo.currentData()
         step = self.step_spin.value()
 
-        target_min = -10.0
-        target_max = 50.0
-
-        if direction == "heating":
-            base = max(target_temp, plate_temp)
-            new_target = min(target_max, base + step)
-        else:
-            base = min(target_temp, plate_temp)
-            new_target = max(target_min, base - step)
-
-        if abs(new_target - base) < 1e-6:
-            QMessageBox.warning(
+        if direction != "heating":
+            QMessageBox.information(
                 self,
-                "Ugyldig steg",
-                "Valgt steg kunne ikke beregnes innenfor temperaturområdet. Juster størrelsen eller retningen.",
+                "Ikke støttet",
+                "Firmware-autotune støtter foreløpig kun varme-steg. Velg varme før du starter.",
             )
             self.collecting = False
             self.stack.setCurrentIndex(0)
             return
 
-        if not self.parent.pid_running:
-            self.parent.send_and_log_cmd("pid", "start")
-
-        if not self.parent.send_target_temperature(
-            new_target,
-            source="autotune steg",
-            silent=True,
-        ):
-            QMessageBox.warning(self, "Kunne ikke sette mål", "Måltemperaturen kunne ikke oppdateres.")
+        step_percent = self._derive_step_percent(step)
+        payload = {"direction": direction, "step_percent": step_percent}
+        if not self.parent.send_asymmetric_command("start_asymmetric_autotune", payload):
+            QMessageBox.warning(
+                self,
+                "Kunne ikke starte",
+                "Kontrolleren avviste autotune-kommandoen.",
+            )
             self.collecting = False
             self.stack.setCurrentIndex(0)
             return
 
+        self._autotune_command_sent = True
         self.collect_status.setText(
-            f"Steg aktivt: mål {new_target:.1f} °C (fra {self._original_target:.1f} °C)"
+            f"Firmware-autotune kjører – {step_percent:.1f}% varmeeffekt"
         )
+        self.metric_label.setText("Samler data – vent til responsen stabiliserer seg.")
         self.parent.log(
-            f"🎯 Autotune steg start: {self._original_target:.1f} → {new_target:.1f} °C ({'oppvarming' if direction == 'heating' else 'nedkjøling'})",
+            f"🎯 Firmware-autotune startet: {step:.1f} °C steg → {step_percent:.1f}% utgang",
             "info",
         )
         self.parent.request_status()
@@ -1153,10 +1144,10 @@ class AutotuneWizardTab(QWidget):
                 if lower.startswith("abort") or lower in {"aborted", "idle"}:
                     self.metric_label.setText("Autotune avbrutt av kontrolleren.")
                     self._autotune_command_sent = False
+                    self.collecting = False
                 elif lower in {"done", "complete", "finished"}:
-                    self.metric_label.setText("Resultater mottatt fra kontrolleren.")
+                    self.metric_label.setText("Firmware-autotune ferdig – analyserer data.")
                     self._autotune_command_sent = False
-            return
 
         if not self.collecting:
             return
@@ -1266,6 +1257,23 @@ class AutotuneWizardTab(QWidget):
         """Expose results rendering to the parent GUI."""
         self.collecting = False
         self._present_results(results)
+
+    def _derive_step_percent(self, step_delta: float) -> float:
+        latest_data = getattr(self.parent, "last_status_data", {}) or {}
+        try:
+            heating_limit = float(latest_data.get("pid_heating_limit", 100.0))
+        except (TypeError, ValueError):
+            heating_limit = 100.0
+
+        heating_limit = max(5.0, heating_limit)
+        max_percent = heating_limit if heating_limit <= 35.0 else 35.0
+
+        percent = step_delta * 4.0
+        if percent < 5.0:
+            percent = 5.0
+        if percent > max_percent:
+            percent = max_percent
+        return float(percent)
 
     @staticmethod
     def _clamp_value(value: float, bounds: Tuple[float, float]) -> Tuple[float, bool]:

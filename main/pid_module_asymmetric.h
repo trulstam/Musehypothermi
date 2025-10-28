@@ -87,7 +87,7 @@ public:
 
     // Autotune functionality
     void startAutotune();  // Standard autotune for compatibility
-    void startAsymmetricAutotune();
+    void startAsymmetricAutotune(float requestedStepPercent = -1.0f, const char* direction = "heating");
     void runAsymmetricAutotune();
     void abortAutotune();
     bool isAutotuneActive() { return autotuneActive; }

@@ -967,16 +967,31 @@ class MainWindow(QMainWindow):
                 response_msg = data["response"]
                 self.log(f"📥 RESPONSE: {response_msg}")
 
-                if isinstance(response_msg, str) and self.profile_upload_pending and response_msg.lower().startswith("profile"):
-                    self.profile_upload_pending = False
+                if isinstance(response_msg, str):
+                    response_lower = response_msg.lower()
 
-                    if response_msg.lower() == "profile loaded":
-                        self.profile_ready = True
-                        self._update_profile_button_states()
-                        success_message = "Profile upload confirmed by controller"
-                        self.log(f"✅ {success_message}", "success")
-                        self.event_logger.log_event(success_message)
-                    else:
+                    if self.profile_upload_pending and response_lower.startswith("profile"):
+                        self.profile_upload_pending = False
+
+                        if response_lower == "profile loaded":
+                            self.profile_ready = True
+                            self._update_profile_button_states()
+                            success_message = "Profile upload confirmed by controller"
+                            self.log(f"✅ {success_message}", "success")
+                            self.event_logger.log_event(success_message)
+                        else:
+                            self.profile_ready = False
+                            self._update_profile_button_states()
+                            failure_message = f"Profile upload failed: {response_msg}"
+                            self.log(f"❌ {failure_message}", "error")
+                            self.event_logger.log_event(failure_message)
+                            QMessageBox.warning(self, "Profile Upload Failed", response_msg)
+
+                    elif (
+                        self.profile_upload_pending
+                        and any(keyword in response_lower for keyword in ("error", "invalid", "failed"))
+                    ):
+                        self.profile_upload_pending = False
                         self.profile_ready = False
                         self._update_profile_button_states()
                         failure_message = f"Profile upload failed: {response_msg}"

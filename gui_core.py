@@ -1304,6 +1304,58 @@ class MainWindow(QMainWindow):
         if not profile_points:
             raise ValueError("Loaded profile is empty")
 
+        first_entry = profile_points[0]
+        step_keys = {"plate_start_temp", "plate_end_temp", "total_step_time_ms"}
+
+        if step_keys.issubset(first_entry.keys()):
+            steps = []
+            for index, entry in enumerate(profile_points, start=1):
+                try:
+                    start_temp = float(entry["plate_start_temp"])
+                    end_temp = float(entry["plate_end_temp"])
+                    total_time_ms = int(float(entry["total_step_time_ms"]))
+                    ramp_time_ms = int(float(entry.get("ramp_time_ms", 0)))
+                    rectal_target = entry.get("rectal_override_target", -1000.0)
+                    rectal_target = (
+                        float(rectal_target)
+                        if rectal_target is not None
+                        else -1000.0
+                    )
+                except (KeyError, TypeError, ValueError) as exc:
+                    raise ValueError(
+                        f"Invalid step entry at position {index}: {exc}"
+                    ) from exc
+
+                if total_time_ms <= 0:
+                    raise ValueError(
+                        f"total_step_time_ms must be positive at step {index}"
+                    )
+
+                if ramp_time_ms < 0:
+                    raise ValueError(
+                        f"ramp_time_ms cannot be negative at step {index}"
+                    )
+
+                if ramp_time_ms > total_time_ms:
+                    raise ValueError(
+                        f"ramp_time_ms cannot exceed total_step_time_ms at step {index}"
+                    )
+
+                steps.append(
+                    {
+                        "plate_start_temp": start_temp,
+                        "plate_end_temp": end_temp,
+                        "ramp_time_ms": ramp_time_ms,
+                        "rectal_override_target": rectal_target,
+                        "total_step_time_ms": total_time_ms,
+                    }
+                )
+
+            if len(steps) > 10:
+                raise ValueError("Profile may contain at most 10 steps")
+
+            return steps
+
         if len(profile_points) < 2:
             raise ValueError("Profile must contain at least two time points")
 

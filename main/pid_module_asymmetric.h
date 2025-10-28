@@ -2,6 +2,7 @@
 #define PID_MODULE_ASYMMETRIC_H
 
 #include <PID_v1.h>
+#include <stddef.h>
 #include "eeprom_manager.h"
 #include "pwm_module.h"
 
@@ -138,7 +139,7 @@ private:
     // EEPROM management
     EEPROMManager* eeprom;
     PWMModule pwm;
-    
+
     // Safety methods
     bool checkSafetyLimits(double currentTemp, double targetTemp);
     void applySafetyConstraints();
@@ -150,10 +151,26 @@ private:
     void updatePIDMode(double error);
     void switchToCoolingPID();
     void switchToHeatingPID();
-    
+
     // Enhanced autotune
     void performCoolingAutotune();
     void performHeatingAutotune();
+
+    // Autotune helpers/state
+    static constexpr size_t kAutotuneLogSize = 300;
+    static constexpr unsigned long kAutotuneSampleIntervalMs = 500;
+    static constexpr unsigned long kAutotuneTimeoutMs = 300000;  // 5 minutes
+    unsigned long autotuneTimestamps[kAutotuneLogSize];
+    float autotuneTemperatures[kAutotuneLogSize];
+    size_t autotuneLogIndex;
+    unsigned long autotuneStartMillis;
+    unsigned long lastAutotuneSample;
+    float autotuneStepPercent;
+
+    void resetAutotuneState();
+    void applyManualOutputPercent(float percent);
+    void finalizeAutotune(bool success);
+    bool calculateAutotuneResults();
 };
 
 #endif // PID_MODULE_ASYMMETRIC_H

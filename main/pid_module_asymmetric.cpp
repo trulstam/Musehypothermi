@@ -102,6 +102,11 @@ AsymmetricPIDModule::AsymmetricPIDModule()
     currentParams.heating_limit = kDefaultMaxOutputPercent;
     currentParams.deadband = kDefaultDeadband;
     currentParams.safety_margin = kDefaultSafetyMargin;
+
+    autotuneLogIndex = 0;
+    autotuneStartMillis = 0;
+    lastAutotuneSample = 0;
+    autotuneStepPercent = 0.0f;
 }
 
 void AsymmetricPIDModule::begin(EEPROMManager &eepromManager) {
@@ -128,6 +133,11 @@ void AsymmetricPIDModule::update(double /*currentTemp*/) {
 
     Input = sensors.getCoolingPlateTemp();
     unsigned long now = millis();
+
+    if (autotuneActive) {
+        runAsymmetricAutotune();
+        return;
+    }
 
     if (!active) {
         resetOutputState();
@@ -420,29 +430,88 @@ void AsymmetricPIDModule::startAutotune() {
     startAsymmetricAutotune();
 }
 
-void AsymmetricPIDModule::startAsymmetricAutotune() {
+void AsymmetricPIDModule::startAsymmetricAutotune(float requestedStepPercent, const char* direction) {
     if (autotuneActive) {
+        comm.sendEvent("⚠️ Asymmetric autotune already running");
         return;
     }
+
+    String directionStr = direction ? String(direction) : String("heating");
+    directionStr.toLowerCase();
+    if (directionStr == "cooling") {
+        comm.sendEvent("⚠️ Cooling autotune er ikke implementert enda");
+        autotuneStatusString = "aborted";
+        return;
+    }
+
+    coolingPID.SetMode(MANUAL);
+    heatingPID.SetMode(MANUAL);
+    active = false;
+    resetOutputState();
+
+    resetAutotuneState();
     autotuneActive = true;
     autotuneStatusString = "running";
-    comm.sendEvent("🎯 Asymmetric autotune started (placeholder)");
-    performCoolingAutotune();
+
+    float heatingLimit = fabs(currentParams.heating_limit);
+    if (heatingLimit < 5.0f) {
+        heatingLimit = 5.0f;
+    }
+    float maxStep = heatingLimit < 35.0f ? heatingLimit : 35.0f;
+    float stepPercent = requestedStepPercent;
+    if (isnan(stepPercent) || stepPercent <= 0.0f) {
+        stepPercent = heatingLimit * 0.35f;
+    }
+    stepPercent = constrain(stepPercent, 5.0f, maxStep);
+
+    autotuneStepPercent = stepPercent;
+    applyManualOutputPercent(stepPercent);
+
+    String message = "🎯 Asymmetric autotune started: applying ";
+    message += String(stepPercent, 1);
+    message += "% heating step";
+    comm.sendEvent(message);
 }
 
 void AsymmetricPIDModule::runAsymmetricAutotune() {
     if (!autotuneActive) {
         return;
     }
-    static unsigned long autotuneStart = 0;
-    if (autotuneStart == 0) {
-        autotuneStart = millis();
+    unsigned long now = millis();
+
+    if (now - lastAutotuneSample < kAutotuneSampleIntervalMs) {
+        return;
     }
-    if (millis() - autotuneStart > 30000) {
-        autotuneActive = false;
-        autotuneStatusString = "done";
-        comm.sendEvent("🎯 Asymmetric autotune completed (placeholder)");
-        autotuneStart = 0;
+
+    lastAutotuneSample = now;
+
+    if (autotuneLogIndex < kAutotuneLogSize) {
+        float temp = sensors.getCoolingPlateTemp();
+
+        autotuneTimestamps[autotuneLogIndex] = now - autotuneStartMillis;
+        autotuneTemperatures[autotuneLogIndex] = temp;
+        autotuneLogIndex++;
+
+        if (autotuneLogIndex % 5 == 0) {
+            StaticJsonDocument<192> doc;
+            doc["autotune_time"] = now - autotuneStartMillis;
+            doc["autotune_temp"] = temp;
+            doc["autotune_progress"] = (autotuneLogIndex * 100) / kAutotuneLogSize;
+            doc["autotune_output"] = autotuneStepPercent;
+            serializeJson(doc, Serial);
+            Serial.println();
+        }
+
+        if (autotuneLogIndex >= kAutotuneLogSize) {
+            finalizeAutotune(true);
+            return;
+        }
+    }
+
+    if (now - autotuneStartMillis > kAutotuneTimeoutMs) {
+        comm.sendEvent("Autotune aborted: timeout reached");
+        finalizeAutotune(false);
+        return;
     }
 }
 
@@ -454,10 +523,137 @@ void AsymmetricPIDModule::performHeatingAutotune() {
     comm.sendEvent("🔥 Performing heating autotune (placeholder)");
 }
 
-void AsymmetricPIDModule::abortAutotune() {
+void AsymmetricPIDModule::resetAutotuneState() {
+    autotuneLogIndex = 0;
+    autotuneStartMillis = millis();
+    lastAutotuneSample = 0;
+    autotuneStepPercent = 0.0f;
+}
+
+void AsymmetricPIDModule::applyManualOutputPercent(float percent) {
+    percent = constrain(percent, -100.0f, 100.0f);
+
+    rawPIDOutput = percent;
+    finalOutput = percent;
+    lastOutput = percent;
+
+    int pwmValue = constrain(static_cast<int>(fabs(percent) * MAX_PWM / 100.0f), 0, MAX_PWM);
+    if (percent > 0.0f) {
+        digitalWrite(8, LOW);
+        digitalWrite(7, HIGH);
+    } else if (percent < 0.0f) {
+        digitalWrite(8, HIGH);
+        digitalWrite(7, LOW);
+    } else {
+        digitalWrite(8, LOW);
+        digitalWrite(7, LOW);
+    }
+
+    pwm.setDutyCycle(pwmValue);
+    currentPwmOutput = static_cast<int>(percent);
+}
+
+void AsymmetricPIDModule::finalizeAutotune(bool success) {
+    applyManualOutputPercent(0.0f);
+    resetOutputState();
+
     autotuneActive = false;
-    autotuneStatusString = "aborted";
+    lastAutotuneSample = 0;
+
+    if (success) {
+        if (calculateAutotuneResults()) {
+            autotuneStatusString = "done";
+            comm.sendEvent("🎯 Asymmetric autotune completed");
+        } else {
+            autotuneStatusString = "aborted";
+        }
+    } else {
+        autotuneStatusString = "aborted";
+    }
+
+    autotuneStepPercent = 0.0f;
+    autotuneStartMillis = 0;
+    autotuneLogIndex = 0;
+}
+
+bool AsymmetricPIDModule::calculateAutotuneResults() {
+    if (autotuneLogIndex < 10) {
+        comm.sendEvent("Autotune aborted: insufficient samples");
+        return false;
+    }
+
+    float initialTemp = autotuneTemperatures[0];
+    float finalTemp = autotuneTemperatures[autotuneLogIndex - 1];
+    float deltaTemp = finalTemp - initialTemp;
+    float stepFraction = autotuneStepPercent / 100.0f;
+
+    if (fabs(deltaTemp) < 0.1f || stepFraction <= 0.0f) {
+        comm.sendEvent("Autotune aborted: unstable step response");
+        return false;
+    }
+
+    float targetTemp = initialTemp + 0.63f * deltaTemp;
+    float t63 = 0.0f;
+
+    for (size_t i = 1; i < autotuneLogIndex; ++i) {
+        if ((deltaTemp > 0 && autotuneTemperatures[i] >= targetTemp) ||
+            (deltaTemp < 0 && autotuneTemperatures[i] <= targetTemp)) {
+            t63 = autotuneTimestamps[i] / 1000.0f;
+            break;
+        }
+    }
+
+    if (t63 <= 0.0f) {
+        t63 = autotuneTimestamps[autotuneLogIndex - 1] / 2000.0f;
+    }
+
+    float deadTime = 1.0f;
+    float timeConstant = t63 / 0.63f;
+    float processGain = deltaTemp / stepFraction;
+
+    if (timeConstant <= 0.01f || fabs(processGain) < 1e-6f) {
+        comm.sendEvent("Autotune aborted: invalid process parameters");
+        return false;
+    }
+
+    float newKp = 1.2f / (processGain * (deadTime / timeConstant));
+    float newKi = newKp / (2.0f * deadTime);
+    float newKd = newKp * deadTime * 0.5f;
+
+    newKp = constrain(newKp, 0.05f, 20.0f);
+    newKi = constrain(newKi, 0.001f, 5.0f);
+    newKd = constrain(newKd, 0.001f, 10.0f);
+
+    setHeatingPID(newKp, newKi, newKd, true);
+
+    StaticJsonDocument<256> doc;
+    JsonObject results = doc["autotune_results"].to<JsonObject>();
+    results["kp"] = newKp;
+    results["ki"] = newKi;
+    results["kd"] = newKd;
+    results["process_gain"] = processGain;
+    results["time_constant"] = timeConstant;
+    results["step_percent"] = autotuneStepPercent;
+    results["delta_temp"] = deltaTemp;
+    serializeJson(doc, Serial);
+    Serial.println();
+
+    Serial.print("[Autotune] Heating PID -> Kp=");
+    Serial.print(newKp, 4);
+    Serial.print(", Ki=");
+    Serial.print(newKi, 4);
+    Serial.print(", Kd=");
+    Serial.println(newKd, 4);
+
+    return true;
+}
+
+void AsymmetricPIDModule::abortAutotune() {
+    if (!autotuneActive) {
+        return;
+    }
     comm.sendEvent("⛔ Asymmetric autotune aborted");
+    finalizeAutotune(false);
 }
 
 void AsymmetricPIDModule::saveAsymmetricParams() {
@@ -615,6 +811,9 @@ void AsymmetricPIDModule::start() {
 }
 
 void AsymmetricPIDModule::stop() {
+    if (autotuneActive) {
+        abortAutotune();
+    }
     coolingPID.SetMode(MANUAL);
     heatingPID.SetMode(MANUAL);
     active = false;

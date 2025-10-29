@@ -196,8 +196,26 @@ void CommAPI::handleCommand(const String &jsonString) {
             }
 
         } else if (action == "start_asymmetric_autotune") {
-            pid.startAsymmetricAutotune();
-            sendResponse("Asymmetric autotune started");
+            bool wasActive = pid.isAutotuneActive();
+            JsonObject params = cmd["params"];
+            float stepPercent = -1.0f;
+            const char* directionCstr = "heating";
+            String directionBuffer;
+            if (!params.isNull()) {
+                if (params.containsKey("step_percent")) {
+                    stepPercent = params["step_percent"].as<float>();
+                }
+                if (params.containsKey("direction")) {
+                    directionBuffer = String(params["direction"].as<const char*>());
+                    directionCstr = directionBuffer.c_str();
+                }
+            }
+            pid.startAsymmetricAutotune(stepPercent, directionCstr);
+            if (!wasActive && !pid.isAutotuneActive()) {
+                sendResponse("Asymmetric autotune not started");
+            } else {
+                sendResponse("Asymmetric autotune started");
+            }
 
         } else if (action == "abort_asymmetric_autotune") {
             pid.abortAutotune();

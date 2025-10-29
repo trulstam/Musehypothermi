@@ -2,6 +2,7 @@
 #define PID_MODULE_ASYMMETRIC_H
 
 #include <PID_v1.h>
+#include <math.h>
 #include <stddef.h>
 #include "eeprom_manager.h"
 #include "pwm_module.h"
@@ -87,7 +88,9 @@ public:
 
     // Autotune functionality
     void startAutotune();  // Standard autotune for compatibility
-    void startAsymmetricAutotune(float requestedStepPercent = -1.0f, const char* direction = "heating");
+    void startAsymmetricAutotune(float requestedStepPercent = -1.0f,
+                                 const char* direction = "heating",
+                                 float requestedDelta = NAN);
     void runAsymmetricAutotune();
     void abortAutotune();
     bool isAutotuneActive() { return autotuneActive; }
@@ -156,21 +159,46 @@ private:
     void performCoolingAutotune();
     void performHeatingAutotune();
 
+    enum class AutotunePhase : uint8_t {
+        Idle = 0,
+        HeatingRamp,
+        HeatingHold,
+        CoolingRamp,
+        CoolingHold
+    };
+
     // Autotune helpers/state
-    static constexpr size_t kAutotuneLogSize = 300;
-    static constexpr unsigned long kAutotuneSampleIntervalMs = 500;
+    static constexpr size_t kAutotuneLogSize = 480;
+    static constexpr unsigned long kAutotuneSampleIntervalMs = 250;
     static constexpr unsigned long kAutotuneTimeoutMs = 300000;  // 5 minutes
+    static constexpr unsigned long kAutotuneHoldTimeMs = 4000;
+    static constexpr unsigned long kAutotuneMaxSegmentMs = 120000;
+    static constexpr float kAutotuneMinDelta = 0.4f;
+    static constexpr float kAutotuneDefaultDelta = 1.2f;
+    static constexpr float kAutotuneMaxDelta = 3.5f;
+
     unsigned long autotuneTimestamps[kAutotuneLogSize];
     float autotuneTemperatures[kAutotuneLogSize];
+    float autotuneOutputs[kAutotuneLogSize];
     size_t autotuneLogIndex;
     unsigned long autotuneStartMillis;
     unsigned long lastAutotuneSample;
-    float autotuneStepPercent;
+    float autotuneHeatingStepPercent;
+    float autotuneCoolingStepPercent;
+    float autotuneTargetDelta;
+    float autotuneBaselineTemp;
+    float lastAutotuneOutput;
+    AutotunePhase autotunePhase;
+    bool autotuneCoolingEnabled;
+    unsigned long phaseStartMillis;
 
     void resetAutotuneState();
     void applyManualOutputPercent(float percent);
     void finalizeAutotune(bool success);
     bool calculateAutotuneResults();
+    void setAutotunePhase(AutotunePhase phase);
+    void publishAutotuneProgress(unsigned long now, float temperature);
+    static const char* PhaseName(AutotunePhase phase);
 };
 
 #endif // PID_MODULE_ASYMMETRIC_H

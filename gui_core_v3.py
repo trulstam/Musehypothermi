@@ -743,6 +743,7 @@ class AutotuneWizardTab(QWidget):
         self._percent_user_override = False
         self._updating_percent_spin = False
         self._latest_results_payload: Dict[str, Any] = {}
+        self._expected_delta: Optional[float] = None
 
         self._init_ui()
 
@@ -1092,27 +1093,26 @@ class AutotuneWizardTab(QWidget):
 
         requested_percent = float(self.step_percent_spin.value())
         limits = self._recommended_step_percent(step)
-        recommended = limits["recommended"]
-        cap = limits["cap"]
+        device_cap = limits.get("device_cap", 0.0)
+        safety_cap = limits.get("safety_cap", 0.0)
         step_percent = requested_percent
         clipped = False
-        if cap > 0.0:
-            if step_percent < self.MIN_STEP_PERCENT <= cap:
-                step_percent = self.MIN_STEP_PERCENT
-                clipped = True
-            if step_percent > cap:
-                step_percent = cap
-                clipped = True
-        else:
-            if step_percent != cap:
-                step_percent = cap
-                clipped = True
+        tolerance = 0.1
+        clip_reason: Optional[str] = None
+        if device_cap > 0.0 and step_percent > device_cap + tolerance:
+            step_percent = device_cap
+            clipped = True
+            clip_reason = f"kontrollergrensen {device_cap:.1f} %"
+        elif device_cap <= 0.0 and step_percent < self.MIN_STEP_PERCENT:
+            step_percent = self.MIN_STEP_PERCENT
+            clipped = True
+            clip_reason = "minimumsanbefalingen"
 
-        if clipped:
+        if clipped and clip_reason:
             self.parent.log(
                 (
-                    f"⚠️ Autotune-pådrag justert til {step_percent:.1f}% for å holde seg innenfor "
-                    f"grensen (valgt {requested_percent:.1f} %, maks {cap:.1f} %)."
+                    f"⚠️ Autotune-pådrag justert til {step_percent:.1f}% for å holde seg innenfor {clip_reason} "
+                    f"(valgt {requested_percent:.1f} %)."
                 ),
                 "warning",
             )
@@ -1121,6 +1121,14 @@ class AutotuneWizardTab(QWidget):
                 self.step_percent_spin.setValue(step_percent)
             self._updating_percent_spin = False
             self._percent_user_override = True
+        elif safety_cap > 0.0 and step_percent > safety_cap + tolerance:
+            self.parent.log(
+                (
+                    f"ℹ️ Valgt autotune-pådrag {step_percent:.1f}% overstiger anbefalt sikkerhetsnivå "
+                    f"({safety_cap:.1f} %). Kontroller at systemet tåler dette steget."
+                ),
+                "info",
+            )
 
         self._update_percent_hint(self.step_percent_spin.value(), limits)
 
@@ -1136,6 +1144,7 @@ class AutotuneWizardTab(QWidget):
             return
 
         self._autotune_command_sent = True
+        self._expected_delta = step if direction == "heating" else -step
         self.collect_status.setText(
             f"Firmware-autotune kjører – {step_percent:.1f}% varmeeffekt"
         )
@@ -1154,6 +1163,7 @@ class AutotuneWizardTab(QWidget):
             if self.parent.send_asymmetric_command("abort_asymmetric_autotune", {}):
                 self.parent.log("⛔ Firmware-autotune avbrutt fra wizard", "warning")
             self._autotune_command_sent = False
+        self._expected_delta = None
         self._restore_original_target()
         self.stack.setCurrentIndex(0)
 
@@ -1174,6 +1184,7 @@ class AutotuneWizardTab(QWidget):
         self.stack.setCurrentIndex(0)
         self.collecting = False
         self._autotune_command_sent = False
+        self._expected_delta = None
         self._restore_original_target()
         self._percent_user_override = False
         self._handle_step_changed(self.step_spin.value())
@@ -1232,9 +1243,12 @@ class AutotuneWizardTab(QWidget):
                     self.metric_label.setText("Autotune avbrutt av kontrolleren.")
                     self._autotune_command_sent = False
                     self.collecting = False
+                    self._expected_delta = None
                 elif lower in {"done", "complete", "finished"}:
                     self.metric_label.setText("Firmware-autotune ferdig – analyserer data.")
                     self._autotune_command_sent = False
+                    self.collecting = False
+                    self._expected_delta = None
 
         if not self.collecting:
             return
@@ -1262,15 +1276,35 @@ class AutotuneWizardTab(QWidget):
                         overshoot=self._format_number(normalized.get("overshoot"), 2),
                     )
                 )
-                self.finish_button.setEnabled(True)
 
-                if self.analyzer.is_stable():
-                    self.collect_status.setText("Stabilt - analyserer...")
-                    self.collect_status.setStyleSheet("color: #28a745; font-weight: bold;")
-                    self.collecting = False
-                    self._present_results(metrics)
+                if not self._autotune_command_sent:
+                    self.finish_button.setEnabled(True)
+                    if self.analyzer.is_stable():
+                        self.collect_status.setText("Stabilt - analyserer...")
+                        self.collect_status.setStyleSheet("color: #28a745; font-weight: bold;")
+                        self.collecting = False
+                        self._present_results(metrics)
+                else:
+                    self.finish_button.setEnabled(False)
+                    expected = self._expected_delta
+                    delta_temp = normalized.get("delta_temp")
+                    if expected is not None and delta_temp is not None:
+                        if abs(delta_temp) + 0.1 < abs(expected):
+                            self.collect_status.setText(
+                                "Firmware-autotune kjører – responsen øker fortsatt."
+                            )
+                        else:
+                            self.collect_status.setText(
+                                "Firmware-autotune kjører – venter på resultater fra kontrolleren."
+                            )
+                    else:
+                        self.collect_status.setText(
+                            "Firmware-autotune kjører – samler flere målepunkter."
+                        )
+                    self.collect_status.setStyleSheet("color: #17a2b8; font-weight: bold;")
             else:
-                self.finish_button.setEnabled(False)
+                if not self._autotune_command_sent:
+                    self.finish_button.setEnabled(False)
 
     def _update_collect_plot(self) -> None:
         if not self._canvas:
@@ -1386,6 +1420,7 @@ class AutotuneWizardTab(QWidget):
             self._result_canvas.draw()
 
         self._autotune_command_sent = False
+        self._expected_delta = None
         self._restore_original_target()
 
     def display_results(self, results: Dict[str, Any]) -> None:
@@ -1407,38 +1442,49 @@ class AutotuneWizardTab(QWidget):
     def _recommended_step_percent(self, step_delta: float) -> Dict[str, float]:
         latest_data = getattr(self.parent, "last_status_data", {}) or {}
         try:
-            heating_limit = float(latest_data.get("pid_heating_limit", 100.0))
+            heating_limit = float(latest_data.get("pid_heating_limit", 0.0))
         except (TypeError, ValueError):
-            heating_limit = 100.0
+            heating_limit = 0.0
+
+        if heating_limit <= 0.0:
+            try:
+                heating_limit = float(getattr(self.parent, "last_heating_limit", 0.0))
+            except (TypeError, ValueError):
+                heating_limit = 0.0
 
         try:
-            pid_limit = float(latest_data.get("pid_max_output", heating_limit))
+            pid_limit = float(latest_data.get("pid_max_output", 0.0))
         except (TypeError, ValueError):
+            pid_limit = 0.0
+
+        if pid_limit <= 0.0:
             pid_limit = heating_limit
 
         heating_limit = max(0.0, heating_limit)
         pid_limit = max(0.0, pid_limit)
 
-        safety_cap = heating_limit * self.MANUAL_STEP_SAFETY_FRACTION
-        cap_candidates: List[float] = []
-        for value in (heating_limit, pid_limit, safety_cap):
+        device_candidates: List[float] = []
+        for value in (heating_limit, pid_limit):
             if value > 0.0:
-                cap_candidates.append(value)
-        cap = min(cap_candidates) if cap_candidates else 0.0
-        if cap > 0.0:
-            cap = min(cap, 100.0)
+                device_candidates.append(value)
+        device_cap = min(device_candidates) if device_candidates else 0.0
+        if device_cap > 0.0:
+            device_cap = min(device_cap, 100.0)
 
-        percent = step_delta * self.PERCENT_PER_DEGREE
-        if cap > 0.0:
-            if percent < self.MIN_STEP_PERCENT <= cap:
+        safety_cap = 0.0
+        if heating_limit > 0.0:
+            safety_cap = min(heating_limit * self.MANUAL_STEP_SAFETY_FRACTION, heating_limit)
+
+        percent = max(0.0, step_delta * self.PERCENT_PER_DEGREE)
+        auto_cap = safety_cap or device_cap or 0.0
+        if auto_cap > 0.0:
+            if percent < self.MIN_STEP_PERCENT <= auto_cap:
                 percent = self.MIN_STEP_PERCENT
-            percent = min(percent, cap)
-        else:
-            percent = max(0.0, percent)
+            percent = min(percent, auto_cap)
 
         return {
             "recommended": float(percent),
-            "cap": float(cap),
+            "device_cap": float(device_cap),
             "heating_limit": float(heating_limit),
             "pid_limit": float(pid_limit),
             "safety_cap": float(safety_cap),
@@ -1468,28 +1514,36 @@ class AutotuneWizardTab(QWidget):
             return
 
         heating_limit = limits.get("heating_limit", 0.0) or 0.0
-        cap = limits.get("cap", heating_limit)
-        pid_limit = limits.get("pid_limit", heating_limit)
-        safety_cap = limits.get("safety_cap", heating_limit * self.MANUAL_STEP_SAFETY_FRACTION)
+        device_cap = limits.get("device_cap", heating_limit) or 0.0
+        pid_limit = limits.get("pid_limit", heating_limit) or 0.0
+        safety_cap = limits.get("safety_cap", heating_limit * self.MANUAL_STEP_SAFETY_FRACTION) or 0.0
         recommended = limits.get("recommended", selected)
 
         limit_note: str
         tolerance = 0.1
-        if abs(heating_limit - cap) <= tolerance:
+        if device_cap and abs(heating_limit - device_cap) <= tolerance:
             limit_note = f"Maksimalt varme-pådrag er {heating_limit:.1f} %."
         else:
             reasons = []
-            if pid_limit and cap <= pid_limit + tolerance and pid_limit < heating_limit - tolerance:
+            if device_cap and pid_limit and device_cap <= pid_limit + tolerance and pid_limit < heating_limit - tolerance:
                 reasons.append(f"PID-grensen ({pid_limit:.1f} %)")
             safety_value = safety_cap
             safety_percent = self.MANUAL_STEP_SAFETY_FRACTION * 100.0
-            if safety_value and cap <= safety_value + tolerance and safety_value < heating_limit - tolerance:
+            if (
+                safety_value
+                and device_cap
+                and device_cap <= safety_value + tolerance
+                and safety_value < heating_limit - tolerance
+            ):
                 reasons.append(f"{safety_percent:.0f}% av varmegrensen ({safety_value:.1f} %)")
             if not reasons:
-                reasons.append(f"øvre grense {cap:.1f} %")
+                if device_cap:
+                    reasons.append(f"øvre grense {device_cap:.1f} %")
+                else:
+                    reasons.append("ingen rapportert grense")
             reason_text = ", ".join(reasons)
             limit_note = (
-                f"Maksimalt varme-pådrag er {heating_limit:.1f} %, men wizzarden begrenser steget til {cap:.1f} % "
+                f"Maksimalt varme-pådrag er {heating_limit:.1f} %, men wizzarden foreslår {recommended:.1f} % "
                 f"({reason_text})."
             )
 

@@ -10,6 +10,7 @@
 #include "comm_api.h"
 
 #include <Arduino.h>
+#include <math.h>
 
 // === Eksterne moduler ===
 extern AsymmetricPIDModule pid;  // Changed from PIDModule
@@ -31,7 +32,7 @@ int heartbeatTimeoutMs = 5000;  // default, lastes i initTasks
 int breathingTimeoutMs = 10000; // kan lastes fra EEPROM senere
 
 // === Panic Button ===
-#define PANIC_BUTTON_PIN 7
+#define PANIC_BUTTON_PIN 12
 
 // === Trigger failsafe ===
 void triggerFailsafe(const char* reason) {
@@ -103,7 +104,7 @@ void initTasks() {
 
 // === Check panic button (deaktivert – pin ikke koblet) ===
 void checkPanicButton() {
-    // Deaktivert fordi pin 7 ikke er koblet til fysisk knapp.
+    // Deaktivert fordi pin 12 ikke er koblet til fysisk knapp.
     // Hvis du kobler opp en knapp senere, fjern kommentaren under:
     /*
     if (digitalRead(PANIC_BUTTON_PIN) == LOW) {
@@ -140,7 +141,8 @@ void runTasks() {
         pressure.update();
         lastPressureUpdate = now;
 
-        if (pressure.getBreathRate() < 1.0) {
+        float breathRate = pressure.getBreathRate();
+        if (!isnan(breathRate) && breathRate < 1.0f) {
             triggerFailsafe("no_breathing_detected");
         }
     }

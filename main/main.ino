@@ -5,6 +5,10 @@
 #include "sensor_module.h"
 #include "pressure_module.h"
 #include "eeprom_manager.h"
+#include "system_config.h"
+
+// Sett til false for å bruke faktiske sensorer og aktuatorer.
+const bool USE_SIMULATION = true;
 
 // === Eksterne moduler ===
 AsymmetricPIDModule pid;
@@ -31,6 +35,12 @@ void setup() {
 
     // Init system tasks (heartbeat, failsafe, etc.)
     initTasks();
+
+    if (USE_SIMULATION) {
+        comm.sendEvent("🧪 Simulation mode enabled");
+    } else {
+        comm.sendEvent("🧊 Live hardware mode enabled");
+    }
 
     // Send ferdig event til GUI
     comm.sendEvent("✅ Musehypothermi system initialized");

@@ -689,6 +689,17 @@ class AutotuneDataAnalyzer:
 class AutotuneWizardTab(QWidget):
     """Guided autotune workflow with live analysis and UI."""
 
+    HEATING_LIMITS = {
+        "kp": (0.5, 5.0),
+        "ki": (0.05, 1.0),
+        "kd": (0.1, 3.0),
+    }
+    COOLING_LIMITS = {
+        "kp": (0.1, 2.0),
+        "ki": (0.01, 0.1),
+        "kd": (0.5, 5.0),
+    }
+
     def __init__(self, parent: 'MainWindow') -> None:
         super().__init__(parent)
         self.parent = parent
@@ -903,6 +914,12 @@ class AutotuneWizardTab(QWidget):
         explanation.setStyleSheet("color: #495057;")
         layout.addWidget(explanation)
 
+        self.limit_notice = QLabel("")
+        self.limit_notice.setWordWrap(True)
+        self.limit_notice.setStyleSheet("color: #d39e00; font-style: italic;")
+        self.limit_notice.hide()
+        layout.addWidget(self.limit_notice)
+
         buttons = QHBoxLayout()
         self.apply_button = QPushButton("Aktiver varme-PID")
         self.apply_button.setStyleSheet("background-color: #28a745; color: white; font-weight: bold;")
@@ -1086,6 +1103,16 @@ class AutotuneWizardTab(QWidget):
         kp = self.kp_spin.value()
         ki = self.ki_spin.value()
         kd = self.kd_spin.value()
+        kp, ki, kd, heat_adj = self._sanitize_heating_values(kp, ki, kd)
+        self._update_limit_notice(heat_adj)
+        self.kp_spin.setValue(kp)
+        self.ki_spin.setValue(ki)
+        self.kd_spin.setValue(kd)
+        if heat_adj:
+            self.parent.log(
+                "⚠️ Autotune-verdier klippet til sikre grenser (varme): " + ", ".join(heat_adj),
+                "warning",
+            )
         self.parent.asymmetric_controls.kp_heating_input.setText(f"{kp:.3f}")
         self.parent.asymmetric_controls.ki_heating_input.setText(f"{ki:.4f}")
         self.parent.asymmetric_controls.kd_heating_input.setText(f"{kd:.3f}")
@@ -1095,6 +1122,10 @@ class AutotuneWizardTab(QWidget):
         kp = self.kp_spin.value()
         ki = self.ki_spin.value()
         kd = self.kd_spin.value()
+        kp, ki, kd, heat_adj = self._sanitize_heating_values(kp, ki, kd)
+        self.kp_spin.setValue(kp)
+        self.ki_spin.setValue(ki)
+        self.kd_spin.setValue(kd)
         self.parent.asymmetric_controls.kp_heating_input.setText(f"{kp:.3f}")
         self.parent.asymmetric_controls.ki_heating_input.setText(f"{ki:.4f}")
         self.parent.asymmetric_controls.kd_heating_input.setText(f"{kd:.3f}")
@@ -1203,9 +1234,18 @@ class AutotuneWizardTab(QWidget):
         )
         self.results_summary.setText(summary)
 
-        self.kp_spin.setValue(results['kp'])
-        self.ki_spin.setValue(results['ki'])
-        self.kd_spin.setValue(results['kd'])
+        kp, ki, kd, adjustments = self._sanitize_heating_values(
+            results['kp'], results['ki'], results['kd']
+        )
+        self.kp_spin.setValue(kp)
+        self.ki_spin.setValue(ki)
+        self.kd_spin.setValue(kd)
+        self._update_limit_notice(adjustments)
+        if adjustments:
+            self.parent.log(
+                "⚠️ Autotune-verdier klippet til sikre grenser (varme): " + ", ".join(adjustments),
+                "warning",
+            )
 
         if self._result_axes is not None and self._result_canvas is not None:
             self._result_axes.clear()

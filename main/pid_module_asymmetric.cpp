@@ -7,6 +7,7 @@
 #include <ArduinoJson.h>
 #include <PID_v1.h>
 #include <math.h>
+#include <algorithm>
 
 extern SensorModule sensors;
 extern CommAPI comm;
@@ -23,12 +24,29 @@ constexpr float kDefaultCoolingKi = 0.3f;
 constexpr float kDefaultCoolingKd = 0.8f;
 
 constexpr float kDefaultTargetTemp = 37.0f;
-constexpr float kDefaultMaxOutputPercent = 35.0f;
+constexpr float kDefaultMaxOutputPercent = 50.0f;
 constexpr float kDefaultDeadband = 0.5f;
 constexpr float kDefaultSafetyMargin = 2.0f;
 constexpr float kDefaultCoolingRate = 2.0f;
 constexpr double kOutputSmoothingFactor = 0.8;
 constexpr unsigned long kSampleTimeMs = 100;
+
+constexpr float kHeatingKpMin = 0.05f;
+constexpr float kHeatingKpMax = 40.0f;
+constexpr float kHeatingKiMin = 0.0005f;
+constexpr float kHeatingKiMax = 6.0f;
+constexpr float kHeatingKdMin = 0.0f;
+constexpr float kHeatingKdMax = 12.0f;
+
+constexpr float kCoolingKpMin = 0.02f;
+constexpr float kCoolingKpMax = 25.0f;
+constexpr float kCoolingKiMin = 0.0005f;
+constexpr float kCoolingKiMax = 4.0f;
+constexpr float kCoolingKdMin = 0.0f;
+constexpr float kCoolingKdMax = 12.0f;
+
+constexpr float kLambdaFloor = 5.0f;
+constexpr float kLambdaFactor = 0.8f;
 
 bool isInvalidValue(float value) {
     return isnan(value) || isinf(value);
@@ -75,7 +93,196 @@ bool shouldRestoreSafetyMargin(float margin) {
     }
     return margin < 0.1f || margin > 5.0f;
 }
+
+struct SegmentStats {
+    float stepPercent = 0.0f;
+    float deltaTemp = 0.0f;
+    float maxRate = 0.0f;
+    float deadTime = 0.0f;
+    float timeConstant = 0.0f;
+    float processGain = 0.0f;
+    float overshoot = 0.0f;
+    float duration = 0.0f;
+    size_t samples = 0;
+    float startTemp = 0.0f;
+    float endTemp = 0.0f;
+};
+
+bool CollectSegmentStats(const unsigned long* timestamps,
+                         const float* temperatures,
+                         size_t start,
+                         size_t end,
+                         float stepPercent,
+                         float baseline,
+                         float targetDelta,
+                         bool heating,
+                         SegmentStats& out) {
+    if (end <= start + 2 || stepPercent == 0.0f) {
+        return false;
+    }
+
+    float startTemp = temperatures[start];
+    float extremeTemp = startTemp;
+    size_t extremeIndex = start;
+    float maxRate = 0.0f;
+
+    for (size_t i = start + 1; i < end; ++i) {
+        float dt = static_cast<float>(timestamps[i] - timestamps[i - 1]) / 1000.0f;
+        if (dt <= 0.0f) {
+            continue;
+        }
+        float diff = temperatures[i] - temperatures[i - 1];
+        float rate = diff / dt;
+        float absRate = fabsf(rate);
+        if (absRate > maxRate) {
+            maxRate = absRate;
+        }
+        if (heating) {
+            if (temperatures[i] > extremeTemp) {
+                extremeTemp = temperatures[i];
+                extremeIndex = i;
+            }
+        } else {
+            if (temperatures[i] < extremeTemp) {
+                extremeTemp = temperatures[i];
+                extremeIndex = i;
+            }
+        }
+    }
+
+    float deltaTemp = heating ? (extremeTemp - startTemp) : (startTemp - extremeTemp);
+    if (deltaTemp < 0.05f) {
+        return false;
+    }
+
+    float stepFraction = fabsf(stepPercent) / 100.0f;
+    if (stepFraction <= 1e-4f) {
+        return false;
+    }
+
+    float processGain = deltaTemp / stepFraction;
+
+    float startTime = static_cast<float>(timestamps[start]) / 1000.0f;
+    float target28 = heating ? startTemp + 0.283f * deltaTemp
+                             : startTemp - 0.283f * deltaTemp;
+    float target63 = heating ? startTemp + 0.632f * deltaTemp
+                             : startTemp - 0.632f * deltaTemp;
+
+    float t28 = -1.0f;
+    float t63 = -1.0f;
+
+    for (size_t i = start; i < end; ++i) {
+        float value = temperatures[i];
+        float timeOffset = static_cast<float>(timestamps[i]) / 1000.0f - startTime;
+
+        if (t28 < 0.0f) {
+            if (heating ? value >= target28 : value <= target28) {
+                t28 = timeOffset;
+            }
+        }
+        if (t63 < 0.0f) {
+            if (heating ? value >= target63 : value <= target63) {
+                t63 = timeOffset;
+            }
+        }
+        if (t28 >= 0.0f && t63 >= 0.0f) {
+            break;
+        }
+    }
+
+    if (t28 < 0.0f) {
+        t28 = 0.25f * static_cast<float>(timestamps[end - 1] - timestamps[start]) / 1000.0f;
+    }
+    if (t63 < 0.0f) {
+        t63 = static_cast<float>(timestamps[end - 1] - timestamps[start]) / 1000.0f;
+    }
+
+    float deadTime = 1.5f * t28 - 0.5f * t63;
+    if (deadTime < 0.0f) {
+        deadTime = 0.0f;
+    }
+    float timeConstant = t63 - deadTime;
+    if (timeConstant < 0.1f) {
+        timeConstant = 0.1f;
+    }
+
+    float overshoot = 0.0f;
+    float expectedPeak = heating ? (baseline + targetDelta) : (baseline - targetDelta);
+    if (heating) {
+        overshoot = extremeTemp - expectedPeak;
+    } else {
+        overshoot = expectedPeak - extremeTemp;
+    }
+    if (overshoot < 0.0f) {
+        overshoot = 0.0f;
+    }
+
+    out.stepPercent = fabsf(stepPercent);
+    out.deltaTemp = deltaTemp;
+    out.maxRate = maxRate;
+    out.deadTime = deadTime;
+    out.timeConstant = timeConstant;
+    out.processGain = processGain;
+    out.overshoot = overshoot;
+    out.duration = static_cast<float>(timestamps[end - 1] - timestamps[start]) / 1000.0f;
+    out.samples = end - start;
+    out.startTemp = startTemp;
+    out.endTemp = extremeTemp;
+    return true;
+}
+
+bool ComputeImcPid(const SegmentStats& stats,
+                   float kpMin,
+                   float kpMax,
+                   float kiMin,
+                   float kiMax,
+                   float kdMin,
+                   float kdMax,
+                   float& outKp,
+                   float& outKi,
+                   float& outKd) {
+    if (stats.processGain <= 1e-6f || stats.timeConstant <= 0.0f) {
+        return false;
+    }
+
+    float lambda = std::max({kLambdaFactor * stats.timeConstant,
+                              2.0f * stats.deadTime,
+                              kLambdaFloor});
+
+    float kc = stats.timeConstant / (stats.processGain * (lambda + stats.deadTime));
+    if (!isfinite(kc) || kc <= 0.0f) {
+        return false;
+    }
+
+    float Ti = std::max(stats.timeConstant, 1e-3f);
+    float Td = stats.timeConstant * stats.deadTime /
+               std::max(2.0f * stats.timeConstant + stats.deadTime, 1e-3f);
+
+    float kp = constrain(kc, kpMin, kpMax);
+    float ki = constrain(kc / Ti, kiMin, kiMax);
+    float kd = constrain(kc * Td, kdMin, kdMax);
+
+    outKp = kp;
+    outKi = ki;
+    outKd = kd;
+    return true;
+}
 }  // namespace
+
+const char* AsymmetricPIDModule::PhaseName(AutotunePhase phase) {
+    switch (phase) {
+        case AutotunePhase::HeatingRamp:
+            return "heating_ramp";
+        case AutotunePhase::HeatingHold:
+            return "heating_hold";
+        case AutotunePhase::CoolingRamp:
+            return "cooling_ramp";
+        case AutotunePhase::CoolingHold:
+            return "cooling_hold";
+        default:
+            return "idle";
+    }
+}
 
 AsymmetricPIDModule::AsymmetricPIDModule()
     : coolingPID(&Input, &coolingOutput, &Setpoint,
@@ -106,7 +313,14 @@ AsymmetricPIDModule::AsymmetricPIDModule()
     autotuneLogIndex = 0;
     autotuneStartMillis = 0;
     lastAutotuneSample = 0;
-    autotuneStepPercent = 0.0f;
+    autotuneHeatingStepPercent = 0.0f;
+    autotuneCoolingStepPercent = 0.0f;
+    autotuneTargetDelta = 0.0f;
+    autotuneBaselineTemp = 0.0f;
+    lastAutotuneOutput = 0.0f;
+    autotunePhase = AutotunePhase::Idle;
+    autotuneCoolingEnabled = false;
+    phaseStartMillis = 0;
 }
 
 void AsymmetricPIDModule::begin(EEPROMManager &eepromManager) {
@@ -430,7 +644,9 @@ void AsymmetricPIDModule::startAutotune() {
     startAsymmetricAutotune();
 }
 
-void AsymmetricPIDModule::startAsymmetricAutotune(float requestedStepPercent, const char* direction) {
+void AsymmetricPIDModule::startAsymmetricAutotune(float requestedStepPercent,
+                                                 const char* direction,
+                                                 float requestedDelta) {
     if (autotuneActive) {
         comm.sendEvent("⚠️ Asymmetric autotune already running");
         return;
@@ -457,20 +673,48 @@ void AsymmetricPIDModule::startAsymmetricAutotune(float requestedStepPercent, co
     if (heatingLimit < 5.0f) {
         heatingLimit = 5.0f;
     }
-    float maxStep = heatingLimit < 35.0f ? heatingLimit : 35.0f;
+
     float stepPercent = requestedStepPercent;
     if (isnan(stepPercent) || stepPercent <= 0.0f) {
-        stepPercent = heatingLimit * 0.35f;
+        stepPercent = heatingLimit * 0.6f;
     }
-    stepPercent = constrain(stepPercent, 5.0f, maxStep);
+    stepPercent = constrain(stepPercent, 5.0f, heatingLimit);
 
-    autotuneStepPercent = stepPercent;
-    applyManualOutputPercent(stepPercent);
+    float coolingLimit = fabs(currentParams.cooling_limit);
+    if (coolingLimit < 1.0f) {
+        coolingLimit = 0.0f;
+    }
 
-    String message = "🎯 Asymmetric autotune started: applying ";
+    float coolingStep = coolingLimit > 0.0f ? std::min(stepPercent, coolingLimit) : 0.0f;
+
+    float targetDelta = requestedDelta;
+    if (isnan(targetDelta) || targetDelta <= 0.0f) {
+        targetDelta = kAutotuneDefaultDelta;
+    }
+    targetDelta = constrain(targetDelta, kAutotuneMinDelta, kAutotuneMaxDelta);
+
+    autotuneHeatingStepPercent = stepPercent;
+    autotuneCoolingStepPercent = coolingStep > 0.0f ? -coolingStep : 0.0f;
+    autotuneCoolingEnabled = coolingStep > 0.0f;
+    autotuneTargetDelta = targetDelta;
+    autotuneBaselineTemp = sensors.getCoolingPlateTemp();
+
+    applyManualOutputPercent(autotuneHeatingStepPercent);
+    setAutotunePhase(AutotunePhase::HeatingRamp);
+
+    String message = "🎯 Asymmetric autotune started: heating step ";
     message += String(stepPercent, 1);
-    message += "% heating step";
+    message += "% (target ΔT ";
+    message += String(targetDelta, 1);
+    message += " °C)";
+    if (!autotuneCoolingEnabled) {
+        message += " – cooling step unavailable";
+    }
     comm.sendEvent(message);
+
+    if (!autotuneCoolingEnabled) {
+        comm.sendEvent("⚠️ Cooling autotune skipped: insufficient cooling limit");
+    }
 }
 
 void AsymmetricPIDModule::runAsymmetricAutotune() {
@@ -479,39 +723,67 @@ void AsymmetricPIDModule::runAsymmetricAutotune() {
     }
     unsigned long now = millis();
 
+    if (now - autotuneStartMillis > kAutotuneTimeoutMs) {
+        comm.sendEvent("Autotune aborted: timeout reached");
+        finalizeAutotune(false);
+        return;
+    }
+
     if (now - lastAutotuneSample < kAutotuneSampleIntervalMs) {
         return;
     }
 
     lastAutotuneSample = now;
+    float temperature = sensors.getCoolingPlateTemp();
 
     if (autotuneLogIndex < kAutotuneLogSize) {
-        float temp = sensors.getCoolingPlateTemp();
-
         autotuneTimestamps[autotuneLogIndex] = now - autotuneStartMillis;
-        autotuneTemperatures[autotuneLogIndex] = temp;
+        autotuneTemperatures[autotuneLogIndex] = temperature;
+        autotuneOutputs[autotuneLogIndex] = lastAutotuneOutput;
         autotuneLogIndex++;
-
-        if (autotuneLogIndex % 5 == 0) {
-            StaticJsonDocument<192> doc;
-            doc["autotune_time"] = now - autotuneStartMillis;
-            doc["autotune_temp"] = temp;
-            doc["autotune_progress"] = (autotuneLogIndex * 100) / kAutotuneLogSize;
-            doc["autotune_output"] = autotuneStepPercent;
-            serializeJson(doc, Serial);
-            Serial.println();
-        }
-
-        if (autotuneLogIndex >= kAutotuneLogSize) {
-            finalizeAutotune(true);
-            return;
-        }
+        publishAutotuneProgress(now, temperature);
+    } else {
+        finalizeAutotune(true);
+        return;
     }
 
-    if (now - autotuneStartMillis > kAutotuneTimeoutMs) {
-        comm.sendEvent("Autotune aborted: timeout reached");
-        finalizeAutotune(false);
-        return;
+    float deltaHeating = temperature - autotuneBaselineTemp;
+    float deltaCooling = autotuneBaselineTemp - temperature;
+    unsigned long phaseElapsed = now - phaseStartMillis;
+
+    switch (autotunePhase) {
+        case AutotunePhase::HeatingRamp:
+            if (deltaHeating >= autotuneTargetDelta || phaseElapsed >= kAutotuneMaxSegmentMs) {
+                applyManualOutputPercent(0.0f);
+                setAutotunePhase(AutotunePhase::HeatingHold);
+            }
+            break;
+        case AutotunePhase::HeatingHold:
+            if (phaseElapsed >= kAutotuneHoldTimeMs) {
+                if (autotuneCoolingEnabled) {
+                    applyManualOutputPercent(autotuneCoolingStepPercent);
+                    setAutotunePhase(AutotunePhase::CoolingRamp);
+                } else {
+                    finalizeAutotune(true);
+                    return;
+                }
+            }
+            break;
+        case AutotunePhase::CoolingRamp:
+            if (deltaCooling >= autotuneTargetDelta || phaseElapsed >= kAutotuneMaxSegmentMs) {
+                applyManualOutputPercent(0.0f);
+                setAutotunePhase(AutotunePhase::CoolingHold);
+            }
+            break;
+        case AutotunePhase::CoolingHold:
+            if (phaseElapsed >= kAutotuneHoldTimeMs) {
+                finalizeAutotune(true);
+                return;
+            }
+            break;
+        case AutotunePhase::Idle:
+        default:
+            break;
     }
 }
 
@@ -527,7 +799,14 @@ void AsymmetricPIDModule::resetAutotuneState() {
     autotuneLogIndex = 0;
     autotuneStartMillis = millis();
     lastAutotuneSample = 0;
-    autotuneStepPercent = 0.0f;
+    autotuneHeatingStepPercent = 0.0f;
+    autotuneCoolingStepPercent = 0.0f;
+    autotuneTargetDelta = kAutotuneDefaultDelta;
+    autotuneBaselineTemp = sensors.getCoolingPlateTemp();
+    lastAutotuneOutput = 0.0f;
+    autotunePhase = AutotunePhase::Idle;
+    autotuneCoolingEnabled = false;
+    phaseStartMillis = autotuneStartMillis;
 }
 
 void AsymmetricPIDModule::applyManualOutputPercent(float percent) {
@@ -551,6 +830,25 @@ void AsymmetricPIDModule::applyManualOutputPercent(float percent) {
 
     pwm.setDutyCycle(pwmValue);
     currentPwmOutput = static_cast<int>(percent);
+    lastAutotuneOutput = percent;
+}
+
+void AsymmetricPIDModule::setAutotunePhase(AutotunePhase phase) {
+    autotunePhase = phase;
+    phaseStartMillis = millis();
+    autotuneStatusString = PhaseName(phase);
+}
+
+void AsymmetricPIDModule::publishAutotuneProgress(unsigned long now, float temperature) {
+    StaticJsonDocument<256> doc;
+    doc["autotune_time"] = now - autotuneStartMillis;
+    doc["autotune_temp"] = temperature;
+    doc["autotune_progress"] = static_cast<int>((autotuneLogIndex * 100UL) / kAutotuneLogSize);
+    doc["autotune_output"] = lastAutotuneOutput;
+    doc["autotune_phase"] = PhaseName(autotunePhase);
+    doc["autotune_delta"] = temperature - autotuneBaselineTemp;
+    serializeJson(doc, Serial);
+    Serial.println();
 }
 
 void AsymmetricPIDModule::finalizeAutotune(bool success) {
@@ -559,6 +857,8 @@ void AsymmetricPIDModule::finalizeAutotune(bool success) {
 
     autotuneActive = false;
     lastAutotuneSample = 0;
+    autotunePhase = AutotunePhase::Idle;
+    autotuneCoolingEnabled = false;
 
     if (success) {
         if (calculateAutotuneResults()) {
@@ -571,7 +871,8 @@ void AsymmetricPIDModule::finalizeAutotune(bool success) {
         autotuneStatusString = "aborted";
     }
 
-    autotuneStepPercent = 0.0f;
+    autotuneHeatingStepPercent = 0.0f;
+    autotuneCoolingStepPercent = 0.0f;
     autotuneStartMillis = 0;
     autotuneLogIndex = 0;
 }
@@ -582,68 +883,198 @@ bool AsymmetricPIDModule::calculateAutotuneResults() {
         return false;
     }
 
-    float initialTemp = autotuneTemperatures[0];
-    float finalTemp = autotuneTemperatures[autotuneLogIndex - 1];
-    float deltaTemp = finalTemp - initialTemp;
-    float stepFraction = autotuneStepPercent / 100.0f;
+    const float kOutputThreshold = 1.0f;
+    const float kHoldThreshold = 0.5f;
 
-    if (fabs(deltaTemp) < 0.1f || stepFraction <= 0.0f) {
-        comm.sendEvent("Autotune aborted: unstable step response");
-        return false;
-    }
-
-    float targetTemp = initialTemp + 0.63f * deltaTemp;
-    float t63 = 0.0f;
-
-    for (size_t i = 1; i < autotuneLogIndex; ++i) {
-        if ((deltaTemp > 0 && autotuneTemperatures[i] >= targetTemp) ||
-            (deltaTemp < 0 && autotuneTemperatures[i] <= targetTemp)) {
-            t63 = autotuneTimestamps[i] / 1000.0f;
+    size_t heatStart = SIZE_MAX;
+    for (size_t i = 0; i < autotuneLogIndex; ++i) {
+        if (autotuneOutputs[i] > kOutputThreshold) {
+            heatStart = i;
             break;
         }
     }
 
-    if (t63 <= 0.0f) {
-        t63 = autotuneTimestamps[autotuneLogIndex - 1] / 2000.0f;
-    }
-
-    float deadTime = 1.0f;
-    float timeConstant = t63 / 0.63f;
-    float processGain = deltaTemp / stepFraction;
-
-    if (timeConstant <= 0.01f || fabs(processGain) < 1e-6f) {
-        comm.sendEvent("Autotune aborted: invalid process parameters");
+    if (heatStart == SIZE_MAX) {
+        comm.sendEvent("Autotune aborted: heating step not detected");
         return false;
     }
 
-    float newKp = 1.2f / (processGain * (deadTime / timeConstant));
-    float newKi = newKp / (2.0f * deadTime);
-    float newKd = newKp * deadTime * 0.5f;
+    size_t heatEnd = heatStart;
+    while (heatEnd < autotuneLogIndex && autotuneOutputs[heatEnd] > kHoldThreshold) {
+        ++heatEnd;
+    }
 
-    newKp = constrain(newKp, 0.05f, 20.0f);
-    newKi = constrain(newKi, 0.001f, 5.0f);
-    newKd = constrain(newKd, 0.001f, 10.0f);
+    SegmentStats heatingStats;
+    if (!CollectSegmentStats(autotuneTimestamps,
+                             autotuneTemperatures,
+                             heatStart,
+                             heatEnd,
+                             autotuneHeatingStepPercent,
+                             autotuneBaselineTemp,
+                             autotuneTargetDelta,
+                             true,
+                             heatingStats)) {
+        comm.sendEvent("Autotune aborted: inadequate heating response");
+        return false;
+    }
 
-    setHeatingPID(newKp, newKi, newKd, true);
+    float heatingKp = 0.0f;
+    float heatingKi = 0.0f;
+    float heatingKd = 0.0f;
 
-    StaticJsonDocument<256> doc;
-    JsonObject results = doc["autotune_results"].to<JsonObject>();
-    results["kp"] = newKp;
-    results["ki"] = newKi;
-    results["kd"] = newKd;
-    results["process_gain"] = processGain;
-    results["time_constant"] = timeConstant;
-    results["step_percent"] = autotuneStepPercent;
-    results["delta_temp"] = deltaTemp;
+    if (!ComputeImcPid(heatingStats,
+                       kHeatingKpMin,
+                       kHeatingKpMax,
+                       kHeatingKiMin,
+                       kHeatingKiMax,
+                       kHeatingKdMin,
+                       kHeatingKdMax,
+                       heatingKp,
+                       heatingKi,
+                       heatingKd)) {
+        comm.sendEvent("Autotune aborted: heating PID could not be calculated");
+        return false;
+    }
+
+    setHeatingPID(heatingKp, heatingKi, heatingKd, true);
+
+    bool coolingPidCalculated = false;
+    SegmentStats coolingStats;
+    float coolingKp = 0.0f;
+    float coolingKi = 0.0f;
+    float coolingKd = 0.0f;
+    String coolingReason;
+
+    if (autotuneCoolingEnabled) {
+        size_t coolStart = SIZE_MAX;
+        for (size_t i = heatEnd; i < autotuneLogIndex; ++i) {
+            if (autotuneOutputs[i] < -kOutputThreshold) {
+                coolStart = i;
+                break;
+            }
+        }
+
+        if (coolStart != SIZE_MAX) {
+            size_t coolEnd = coolStart;
+            while (coolEnd < autotuneLogIndex && autotuneOutputs[coolEnd] < -kHoldThreshold) {
+                ++coolEnd;
+            }
+
+            if (CollectSegmentStats(autotuneTimestamps,
+                                    autotuneTemperatures,
+                                    coolStart,
+                                    coolEnd,
+                                    autotuneCoolingStepPercent,
+                                    autotuneBaselineTemp,
+                                    autotuneTargetDelta,
+                                    false,
+                                    coolingStats) &&
+                ComputeImcPid(coolingStats,
+                               kCoolingKpMin,
+                               kCoolingKpMax,
+                               kCoolingKiMin,
+                               kCoolingKiMax,
+                               kCoolingKdMin,
+                               kCoolingKdMax,
+                               coolingKp,
+                               coolingKi,
+                               coolingKd)) {
+                setCoolingPID(coolingKp, coolingKi, coolingKd, true);
+                coolingPidCalculated = true;
+            } else {
+                coolingReason = "mangelfull kjølerespons";
+            }
+        } else {
+            coolingReason = "fant ikke kjøletrinn";
+        }
+    } else {
+        coolingReason = "autotune for kjøling ble hoppet over";
+    }
+
+    StaticJsonDocument<768> doc;
+    JsonObject root = doc["autotune_results"].to<JsonObject>();
+
+    root["kp"] = heatingKp;
+    root["ki"] = heatingKi;
+    root["kd"] = heatingKd;
+
+    JsonObject heating = root.createNestedObject("heating");
+    heating["kp"] = heatingKp;
+    heating["ki"] = heatingKi;
+    heating["kd"] = heatingKd;
+    heating["process_gain"] = heatingStats.processGain;
+    heating["dead_time"] = heatingStats.deadTime;
+    heating["time_constant"] = heatingStats.timeConstant;
+    heating["delta_temp"] = heatingStats.deltaTemp;
+    heating["max_rate"] = heatingStats.maxRate;
+    heating["overshoot"] = heatingStats.overshoot;
+    heating["duration"] = heatingStats.duration;
+    heating["sample_count"] = static_cast<int>(heatingStats.samples);
+    heating["step_percent"] = heatingStats.stepPercent;
+    heating["start_temp"] = heatingStats.startTemp;
+    heating["end_temp"] = heatingStats.endTemp;
+
+    JsonObject cooling = root.createNestedObject("cooling");
+    if (coolingPidCalculated) {
+        cooling["kp"] = coolingKp;
+        cooling["ki"] = coolingKi;
+        cooling["kd"] = coolingKd;
+        cooling["process_gain"] = coolingStats.processGain;
+        cooling["dead_time"] = coolingStats.deadTime;
+        cooling["time_constant"] = coolingStats.timeConstant;
+        cooling["delta_temp"] = coolingStats.deltaTemp;
+        cooling["max_rate"] = coolingStats.maxRate;
+        cooling["overshoot"] = coolingStats.overshoot;
+        cooling["duration"] = coolingStats.duration;
+        cooling["sample_count"] = static_cast<int>(coolingStats.samples);
+        cooling["step_percent"] = coolingStats.stepPercent;
+        cooling["start_temp"] = coolingStats.startTemp;
+        cooling["end_temp"] = coolingStats.endTemp;
+        cooling["available"] = true;
+    } else {
+        cooling["available"] = false;
+        if (coolingReason.length() > 0) {
+            cooling["reason"] = coolingReason;
+        }
+    }
+
+    JsonObject meta = root.createNestedObject("meta");
+    meta["baseline_temp"] = autotuneBaselineTemp;
+    meta["target_delta"] = autotuneTargetDelta;
+    meta["duration"] = static_cast<float>(autotuneTimestamps[autotuneLogIndex - 1]) / 1000.0f;
+    meta["sample_count"] = static_cast<int>(autotuneLogIndex);
+    meta["heating_step_percent"] = autotuneHeatingStepPercent;
+    meta["cooling_step_percent"] = fabsf(autotuneCoolingStepPercent);
+    meta["cooling_enabled"] = coolingPidCalculated;
+
     serializeJson(doc, Serial);
     Serial.println();
 
     Serial.print("[Autotune] Heating PID -> Kp=");
-    Serial.print(newKp, 4);
+    Serial.print(heatingKp, 4);
     Serial.print(", Ki=");
-    Serial.print(newKi, 4);
+    Serial.print(heatingKi, 4);
     Serial.print(", Kd=");
-    Serial.println(newKd, 4);
+    Serial.println(heatingKd, 4);
+
+    if (coolingPidCalculated) {
+        Serial.print("[Autotune] Cooling PID -> Kp=");
+        Serial.print(coolingKp, 4);
+        Serial.print(", Ki=");
+        Serial.print(coolingKi, 4);
+        Serial.print(", Kd=");
+        Serial.println(coolingKd, 4);
+    } else {
+        Serial.println("[Autotune] Cooling PID unchanged");
+        if (coolingReason.length() > 0) {
+            comm.sendEvent(String("⚠️ Kjøle-autotune: ") + coolingReason);
+        }
+    }
+
+    comm.sendEvent("🔥 Heating PID parameters updated via autotune");
+    if (coolingPidCalculated) {
+        comm.sendEvent("❄️ Cooling PID parameters updated via autotune");
+    }
 
     return true;
 }

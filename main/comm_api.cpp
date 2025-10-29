@@ -199,18 +199,22 @@ void CommAPI::handleCommand(const String &jsonString) {
             bool wasActive = pid.isAutotuneActive();
             JsonObject params = cmd["params"];
             float stepPercent = -1.0f;
+            float targetDelta = NAN;
             const char* directionCstr = "heating";
             String directionBuffer;
             if (!params.isNull()) {
                 if (params.containsKey("step_percent")) {
                     stepPercent = params["step_percent"].as<float>();
                 }
+                if (params.containsKey("target_delta")) {
+                    targetDelta = params["target_delta"].as<float>();
+                }
                 if (params.containsKey("direction")) {
                     directionBuffer = String(params["direction"].as<const char*>());
                     directionCstr = directionBuffer.c_str();
                 }
             }
-            pid.startAsymmetricAutotune(stepPercent, directionCstr);
+            pid.startAsymmetricAutotune(stepPercent, directionCstr, targetDelta);
             if (!wasActive && !pid.isAutotuneActive()) {
                 sendResponse("Asymmetric autotune not started");
             } else {

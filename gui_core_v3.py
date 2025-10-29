@@ -657,6 +657,9 @@ class AutotuneDataAnalyzer:
         t63 = self._estimate_time_constant(initial_temp, final_temp)
         time_constant = max(0.1, t63 - dead_time)
 
+        duration = self.timestamps[-1] if self.timestamps else 0.0
+        sample_count = len(self.timestamps)
+
         kp = 0.0
         ki = 0.0
         kd = 0.0
@@ -683,6 +686,8 @@ class AutotuneDataAnalyzer:
             "initial_temp": initial_temp,
             "final_temp": final_temp,
             "output_span": output_span,
+            "duration": duration,
+            "sample_count": sample_count,
         }
 
 
@@ -700,6 +705,43 @@ class AutotuneWizardTab(QWidget):
         "kd": (0.5, 5.0),
     }
 
+    PERCENT_PER_DEGREE = 4.0
+    MIN_STEP_PERCENT = 5.0
+    MANUAL_STEP_SAFETY_FRACTION = 0.85
+
+    RESULT_FLOAT_FIELDS = (
+        "kp",
+        "ki",
+        "kd",
+        "heating_process_gain",
+        "heating_dead_time",
+        "heating_time_constant",
+        "heating_delta_temp",
+        "heating_max_rate",
+        "heating_overshoot",
+        "heating_duration",
+        "heating_step_percent",
+        "cooling_process_gain",
+        "cooling_dead_time",
+        "cooling_time_constant",
+        "cooling_delta_temp",
+        "cooling_max_rate",
+        "cooling_overshoot",
+        "cooling_duration",
+        "cooling_step_percent",
+        "cooling_kp",
+        "cooling_ki",
+        "cooling_kd",
+        "duration",
+        "baseline_temp",
+        "target_delta",
+    )
+    RESULT_INT_FIELDS = (
+        "sample_count",
+        "heating_sample_count",
+        "cooling_sample_count",
+    )
+
     def __init__(self, parent: 'MainWindow') -> None:
         super().__init__(parent)
         self.parent = parent
@@ -715,6 +757,15 @@ class AutotuneWizardTab(QWidget):
         self._autotune_command_sent = False
         self._percent_user_override = False
         self._updating_percent_spin = False
+        self._latest_results_payload: Dict[str, Any] = {}
+        self._latest_cooling_pid: Tuple[Optional[float], Optional[float], Optional[float]] = (
+            None,
+            None,
+            None,
+        )
+        self._expected_delta: Optional[float] = None
+        self._commanded_step_percent: Optional[float] = None
+        self._reported_step_clamp = False
 
         self._init_ui()
 
@@ -772,12 +823,12 @@ class AutotuneWizardTab(QWidget):
         config_layout.addRow("Retning:", self.direction_combo)
 
         self.step_percent_spin = QDoubleSpinBox()
-        self.step_percent_spin.setRange(5.0, 100.0)
+        self.step_percent_spin.setRange(0.0, 100.0)
         self.step_percent_spin.setDecimals(1)
         self.step_percent_spin.setSingleStep(0.5)
         self.step_percent_spin.setSuffix(" %")
-        recommended, cap, heating_limit = self._recommended_step_percent(self.step_spin.value())
-        self.step_percent_spin.setValue(recommended)
+        step_limits = self._recommended_step_percent(self.step_spin.value())
+        self.step_percent_spin.setValue(step_limits["recommended"])
         self.step_percent_spin.valueChanged.connect(self._handle_percent_changed)
         config_layout.addRow("Manuelt varme-pådrag:", self.step_percent_spin)
 
@@ -789,9 +840,7 @@ class AutotuneWizardTab(QWidget):
         config_group.setLayout(config_layout)
         vbox.addWidget(config_group)
 
-        self._update_percent_hint(
-            self.step_percent_spin.value(), recommended, cap, heating_limit
-        )
+        self._update_percent_hint(self.step_percent_spin.value(), step_limits)
 
         self.start_button = QPushButton("Start autotune")
         self.start_button.setStyleSheet(
@@ -815,6 +864,102 @@ class AutotuneWizardTab(QWidget):
 
         vbox.addStretch(1)
         return page
+
+    @staticmethod
+    def _coerce_float(value: Any) -> Optional[float]:
+        try:
+            if value is None:
+                return None
+            coerced = float(value)
+            if math.isnan(coerced):
+                return None
+            return coerced
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _coerce_int(value: Any) -> Optional[int]:
+        try:
+            if value is None:
+                return None
+            return int(round(float(value)))
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _format_number(value: Optional[float], decimals: int) -> str:
+        if value is None:
+            return "–"
+        return f"{value:.{decimals}f}"
+
+    @staticmethod
+    def _format_int(value: Optional[int]) -> str:
+        if value is None:
+            return "–"
+        return str(value)
+
+    def _normalize_results(self, results: Dict[str, Any]) -> Dict[str, Any]:
+        normalized: Dict[str, Any] = {}
+
+        heating = results.get("heating") if isinstance(results.get("heating"), dict) else {}
+        cooling = results.get("cooling") if isinstance(results.get("cooling"), dict) else {}
+        meta = results.get("meta") if isinstance(results.get("meta"), dict) else {}
+
+        normalized["kp"] = self._coerce_float(results.get("kp", heating.get("kp")))
+        normalized["ki"] = self._coerce_float(results.get("ki", heating.get("ki")))
+        normalized["kd"] = self._coerce_float(results.get("kd", heating.get("kd")))
+
+        normalized["heating_process_gain"] = self._coerce_float(heating.get("process_gain"))
+        normalized["heating_dead_time"] = self._coerce_float(heating.get("dead_time"))
+        normalized["heating_time_constant"] = self._coerce_float(heating.get("time_constant"))
+        normalized["heating_delta_temp"] = self._coerce_float(heating.get("delta_temp"))
+        normalized["heating_max_rate"] = self._coerce_float(heating.get("max_rate"))
+        normalized["heating_overshoot"] = self._coerce_float(heating.get("overshoot"))
+        normalized["heating_duration"] = self._coerce_float(heating.get("duration"))
+        normalized["heating_step_percent"] = self._coerce_float(
+            heating.get("step_percent", meta.get("heating_step_percent"))
+        )
+        normalized["heating_sample_count"] = self._coerce_int(heating.get("sample_count"))
+
+        normalized["cooling_process_gain"] = self._coerce_float(cooling.get("process_gain"))
+        normalized["cooling_dead_time"] = self._coerce_float(cooling.get("dead_time"))
+        normalized["cooling_time_constant"] = self._coerce_float(cooling.get("time_constant"))
+        normalized["cooling_delta_temp"] = self._coerce_float(cooling.get("delta_temp"))
+        normalized["cooling_max_rate"] = self._coerce_float(cooling.get("max_rate"))
+        normalized["cooling_overshoot"] = self._coerce_float(cooling.get("overshoot"))
+        normalized["cooling_duration"] = self._coerce_float(cooling.get("duration"))
+        normalized["cooling_step_percent"] = self._coerce_float(
+            cooling.get("step_percent", meta.get("cooling_step_percent"))
+        )
+        normalized["cooling_kp"] = self._coerce_float(cooling.get("kp"))
+        normalized["cooling_ki"] = self._coerce_float(cooling.get("ki"))
+        normalized["cooling_kd"] = self._coerce_float(cooling.get("kd"))
+        normalized["cooling_sample_count"] = self._coerce_int(cooling.get("sample_count"))
+        normalized["cooling_available"] = bool(cooling.get("available", bool(cooling)))
+        if isinstance(cooling.get("reason"), str):
+            normalized["cooling_reason"] = cooling.get("reason")
+        else:
+            normalized["cooling_reason"] = None
+
+        normalized["duration"] = self._coerce_float(meta.get("duration", results.get("duration")))
+        normalized["sample_count"] = self._coerce_int(meta.get("sample_count", results.get("sample_count")))
+        normalized["baseline_temp"] = self._coerce_float(meta.get("baseline_temp"))
+        normalized["target_delta"] = self._coerce_float(meta.get("target_delta"))
+
+        # Backwards-compatible aliases for legacy consumers
+        normalized["delta_temp"] = normalized["heating_delta_temp"]
+        normalized["max_rate"] = normalized["heating_max_rate"]
+        normalized["overshoot"] = normalized["heating_overshoot"]
+        normalized["process_gain"] = normalized["heating_process_gain"]
+
+        extras = {}
+        for key, value in results.items():
+            if key in {"kp", "ki", "kd", "heating", "cooling", "meta"}:
+                continue
+            extras[key] = value
+
+        normalized["extras"] = extras
+        return normalized
 
     def _build_collect_page(self) -> QWidget:
         page = QWidget()
@@ -964,6 +1109,7 @@ class AutotuneWizardTab(QWidget):
         self.finish_button.setEnabled(False)
         self.stack.setCurrentIndex(1)
         self._autotune_command_sent = False
+        self._latest_cooling_pid = (None, None, None)
 
         latest_data = getattr(self.parent, "last_status_data", {}) or {}
         autotune_active = bool(latest_data.get("asymmetric_autotune_active")) or bool(
@@ -1017,21 +1163,55 @@ class AutotuneWizardTab(QWidget):
             return
 
         requested_percent = float(self.step_percent_spin.value())
-        recommended, cap, heating_limit = self._recommended_step_percent(step)
-        step_percent = requested_percent
-        clipped = False
-        if step_percent < 5.0:
-            step_percent = 5.0
-            clipped = True
-        if step_percent > cap:
-            step_percent = cap
-            clipped = True
+        limits = self._recommended_step_percent(step)
+        device_cap = limits.get("device_cap", 0.0) or 0.0
+        safety_cap = limits.get("safety_cap", 0.0) or 0.0
 
-        if clipped:
+        tolerance = 0.1
+        step_percent = max(0.0, min(requested_percent, 100.0))
+        adjustments: List[str] = []
+
+        if step_percent != requested_percent:
+            adjustments.append(
+                f"begrenset til {step_percent:.1f}% (tillat område 0–100 %)"
+            )
+
+        if device_cap <= 0.0 and step_percent < self.MIN_STEP_PERCENT:
+            step_percent = self.MIN_STEP_PERCENT
+            adjustments.append(
+                f"hevet til minimumsanbefalingen {self.MIN_STEP_PERCENT:.1f}%"
+            )
+
+        exceeds_device = device_cap > 0.0 and step_percent > device_cap + tolerance
+        if exceeds_device:
+            if self._percent_user_override:
+                self.parent.log(
+                    (
+                        "ℹ️ Du har valgt et autotune-pådrag på "
+                        f"{step_percent:.1f}% som overstiger kontrollergrensen "
+                        f"({device_cap:.1f} %). Kontrolleren kan klippe verdien."
+                    ),
+                    "info",
+                )
+            else:
+                step_percent = device_cap
+                adjustments.append(f"klippet til kontrollergrensen {device_cap:.1f}%")
+
+        if safety_cap > 0.0 and step_percent > safety_cap + tolerance:
             self.parent.log(
                 (
-                    f"⚠️ Autotune-pådrag justert til {step_percent:.1f}% for å holde seg innenfor "
-                    f"grensen (valgt {requested_percent:.1f} %, maks {cap:.1f} %)."
+                    f"ℹ️ Valgt autotune-pådrag {step_percent:.1f}% overstiger anbefalt sikkerhetsnivå "
+                    f"({safety_cap:.1f} %). Kontroller at systemet tåler dette steget."
+                ),
+                "info",
+            )
+
+        if adjustments:
+            self.parent.log(
+                (
+                    "⚠️ Autotune-pådrag justert: "
+                    + "; ".join(adjustments)
+                    + f" (valgt {requested_percent:.1f} %)."
                 ),
                 "warning",
             )
@@ -1041,11 +1221,13 @@ class AutotuneWizardTab(QWidget):
             self._updating_percent_spin = False
             self._percent_user_override = True
 
-        self._update_percent_hint(
-            self.step_percent_spin.value(), recommended, cap, heating_limit
-        )
+        self._update_percent_hint(self.step_percent_spin.value(), limits)
 
-        payload = {"direction": direction, "step_percent": step_percent}
+        payload = {
+            "direction": direction,
+            "step_percent": step_percent,
+            "target_delta": step,
+        }
         if not self.parent.send_asymmetric_command("start_asymmetric_autotune", payload):
             QMessageBox.warning(
                 self,
@@ -1057,6 +1239,9 @@ class AutotuneWizardTab(QWidget):
             return
 
         self._autotune_command_sent = True
+        self._commanded_step_percent = step_percent
+        self._reported_step_clamp = False
+        self._expected_delta = step if direction == "heating" else -step
         self.collect_status.setText(
             f"Firmware-autotune kjører – {step_percent:.1f}% varmeeffekt"
         )
@@ -1074,8 +1259,12 @@ class AutotuneWizardTab(QWidget):
         if self._autotune_command_sent:
             if self.parent.send_asymmetric_command("abort_asymmetric_autotune", {}):
                 self.parent.log("⛔ Firmware-autotune avbrutt fra wizard", "warning")
-            self._autotune_command_sent = False
+        self._autotune_command_sent = False
+        self._expected_delta = None
+        self._commanded_step_percent = None
+        self._reported_step_clamp = False
         self._restore_original_target()
+        self._latest_cooling_pid = (None, None, None)
         self.stack.setCurrentIndex(0)
 
     def complete_measurement(self) -> None:
@@ -1095,6 +1284,9 @@ class AutotuneWizardTab(QWidget):
         self.stack.setCurrentIndex(0)
         self.collecting = False
         self._autotune_command_sent = False
+        self._expected_delta = None
+        self._commanded_step_percent = None
+        self._reported_step_clamp = False
         self._restore_original_target()
         self._percent_user_override = False
         self._handle_step_changed(self.step_spin.value())
@@ -1131,21 +1323,25 @@ class AutotuneWizardTab(QWidget):
         self.parent.asymmetric_controls.kd_heating_input.setText(f"{kd:.3f}")
         self.parent.asymmetric_controls.set_heating_pid()
 
-        cool_kp = kp * 0.5
-        cool_ki = ki * 0.5
-        cool_kd = kd * 0.5
+        cool_override = self._latest_cooling_pid
+        if all(value is not None for value in cool_override):
+            cool_kp, cool_ki, cool_kd = cool_override  # type: ignore[misc]
+            self.parent.log(
+                "ℹ️ Bruker anbefalte kjøleverdier fra autotune.",
+                "info",
+            )
+        else:
+            cool_kp = kp * 0.5
+            cool_ki = ki * 0.5
+            cool_kd = kd * 0.5
         self.parent.asymmetric_controls.kp_cooling_input.setText(f"{cool_kp:.3f}")
         self.parent.asymmetric_controls.ki_cooling_input.setText(f"{cool_ki:.4f}")
         self.parent.asymmetric_controls.kd_cooling_input.setText(f"{cool_kd:.3f}")
         self.parent.asymmetric_controls.set_cooling_pid()
 
     def receive_data(self, data: Dict[str, Any]) -> None:
-        recommended, cap, heating_limit = self._recommended_step_percent(
-            self.step_spin.value()
-        )
-        self._update_percent_hint(
-            self.step_percent_spin.value(), recommended, cap, heating_limit
-        )
+        limits = self._recommended_step_percent(self.step_spin.value())
+        self._update_percent_hint(self.step_percent_spin.value(), limits)
 
         if self._autotune_command_sent:
             status_raw = str(data.get("autotune_status", "")).strip()
@@ -1157,9 +1353,16 @@ class AutotuneWizardTab(QWidget):
                     self.metric_label.setText("Autotune avbrutt av kontrolleren.")
                     self._autotune_command_sent = False
                     self.collecting = False
+                    self._expected_delta = None
+                    self._commanded_step_percent = None
+                    self._reported_step_clamp = False
                 elif lower in {"done", "complete", "finished"}:
                     self.metric_label.setText("Firmware-autotune ferdig – analyserer data.")
                     self._autotune_command_sent = False
+                    self.collecting = False
+                    self._expected_delta = None
+                    self._commanded_step_percent = None
+                    self._reported_step_clamp = False
 
         if not self.collecting:
             return
@@ -1171,6 +1374,34 @@ class AutotuneWizardTab(QWidget):
         output = float(data.get("pid_output", 0.0))
         self.analyzer.add_sample(timestamp, temp, output)
 
+        if (
+            self._autotune_command_sent
+            and not self._reported_step_clamp
+            and self._commanded_step_percent is not None
+        ):
+            reported_output: Optional[float] = None
+            try:
+                if "autotune_output" in data:
+                    reported_output = float(data["autotune_output"])
+                elif "pid_output" in data:
+                    reported_output = float(data["pid_output"])
+            except (TypeError, ValueError):
+                reported_output = None
+
+            if reported_output is not None:
+                tolerance = 0.5
+                if reported_output + tolerance < self._commanded_step_percent:
+                    self.parent.log(
+                        (
+                            "ℹ️ Kontrolleren rapporterer "
+                            f"{reported_output:.1f}% varme under autotune, som er lavere enn "
+                            f"forespurt {self._commanded_step_percent:.1f} %."
+                            " Dette kan tyde på at firmware begrenser pådraget."
+                        ),
+                        "info",
+                    )
+                    self._reported_step_clamp = True
+
         now = time.time()
         if now - self._last_plot_update > 0.5:
             self._last_plot_update = now
@@ -1179,18 +1410,43 @@ class AutotuneWizardTab(QWidget):
         if self.analyzer.has_enough_samples():
             metrics = self.analyzer.compute_results()
             if metrics:
+                normalized = self._normalize_results(metrics)
                 self.metric_label.setText(
-                    f"ΔT: {metrics['delta_temp']:.2f} °C  |  Hastighet: {metrics['max_rate']:.3f} °C/s  |  Overshoot: {metrics['overshoot']:.2f} °C"
+                    "ΔT: {delta} °C  |  Hastighet: {rate} °C/s  |  Overshoot: {overshoot} °C".format(
+                        delta=self._format_number(normalized.get("delta_temp"), 2),
+                        rate=self._format_number(normalized.get("max_rate"), 3),
+                        overshoot=self._format_number(normalized.get("overshoot"), 2),
+                    )
                 )
-                self.finish_button.setEnabled(True)
 
-                if self.analyzer.is_stable():
-                    self.collect_status.setText("Stabilt - analyserer...")
-                    self.collect_status.setStyleSheet("color: #28a745; font-weight: bold;")
-                    self.collecting = False
-                    self._present_results(metrics)
+                if not self._autotune_command_sent:
+                    self.finish_button.setEnabled(True)
+                    if self.analyzer.is_stable():
+                        self.collect_status.setText("Stabilt - analyserer...")
+                        self.collect_status.setStyleSheet("color: #28a745; font-weight: bold;")
+                        self.collecting = False
+                        self._present_results(metrics)
+                else:
+                    self.finish_button.setEnabled(False)
+                    expected = self._expected_delta
+                    delta_temp = normalized.get("delta_temp")
+                    if expected is not None and delta_temp is not None:
+                        if abs(delta_temp) + 0.1 < abs(expected):
+                            self.collect_status.setText(
+                                "Firmware-autotune kjører – responsen øker fortsatt."
+                            )
+                        else:
+                            self.collect_status.setText(
+                                "Firmware-autotune kjører – venter på resultater fra kontrolleren."
+                            )
+                    else:
+                        self.collect_status.setText(
+                            "Firmware-autotune kjører – samler flere målepunkter."
+                        )
+                    self.collect_status.setStyleSheet("color: #17a2b8; font-weight: bold;")
             else:
-                self.finish_button.setEnabled(False)
+                if not self._autotune_command_sent:
+                    self.finish_button.setEnabled(False)
 
     def _update_collect_plot(self) -> None:
         if not self._canvas:
@@ -1221,31 +1477,135 @@ class AutotuneWizardTab(QWidget):
         if self._canvas is not None:
             self._canvas.draw()
 
-    def _present_results(self, results: Dict[str, float]) -> None:
+    def _present_results(self, results: Dict[str, Any]) -> None:
+        normalized = self._normalize_results(results)
+        self._latest_results_payload = dict(normalized)
+        if isinstance(normalized.get("extras"), dict):
+            self._latest_results_payload["extras"] = dict(normalized["extras"])
+
         self.stack.setCurrentIndex(2)
 
-        summary = (
-            f"ΔT: {results['delta_temp']:.2f} °C\n"
-            f"Hastighet: {results['max_rate']:.3f} °C/s\n"
-            f"Overshoot: {results['overshoot']:.2f} °C\n"
-            f"Settlingstid: {results['settling_time']:.1f} s\n"
-            f"Prosessgain: {results['process_gain']:.2f}\n"
-            f"Dødtid L: {results['dead_time']:.2f} s  |  Tidskonstant T: {results['time_constant']:.2f} s"
-        )
-        self.results_summary.setText(summary)
+        summary_lines: List[str] = []
 
-        kp, ki, kd, adjustments = self._sanitize_heating_values(
-            results['kp'], results['ki'], results['kd']
+        summary_lines.append(
+            f"Varighet: {self._format_number(normalized.get('duration'), 1)} s  |  "
+            f"Målepunkter: {self._format_int(normalized.get('sample_count'))}"
         )
+        summary_lines.append(
+            f"Baseline: {self._format_number(normalized.get('baseline_temp'), 2)} °C  |  "
+            f"ΔT-mål: {self._format_number(normalized.get('target_delta'), 2)} °C"
+        )
+
+        summary_lines.append("")
+        summary_lines.append("Varme:")
+        summary_lines.append(
+            "  PID: Kp {kp}, Ki {ki}, Kd {kd}".format(
+                kp=self._format_number(normalized.get("kp"), 3),
+                ki=self._format_number(normalized.get("ki"), 3),
+                kd=self._format_number(normalized.get("kd"), 3),
+            )
+        )
+        summary_lines.append(
+            "  ΔT {delta} °C  |  Maks rate {rate} °C/s  |  Gain {gain}".format(
+                delta=self._format_number(normalized.get("heating_delta_temp"), 2),
+                rate=self._format_number(normalized.get("heating_max_rate"), 3),
+                gain=self._format_number(normalized.get("heating_process_gain"), 2),
+            )
+        )
+        summary_lines.append(
+            "  L {dead} s  |  T {tau} s  |  Overshoot {overshoot} °C  |  Steg {step} %".format(
+                dead=self._format_number(normalized.get("heating_dead_time"), 2),
+                tau=self._format_number(normalized.get("heating_time_constant"), 2),
+                overshoot=self._format_number(normalized.get("heating_overshoot"), 2),
+                step=self._format_number(normalized.get("heating_step_percent"), 1),
+            )
+        )
+        summary_lines.append(
+            "  Segment: {duration} s / {samples} punkter".format(
+                duration=self._format_number(normalized.get("heating_duration"), 1),
+                samples=self._format_int(normalized.get("heating_sample_count")),
+            )
+        )
+
+        if normalized.get("cooling_available"):
+            summary_lines.append("")
+            summary_lines.append("Kjøling:")
+            summary_lines.append(
+                "  PID: Kp {kp}, Ki {ki}, Kd {kd}".format(
+                    kp=self._format_number(normalized.get("cooling_kp"), 3),
+                    ki=self._format_number(normalized.get("cooling_ki"), 3),
+                    kd=self._format_number(normalized.get("cooling_kd"), 3),
+                )
+            )
+            summary_lines.append(
+                "  ΔT {delta} °C  |  Maks rate {rate} °C/s  |  Gain {gain}".format(
+                    delta=self._format_number(normalized.get("cooling_delta_temp"), 2),
+                    rate=self._format_number(normalized.get("cooling_max_rate"), 3),
+                    gain=self._format_number(normalized.get("cooling_process_gain"), 2),
+                )
+            )
+            summary_lines.append(
+                "  L {dead} s  |  T {tau} s  |  Overshoot {overshoot} °C  |  Steg {step} %".format(
+                    dead=self._format_number(normalized.get("cooling_dead_time"), 2),
+                    tau=self._format_number(normalized.get("cooling_time_constant"), 2),
+                    overshoot=self._format_number(normalized.get("cooling_overshoot"), 2),
+                    step=self._format_number(normalized.get("cooling_step_percent"), 1),
+                )
+            )
+            summary_lines.append(
+                "  Segment: {duration} s / {samples} punkter".format(
+                    duration=self._format_number(normalized.get("cooling_duration"), 1),
+                    samples=self._format_int(normalized.get("cooling_sample_count")),
+                )
+            )
+        else:
+            reason = normalized.get("cooling_reason")
+            if reason:
+                summary_lines.append("")
+                summary_lines.append(f"Kjøling: {reason}")
+
+        extras = normalized.get("extras") or {}
+        if isinstance(extras, dict) and extras:
+            summary_lines.append("")
+            for key, value in extras.items():
+                if key in {"raw_data", "samples"}:
+                    continue
+                summary_lines.append(f"{key}: {value}")
+
+        summary_text = "\n".join(summary_lines)
+        self.results_summary.setText(summary_text)
+
+        kp_source = normalized.get("kp")
+        ki_source = normalized.get("ki")
+        kd_source = normalized.get("kd")
+        missing_pid = [
+            label
+            for label, value in (("Kp", kp_source), ("Ki", ki_source), ("Kd", kd_source))
+            if value is None
+        ]
+
+        kp_input = kp_source if kp_source is not None else self.kp_spin.value()
+        ki_input = ki_source if ki_source is not None else self.ki_spin.value()
+        kd_input = kd_source if kd_source is not None else self.kd_spin.value()
+
+        kp, ki, kd, adjustments = self._sanitize_heating_values(kp_input, ki_input, kd_input)
         self.kp_spin.setValue(kp)
         self.ki_spin.setValue(ki)
         self.kd_spin.setValue(kd)
         self._update_limit_notice(adjustments)
+
         if adjustments:
             self.parent.log(
                 "⚠️ Autotune-verdier klippet til sikre grenser (varme): " + ", ".join(adjustments),
                 "warning",
             )
+
+        if missing_pid:
+            warning_text = "⚠️ Resultatet mangler PID-komponenter: " + ", ".join(missing_pid)
+            self.parent.log(warning_text, "warning")
+            if hasattr(self, "limit_notice"):
+                self.limit_notice.setText(warning_text)
+                self.limit_notice.show()
 
         if self._result_axes is not None and self._result_canvas is not None:
             self._result_axes.clear()
@@ -1253,78 +1613,163 @@ class AutotuneWizardTab(QWidget):
             self._result_axes.set_xlabel("Tid [s]")
             self._result_axes.set_ylabel("Temp [°C]")
             self._result_axes.grid(True, alpha=0.3)
-            self._result_axes.plot(
-                self.analyzer.timestamps,
-                self.analyzer.temperatures,
-                color="#ff6b35",
-                label="Plate temp",
-            )
-            self._result_axes.legend()
+            if self.analyzer.timestamps and self.analyzer.temperatures:
+                self._result_axes.plot(
+                    self.analyzer.timestamps,
+                    self.analyzer.temperatures,
+                    color="#ff6b35",
+                    label="Plate temp",
+                )
+                self._result_axes.legend()
             self._result_canvas.draw()
 
+        if all(
+            value is not None
+            for value in (
+                normalized.get("cooling_kp"),
+                normalized.get("cooling_ki"),
+                normalized.get("cooling_kd"),
+            )
+        ):
+            self._latest_cooling_pid = (
+                float(normalized["cooling_kp"]),
+                float(normalized["cooling_ki"]),
+                float(normalized["cooling_kd"]),
+            )
+        else:
+            self._latest_cooling_pid = (None, None, None)
+
         self._autotune_command_sent = False
+        self._expected_delta = None
         self._restore_original_target()
 
-    def display_results(self, results: Dict[str, float]) -> None:
+    def display_results(self, results: Dict[str, Any]) -> None:
         """Expose results rendering to the parent GUI."""
         self.collecting = False
         self._present_results(results)
 
-    def _recommended_step_percent(self, step_delta: float) -> Tuple[float, float, float]:
+    def _update_limit_notice(self, adjustments: List[str]) -> None:
+        if not hasattr(self, "limit_notice"):
+            return
+        if adjustments:
+            self.limit_notice.setText(
+                "⚠️ Verdiene ble justert til sikre grenser: " + ", ".join(adjustments)
+            )
+            self.limit_notice.show()
+        else:
+            self.limit_notice.hide()
+
+    def _recommended_step_percent(self, step_delta: float) -> Dict[str, float]:
         latest_data = getattr(self.parent, "last_status_data", {}) or {}
         try:
-            heating_limit = float(latest_data.get("pid_heating_limit", 100.0))
+            heating_limit = float(latest_data.get("pid_heating_limit", 0.0))
         except (TypeError, ValueError):
-            heating_limit = 100.0
+            heating_limit = 0.0
 
-        heating_limit = max(5.0, heating_limit)
-        max_percent = heating_limit if heating_limit <= 35.0 else 35.0
+        if heating_limit <= 0.0:
+            try:
+                heating_limit = float(getattr(self.parent, "last_heating_limit", 0.0))
+            except (TypeError, ValueError):
+                heating_limit = 0.0
 
-        percent = step_delta * 4.0
-        if percent < 5.0:
-            percent = 5.0
-        if percent > max_percent:
-            percent = max_percent
-        return float(percent), float(max_percent), float(heating_limit)
+        try:
+            pid_limit = float(latest_data.get("pid_max_output", 0.0))
+        except (TypeError, ValueError):
+            pid_limit = 0.0
+
+        if pid_limit <= 0.0:
+            pid_limit = heating_limit
+
+        heating_limit = max(0.0, heating_limit)
+        pid_limit = max(0.0, pid_limit)
+
+        device_candidates: List[float] = []
+        for value in (heating_limit, pid_limit):
+            if value > 0.0:
+                device_candidates.append(value)
+        device_cap = min(device_candidates) if device_candidates else 0.0
+        if device_cap > 0.0:
+            device_cap = min(device_cap, 100.0)
+
+        safety_cap = 0.0
+        if heating_limit > 0.0:
+            safety_cap = min(heating_limit * self.MANUAL_STEP_SAFETY_FRACTION, heating_limit)
+
+        percent = max(0.0, step_delta * self.PERCENT_PER_DEGREE)
+        auto_cap = safety_cap or device_cap or 0.0
+        if auto_cap > 0.0:
+            if percent < self.MIN_STEP_PERCENT <= auto_cap:
+                percent = self.MIN_STEP_PERCENT
+            percent = min(percent, auto_cap)
+
+        return {
+            "recommended": float(percent),
+            "device_cap": float(device_cap),
+            "heating_limit": float(heating_limit),
+            "pid_limit": float(pid_limit),
+            "safety_cap": float(safety_cap),
+        }
 
     def _handle_step_changed(self, value: float) -> None:
-        recommended, cap, heating_limit = self._recommended_step_percent(value)
+        limits = self._recommended_step_percent(value)
+        recommended = limits["recommended"]
         if not self._percent_user_override:
             self._updating_percent_spin = True
             with QSignalBlocker(self.step_percent_spin):
                 self.step_percent_spin.setValue(recommended)
             self._updating_percent_spin = False
-        self._update_percent_hint(
-            self.step_percent_spin.value(), recommended, cap, heating_limit
-        )
+        self._update_percent_hint(self.step_percent_spin.value(), limits)
 
     def _handle_percent_changed(self, value: float) -> None:
         if self._updating_percent_spin:
             return
         self._percent_user_override = True
-        recommended, cap, heating_limit = self._recommended_step_percent(
-            self.step_spin.value()
-        )
-        self._update_percent_hint(value, recommended, cap, heating_limit)
+        limits = self._recommended_step_percent(self.step_spin.value())
+        self._update_percent_hint(value, limits)
 
     def _update_percent_hint(
-        self, selected: float, recommended: float, cap: float, heating_limit: float
+        self, selected: float, limits: Dict[str, float]
     ) -> None:
         if not hasattr(self, "percent_hint_label"):
             return
 
+        heating_limit = limits.get("heating_limit", 0.0) or 0.0
+        device_cap = limits.get("device_cap", heating_limit) or 0.0
+        pid_limit = limits.get("pid_limit", heating_limit) or 0.0
+        safety_cap = limits.get("safety_cap", heating_limit * self.MANUAL_STEP_SAFETY_FRACTION) or 0.0
+        recommended = limits.get("recommended", selected)
+
         limit_note: str
-        if abs(heating_limit - cap) < 0.1:
+        tolerance = 0.1
+        if device_cap and abs(heating_limit - device_cap) <= tolerance:
             limit_note = f"Maksimalt varme-pådrag er {heating_limit:.1f} %."
         else:
+            reasons = []
+            if device_cap and pid_limit and device_cap <= pid_limit + tolerance and pid_limit < heating_limit - tolerance:
+                reasons.append(f"PID-grensen ({pid_limit:.1f} %)")
+            safety_value = safety_cap
+            safety_percent = self.MANUAL_STEP_SAFETY_FRACTION * 100.0
+            if (
+                safety_value
+                and device_cap
+                and device_cap <= safety_value + tolerance
+                and safety_value < heating_limit - tolerance
+            ):
+                reasons.append(f"{safety_percent:.0f}% av varmegrensen ({safety_value:.1f} %)")
+            if not reasons:
+                if device_cap:
+                    reasons.append(f"øvre grense {device_cap:.1f} %")
+                else:
+                    reasons.append("ingen rapportert grense")
+            reason_text = ", ".join(reasons)
             limit_note = (
-                f"Maksimalt varme-pådrag er {heating_limit:.1f} %, men wizzarden begrenser steget til {cap:.1f} % "
-                "for å holde seg innenfor 35 %-sikkerhetsgrensen."
+                f"Maksimalt varme-pådrag er {heating_limit:.1f} %, men wizzarden foreslår {recommended:.1f} % "
+                f"({reason_text})."
             )
 
         self.percent_hint_label.setText(
             (
-                f"Anbefalt manuelt pådrag (≈4 % pr °C): {recommended:.1f} %. "
+                f"Anbefalt manuelt pådrag (≈{self.PERCENT_PER_DEGREE:.0f} % pr °C): {recommended:.1f} %. "
                 f"Valgt manuelt pådrag: {selected:.1f} %. "
                 f"{limit_note} Du kan overstyre verdien ved å endre feltet over."
             )
@@ -2572,31 +3017,92 @@ class MainWindow(QMainWindow):
     def handle_autotune_results(self, results: Dict[str, Any]):
         """Handle autotune completion"""
         try:
-            if all(key in results for key in ["kp", "ki", "kd"]):
-                kp = float(results["kp"])
-                ki = float(results["ki"])
-                kd = float(results["kd"])
+            normalized: Dict[str, Any] = {}
+            if hasattr(self, "autotune_wizard"):
+                self.autotune_wizard.display_results(results)
+                normalized = getattr(
+                    self.autotune_wizard,
+                    "_latest_results_payload",
+                    {},
+                )
+            else:
+                normalized = results
 
-                if hasattr(self, "asymmetric_controls"):
-                    self.asymmetric_controls.kp_heating_input.setText(f"{kp:.3f}")
-                    self.asymmetric_controls.ki_heating_input.setText(f"{ki:.3f}")
-                    self.asymmetric_controls.kd_heating_input.setText(f"{kd:.3f}")
+            kp = normalized.get("kp")
+            ki = normalized.get("ki")
+            kd = normalized.get("kd")
+            cool_kp = normalized.get("cooling_kp")
+            cool_ki = normalized.get("cooling_ki")
+            cool_kd = normalized.get("cooling_kd")
 
-                if hasattr(self, "autotune_wizard"):
-                    self.autotune_wizard.display_results(results)
+            if kp is None or ki is None or kd is None:
+                missing = [
+                    name
+                    for name, value in (("Kp", kp), ("Ki", ki), ("Kd", kd))
+                    if value is None
+                ]
+                self.log(
+                    "⚠️ Autotune-resultatet mangler PID-komponenter: " + ", ".join(missing),
+                    "warning",
+                )
+                return
 
-                QMessageBox.information(
-                    self,
-                    "🎯 Autotune Complete",
-                    f"New heating PID parameters:\n\n"
-                    f"Kp: {kp:.3f}\n"
-                    f"Ki: {ki:.3f}\n"
-                    f"Kd: {kd:.3f}\n\n"
-                    f"Review and apply via the heating PID controls."
+            kp = float(kp)
+            ki = float(ki)
+            kd = float(kd)
+
+            cooling_available = (
+                cool_kp is not None and cool_ki is not None and cool_kd is not None
+            )
+            if cooling_available:
+                cool_kp = float(cool_kp)
+                cool_ki = float(cool_ki)
+                cool_kd = float(cool_kd)
+
+            if hasattr(self, "asymmetric_controls"):
+                self.asymmetric_controls.kp_heating_input.setText(f"{kp:.3f}")
+                self.asymmetric_controls.ki_heating_input.setText(f"{ki:.3f}")
+                self.asymmetric_controls.kd_heating_input.setText(f"{kd:.3f}")
+                if cooling_available:
+                    self.asymmetric_controls.kp_cooling_input.setText(f"{cool_kp:.3f}")
+                    self.asymmetric_controls.ki_cooling_input.setText(f"{cool_ki:.3f}")
+                    self.asymmetric_controls.kd_cooling_input.setText(f"{cool_kd:.3f}")
+
+            message_lines = [
+                "New heating PID parameters:",
+                f"Kp: {kp:.3f}",
+                f"Ki: {ki:.3f}",
+                f"Kd: {kd:.3f}",
+            ]
+            if cooling_available:
+                message_lines.extend(
+                    [
+                        "",
+                        "Cooling PID parameters:",
+                        f"Kp: {cool_kp:.3f}",
+                        f"Ki: {cool_ki:.3f}",
+                        f"Kd: {cool_kd:.3f}",
+                    ]
                 )
 
-                self.log(f"🎯 Autotune: Kp={kp:.3f}, Ki={ki:.3f}, Kd={kd:.3f}", "success")
-                
+            message_lines.append("\nReview and apply via the PID controls if needed.")
+
+            QMessageBox.information(
+                self,
+                "🎯 Autotune Complete",
+                "\n".join(message_lines),
+            )
+
+            self.log(
+                f"🎯 Autotune: Kp={kp:.3f}, Ki={ki:.3f}, Kd={kd:.3f}",
+                "success",
+            )
+            if cooling_available:
+                self.log(
+                    f"❄️ Autotune (cooling): Kp={cool_kp:.3f}, Ki={cool_ki:.3f}, Kd={cool_kd:.3f}",
+                    "success",
+                )
+
         except (ValueError, KeyError) as e:
             print(f"Autotune results error: {e}")
 

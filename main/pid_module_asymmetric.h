@@ -198,6 +198,7 @@ private:
     bool calculateAutotuneResults();
     void setAutotunePhase(AutotunePhase phase);
     void publishAutotuneProgress(unsigned long now, float temperature);
+    static const char* PhaseName(AutotunePhase phase);
 };
 
 #endif // PID_MODULE_ASYMMETRIC_H

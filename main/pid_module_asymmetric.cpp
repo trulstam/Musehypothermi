@@ -94,21 +94,6 @@ bool shouldRestoreSafetyMargin(float margin) {
     return margin < 0.1f || margin > 5.0f;
 }
 
-const char* PhaseName(AsymmetricPIDModule::AutotunePhase phase) {
-    switch (phase) {
-        case AsymmetricPIDModule::AutotunePhase::HeatingRamp:
-            return "heating_ramp";
-        case AsymmetricPIDModule::AutotunePhase::HeatingHold:
-            return "heating_hold";
-        case AsymmetricPIDModule::AutotunePhase::CoolingRamp:
-            return "cooling_ramp";
-        case AsymmetricPIDModule::AutotunePhase::CoolingHold:
-            return "cooling_hold";
-        default:
-            return "idle";
-    }
-}
-
 struct SegmentStats {
     float stepPercent = 0.0f;
     float deltaTemp = 0.0f;
@@ -244,6 +229,21 @@ bool CollectSegmentStats(const unsigned long* timestamps,
     out.startTemp = startTemp;
     out.endTemp = extremeTemp;
     return true;
+}
+
+const char* AsymmetricPIDModule::PhaseName(AutotunePhase phase) {
+    switch (phase) {
+        case AutotunePhase::HeatingRamp:
+            return "heating_ramp";
+        case AutotunePhase::HeatingHold:
+            return "heating_hold";
+        case AutotunePhase::CoolingRamp:
+            return "cooling_ramp";
+        case AutotunePhase::CoolingHold:
+            return "cooling_hold";
+        default:
+            return "idle";
+    }
 }
 
 bool ComputeImcPid(const SegmentStats& stats,

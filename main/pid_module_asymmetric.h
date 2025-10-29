@@ -159,6 +159,12 @@ private:
     void performCoolingAutotune();
     void performHeatingAutotune();
 
+    enum class AutotuneMode : uint8_t {
+        HeatingOnly = 0,
+        CoolingOnly,
+        HeatingThenCooling,
+    };
+
     enum class AutotunePhase : uint8_t {
         Idle = 0,
         HeatingRamp,
@@ -191,6 +197,7 @@ private:
     AutotunePhase autotunePhase;
     bool autotuneCoolingEnabled;
     unsigned long phaseStartMillis;
+    AutotuneMode autotuneMode;
 
     void resetAutotuneState();
     void applyManualOutputPercent(float percent);

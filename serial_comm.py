@@ -56,6 +56,12 @@ class SerialManager(QObject):
 
         # Start threads
         self.keep_running = True
+        # Reset watchdog timers so we don't immediately trigger failsafe
+        self.last_heartbeat_time = time.time()
+        self.last_data_time = self.last_heartbeat_time
+        self.failsafe_triggered = False
+        self.latest_data = None
+
         self.read_thread = threading.Thread(target=self.read_serial_loop, daemon=True)
         self.heartbeat_thread = threading.Thread(target=self.send_heartbeat_loop, daemon=True)
         self.read_thread.start()

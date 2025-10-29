@@ -30,7 +30,6 @@ matplotlib.use('Qt5Agg')
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
-import numpy as np
 
 # Local imports
 from serial_comm import SerialManager
@@ -118,29 +117,29 @@ class AsymmetricPIDControls(QWidget):
         params_group = QGroupBox("Asymmetric PID Parameters")
         params_layout = QGridLayout()
 
-        cooling_group = QGroupBox("Cooling PID (Conservative)")
+        cooling_group = QGroupBox("Cooling PID")
         cooling_layout = QGridLayout()
         cooling_layout.setHorizontalSpacing(14)
         cooling_layout.setVerticalSpacing(8)
 
         self.kp_cooling_input = QLineEdit("0.8")
         self.kp_cooling_input.setMinimumWidth(120)
+        self.kp_cooling_input.setPlaceholderText("Enter Kp")
         self.ki_cooling_input = QLineEdit("0.02")
         self.ki_cooling_input.setMinimumWidth(120)
+        self.ki_cooling_input.setPlaceholderText("Enter Ki")
         self.kd_cooling_input = QLineEdit("3.0")
         self.kd_cooling_input.setMinimumWidth(120)
+        self.kd_cooling_input.setPlaceholderText("Enter Kd")
 
         cooling_layout.addWidget(QLabel("Kp"), 0, 0)
         cooling_layout.addWidget(self.kp_cooling_input, 0, 1)
-        cooling_layout.addWidget(QLabel("0.1 – 2.0"), 0, 2)
 
         cooling_layout.addWidget(QLabel("Ki"), 1, 0)
         cooling_layout.addWidget(self.ki_cooling_input, 1, 1)
-        cooling_layout.addWidget(QLabel("0.01 – 0.10"), 1, 2)
 
         cooling_layout.addWidget(QLabel("Kd"), 2, 0)
         cooling_layout.addWidget(self.kd_cooling_input, 2, 1)
-        cooling_layout.addWidget(QLabel("0.5 – 5.0"), 2, 2)
 
         self.set_cooling_pid_button = QPushButton("Apply Cooling PID")
         self.set_cooling_pid_button.clicked.connect(self.set_cooling_pid)
@@ -149,29 +148,29 @@ class AsymmetricPIDControls(QWidget):
 
         cooling_group.setLayout(cooling_layout)
 
-        heating_group = QGroupBox("Heating PID (Aggressive)")
+        heating_group = QGroupBox("Heating PID")
         heating_layout = QGridLayout()
         heating_layout.setHorizontalSpacing(14)
         heating_layout.setVerticalSpacing(8)
 
         self.kp_heating_input = QLineEdit("2.5")
         self.kp_heating_input.setMinimumWidth(120)
+        self.kp_heating_input.setPlaceholderText("Enter Kp")
         self.ki_heating_input = QLineEdit("0.2")
         self.ki_heating_input.setMinimumWidth(120)
+        self.ki_heating_input.setPlaceholderText("Enter Ki")
         self.kd_heating_input = QLineEdit("1.2")
         self.kd_heating_input.setMinimumWidth(120)
+        self.kd_heating_input.setPlaceholderText("Enter Kd")
 
         heating_layout.addWidget(QLabel("Kp"), 0, 0)
         heating_layout.addWidget(self.kp_heating_input, 0, 1)
-        heating_layout.addWidget(QLabel("0.5 – 5.0"), 0, 2)
 
         heating_layout.addWidget(QLabel("Ki"), 1, 0)
         heating_layout.addWidget(self.ki_heating_input, 1, 1)
-        heating_layout.addWidget(QLabel("0.05 – 1.0"), 1, 2)
 
         heating_layout.addWidget(QLabel("Kd"), 2, 0)
         heating_layout.addWidget(self.kd_heating_input, 2, 1)
-        heating_layout.addWidget(QLabel("0.1 – 3.0"), 2, 2)
 
         self.set_heating_pid_button = QPushButton("Apply Heating PID")
         self.set_heating_pid_button.clicked.connect(self.set_heating_pid)
@@ -417,41 +416,25 @@ class AsymmetricPIDControls(QWidget):
                 label.setStyleSheet(style)
     
     def set_cooling_pid(self):
-        """Set cooling PID parameters with validation"""
+        """Send cooling PID parameters to the controller."""
         try:
             kp = float(self.kp_cooling_input.text())
             ki = float(self.ki_cooling_input.text())
             kd = float(self.kd_cooling_input.text())
-            
-            # Validate cooling parameters (conservative limits)
-            if not (0.1 <= kp <= 2.0):
-                raise ValueError("Cooling Kp must be 0.1-2.0 (conservative)")
-            if not (0.01 <= ki <= 0.1):
-                raise ValueError("Cooling Ki must be 0.01-0.1 (prevent windup)")
-            if not (0.5 <= kd <= 5.0):
-                raise ValueError("Cooling Kd must be 0.5-5.0 (damping)")
-            
+
             if self.parent.send_asymmetric_command("set_cooling_pid", {"kp": kp, "ki": ki, "kd": kd}):
                 self.parent.log(f"❄️ Cooling PID set: Kp={kp:.3f}, Ki={ki:.4f}, Kd={kd:.3f}", "success")
-            
+
         except ValueError as e:
             QMessageBox.warning(self, "Invalid Input", f"Cooling PID error: {e}")
             self.parent.log(f"❌ Invalid cooling PID: {e}", "error")
     
     def set_heating_pid(self):
-        """Set heating PID parameters with validation"""
+        """Send heating PID parameters to the controller."""
         try:
             kp = float(self.kp_heating_input.text())
             ki = float(self.ki_heating_input.text())
             kd = float(self.kd_heating_input.text())
-
-            # Validate heating parameters (more aggressive allowed)
-            if not (0.5 <= kp <= 5.0):
-                raise ValueError("Heating Kp must be 0.5-5.0")
-            if not (0.05 <= ki <= 1.0):
-                raise ValueError("Heating Ki must be 0.05-1.0")
-            if not (0.1 <= kd <= 3.0):
-                raise ValueError("Heating Kd must be 0.1-3.0")
 
             if self.parent.send_asymmetric_command("set_heating_pid", {"kp": kp, "ki": ki, "kd": kd}):
                 self.parent.log(f"Heating PID set: Kp={kp:.3f}, Ki={ki:.4f}, Kd={kd:.3f}", "success")
@@ -468,24 +451,10 @@ class AsymmetricPIDControls(QWidget):
             cool_ki = float(self.ki_cooling_input.text())
             cool_kd = float(self.kd_cooling_input.text())
 
-            if not (0.1 <= cool_kp <= 2.0):
-                raise ValueError("Cooling Kp must be 0.1-2.0")
-            if not (0.01 <= cool_ki <= 0.1):
-                raise ValueError("Cooling Ki must be 0.01-0.1")
-            if not (0.5 <= cool_kd <= 5.0):
-                raise ValueError("Cooling Kd must be 0.5-5.0")
-
             # Heating values
             heat_kp = float(self.kp_heating_input.text())
             heat_ki = float(self.ki_heating_input.text())
             heat_kd = float(self.kd_heating_input.text())
-
-            if not (0.5 <= heat_kp <= 5.0):
-                raise ValueError("Heating Kp must be 0.5-5.0")
-            if not (0.05 <= heat_ki <= 1.0):
-                raise ValueError("Heating Ki must be 0.05-1.0")
-            if not (0.1 <= heat_kd <= 3.0):
-                raise ValueError("Heating Kd must be 0.1-3.0")
 
             ok_cool = self.parent.send_asymmetric_command(
                 "set_cooling_pid", {"kp": cool_kp, "ki": cool_ki, "kd": cool_kd}
@@ -696,10 +665,6 @@ class AutotuneDataAnalyzer:
             ki = kp / (2.0 * dead_time)
             kd = kp * dead_time * 0.5
 
-        kp = float(np.clip(kp, 0.01, 20.0))
-        ki = float(np.clip(ki, 0.001, 5.0))
-        kd = float(np.clip(kd, 0.0, 10.0))
-
         overshoot = max(self.temperatures) - final_temp
         max_rate = self.max_rate()
         settling_time = self._estimate_settling_time(final_temp)
@@ -898,17 +863,17 @@ class AutotuneWizardTab(QWidget):
         form.setLabelAlignment(Qt.AlignRight)
 
         self.kp_spin = QDoubleSpinBox()
-        self.kp_spin.setRange(0.0, 20.0)
+        self.kp_spin.setRange(-1000000.0, 1000000.0)
         self.kp_spin.setDecimals(3)
         self.kp_spin.setSingleStep(0.05)
 
         self.ki_spin = QDoubleSpinBox()
-        self.ki_spin.setRange(0.0, 5.0)
+        self.ki_spin.setRange(-1000000.0, 1000000.0)
         self.ki_spin.setDecimals(4)
         self.ki_spin.setSingleStep(0.01)
 
         self.kd_spin = QDoubleSpinBox()
-        self.kd_spin.setRange(0.0, 10.0)
+        self.kd_spin.setRange(-1000000.0, 1000000.0)
         self.kd_spin.setDecimals(3)
         self.kd_spin.setSingleStep(0.05)
 
@@ -1117,18 +1082,6 @@ class AutotuneWizardTab(QWidget):
         cool_kp = kp * 0.5
         cool_ki = ki * 0.5
         cool_kd = kd * 0.5
-        cool_kp, cool_ki, cool_kd, cool_adj = self._sanitize_cooling_values(cool_kp, cool_ki, cool_kd)
-        if heat_adj or cool_adj:
-            combined = []
-            if heat_adj:
-                combined.append("varme: " + ", ".join(heat_adj))
-            if cool_adj:
-                combined.append("kjøling: " + ", ".join(cool_adj))
-            self.parent.log(
-                "⚠️ Autotune-verdier klippet til sikre grenser (" + " | ".join(combined) + ")",
-                "warning",
-            )
-        self._update_limit_notice(heat_adj, cool_adj)
         self.parent.asymmetric_controls.kp_cooling_input.setText(f"{cool_kp:.3f}")
         self.parent.asymmetric_controls.ki_cooling_input.setText(f"{cool_ki:.4f}")
         self.parent.asymmetric_controls.kd_cooling_input.setText(f"{cool_kd:.3f}")
@@ -1274,67 +1227,6 @@ class AutotuneWizardTab(QWidget):
         if percent > max_percent:
             percent = max_percent
         return float(percent)
-
-    @staticmethod
-    def _clamp_value(value: float, bounds: Tuple[float, float]) -> Tuple[float, bool]:
-        lower, upper = bounds
-        clamped = min(max(value, lower), upper)
-        return clamped, abs(clamped - value) > 1e-6
-
-    def _sanitize_heating_values(
-        self, kp: float, ki: float, kd: float
-    ) -> Tuple[float, float, float, List[str]]:
-        adjustments: List[str] = []
-
-        kp, changed = self._clamp_value(kp, self.HEATING_LIMITS["kp"])
-        if changed:
-            adjustments.append(f"Kp → {kp:.2f}")
-
-        ki, changed = self._clamp_value(ki, self.HEATING_LIMITS["ki"])
-        if changed:
-            adjustments.append(f"Ki → {ki:.3f}")
-
-        kd, changed = self._clamp_value(kd, self.HEATING_LIMITS["kd"])
-        if changed:
-            adjustments.append(f"Kd → {kd:.2f}")
-
-        return kp, ki, kd, adjustments
-
-    def _sanitize_cooling_values(
-        self, kp: float, ki: float, kd: float
-    ) -> Tuple[float, float, float, List[str]]:
-        adjustments: List[str] = []
-
-        kp, changed = self._clamp_value(kp, self.COOLING_LIMITS["kp"])
-        if changed:
-            adjustments.append(f"Kp → {kp:.2f}")
-
-        ki, changed = self._clamp_value(ki, self.COOLING_LIMITS["ki"])
-        if changed:
-            adjustments.append(f"Ki → {ki:.3f}")
-
-        kd, changed = self._clamp_value(kd, self.COOLING_LIMITS["kd"])
-        if changed:
-            adjustments.append(f"Kd → {kd:.2f}")
-
-        return kp, ki, kd, adjustments
-
-    def _update_limit_notice(
-        self, heating_adjustments: List[str], cooling_adjustments: Optional[List[str]] = None
-    ) -> None:
-        messages: List[str] = []
-        if heating_adjustments:
-            messages.append("Varme: " + ", ".join(heating_adjustments))
-        if cooling_adjustments:
-            messages.append("Kjøling: " + ", ".join(cooling_adjustments))
-
-        if messages:
-            self.limit_notice.setText(
-                "⚠️ Verdier utenfor sikre grenser er justert automatisk – " + " | ".join(messages)
-            )
-            self.limit_notice.show()
-        else:
-            self.limit_notice.hide()
 
     def _restore_original_target(self) -> None:
         if self._original_target is None:

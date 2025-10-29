@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
     QTabWidget, QScrollArea, QFrame, QDialog,
     QDialogButtonBox, QDoubleSpinBox, QStackedWidget
 )
-from PySide6.QtCore import QTimer, Qt, Signal
+from PySide6.QtCore import QTimer, Qt, Signal, QSignalBlocker
 from PySide6.QtGui import QFont, QPalette, QColor
 
 # Matplotlib imports
@@ -713,6 +713,8 @@ class AutotuneWizardTab(QWidget):
         self._result_canvas: Optional[FigureCanvas] = None
         self._original_target: Optional[float] = None
         self._autotune_command_sent = False
+        self._percent_user_override = False
+        self._updating_percent_spin = False
 
         self._init_ui()
 
@@ -761,6 +763,7 @@ class AutotuneWizardTab(QWidget):
         self.step_spin.setSingleStep(0.5)
         self.step_spin.setSuffix(" °C")
         self.step_spin.setValue(3.0)
+        self.step_spin.valueChanged.connect(self._handle_step_changed)
         config_layout.addRow("Stegstørrelse:", self.step_spin)
 
         self.direction_combo = QComboBox()
@@ -768,8 +771,27 @@ class AutotuneWizardTab(QWidget):
         self.direction_combo.addItem("Kjøling (senke mål)", "cooling")
         config_layout.addRow("Retning:", self.direction_combo)
 
+        self.step_percent_spin = QDoubleSpinBox()
+        self.step_percent_spin.setRange(5.0, 100.0)
+        self.step_percent_spin.setDecimals(1)
+        self.step_percent_spin.setSingleStep(0.5)
+        self.step_percent_spin.setSuffix(" %")
+        recommended, cap, heating_limit = self._recommended_step_percent(self.step_spin.value())
+        self.step_percent_spin.setValue(recommended)
+        self.step_percent_spin.valueChanged.connect(self._handle_percent_changed)
+        config_layout.addRow("Manuelt varme-pådrag:", self.step_percent_spin)
+
+        self.percent_hint_label = QLabel()
+        self.percent_hint_label.setWordWrap(True)
+        self.percent_hint_label.setStyleSheet("color: #495057; font-size: 11px;")
+        config_layout.addRow("Forklaring:", self.percent_hint_label)
+
         config_group.setLayout(config_layout)
         vbox.addWidget(config_group)
+
+        self._update_percent_hint(
+            self.step_percent_spin.value(), recommended, cap, heating_limit
+        )
 
         self.start_button = QPushButton("Start autotune")
         self.start_button.setStyleSheet(
@@ -994,7 +1016,35 @@ class AutotuneWizardTab(QWidget):
             self.stack.setCurrentIndex(0)
             return
 
-        step_percent = self._derive_step_percent(step)
+        requested_percent = float(self.step_percent_spin.value())
+        recommended, cap, heating_limit = self._recommended_step_percent(step)
+        step_percent = requested_percent
+        clipped = False
+        if step_percent < 5.0:
+            step_percent = 5.0
+            clipped = True
+        if step_percent > cap:
+            step_percent = cap
+            clipped = True
+
+        if clipped:
+            self.parent.log(
+                (
+                    f"⚠️ Autotune-pådrag justert til {step_percent:.1f}% for å holde seg innenfor "
+                    f"grensen (valgt {requested_percent:.1f} %, maks {cap:.1f} %)."
+                ),
+                "warning",
+            )
+            self._updating_percent_spin = True
+            with QSignalBlocker(self.step_percent_spin):
+                self.step_percent_spin.setValue(step_percent)
+            self._updating_percent_spin = False
+            self._percent_user_override = True
+
+        self._update_percent_hint(
+            self.step_percent_spin.value(), recommended, cap, heating_limit
+        )
+
         payload = {"direction": direction, "step_percent": step_percent}
         if not self.parent.send_asymmetric_command("start_asymmetric_autotune", payload):
             QMessageBox.warning(
@@ -1046,6 +1096,8 @@ class AutotuneWizardTab(QWidget):
         self.collecting = False
         self._autotune_command_sent = False
         self._restore_original_target()
+        self._percent_user_override = False
+        self._handle_step_changed(self.step_spin.value())
 
     def apply_to_heating(self) -> None:
         kp = self.kp_spin.value()
@@ -1088,6 +1140,13 @@ class AutotuneWizardTab(QWidget):
         self.parent.asymmetric_controls.set_cooling_pid()
 
     def receive_data(self, data: Dict[str, Any]) -> None:
+        recommended, cap, heating_limit = self._recommended_step_percent(
+            self.step_spin.value()
+        )
+        self._update_percent_hint(
+            self.step_percent_spin.value(), recommended, cap, heating_limit
+        )
+
         if self._autotune_command_sent:
             status_raw = str(data.get("autotune_status", "")).strip()
             if status_raw:
@@ -1211,7 +1270,7 @@ class AutotuneWizardTab(QWidget):
         self.collecting = False
         self._present_results(results)
 
-    def _derive_step_percent(self, step_delta: float) -> float:
+    def _recommended_step_percent(self, step_delta: float) -> Tuple[float, float, float]:
         latest_data = getattr(self.parent, "last_status_data", {}) or {}
         try:
             heating_limit = float(latest_data.get("pid_heating_limit", 100.0))
@@ -1226,7 +1285,50 @@ class AutotuneWizardTab(QWidget):
             percent = 5.0
         if percent > max_percent:
             percent = max_percent
-        return float(percent)
+        return float(percent), float(max_percent), float(heating_limit)
+
+    def _handle_step_changed(self, value: float) -> None:
+        recommended, cap, heating_limit = self._recommended_step_percent(value)
+        if not self._percent_user_override:
+            self._updating_percent_spin = True
+            with QSignalBlocker(self.step_percent_spin):
+                self.step_percent_spin.setValue(recommended)
+            self._updating_percent_spin = False
+        self._update_percent_hint(
+            self.step_percent_spin.value(), recommended, cap, heating_limit
+        )
+
+    def _handle_percent_changed(self, value: float) -> None:
+        if self._updating_percent_spin:
+            return
+        self._percent_user_override = True
+        recommended, cap, heating_limit = self._recommended_step_percent(
+            self.step_spin.value()
+        )
+        self._update_percent_hint(value, recommended, cap, heating_limit)
+
+    def _update_percent_hint(
+        self, selected: float, recommended: float, cap: float, heating_limit: float
+    ) -> None:
+        if not hasattr(self, "percent_hint_label"):
+            return
+
+        limit_note: str
+        if abs(heating_limit - cap) < 0.1:
+            limit_note = f"Maksimalt varme-pådrag er {heating_limit:.1f} %."
+        else:
+            limit_note = (
+                f"Maksimalt varme-pådrag er {heating_limit:.1f} %, men wizzarden begrenser steget til {cap:.1f} % "
+                "for å holde seg innenfor 35 %-sikkerhetsgrensen."
+            )
+
+        self.percent_hint_label.setText(
+            (
+                f"Anbefalt manuelt pådrag (≈4 % pr °C): {recommended:.1f} %. "
+                f"Valgt manuelt pådrag: {selected:.1f} %. "
+                f"{limit_note} Du kan overstyre verdien ved å endre feltet over."
+            )
+        )
 
     def _restore_original_target(self) -> None:
         if self._original_target is None:

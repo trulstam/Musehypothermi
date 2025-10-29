@@ -1222,6 +1222,14 @@ class AutotuneWizardTab(QWidget):
                 self.step_percent_spin.setValue(step_percent)
             self._updating_percent_spin = False
             self._percent_user_override = True
+        elif safety_cap > 0.0 and step_percent > safety_cap + tolerance:
+            self.parent.log(
+                (
+                    f"ℹ️ Valgt autotune-pådrag {step_percent:.1f}% overstiger anbefalt sikkerhetsnivå "
+                    f"({safety_cap:.1f} %). Kontroller at systemet tåler dette steget."
+                ),
+                "info",
+            )
 
         self._update_percent_hint(self.step_percent_spin.value(), limits)
 

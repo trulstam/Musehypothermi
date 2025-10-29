@@ -231,21 +231,6 @@ bool CollectSegmentStats(const unsigned long* timestamps,
     return true;
 }
 
-const char* AsymmetricPIDModule::PhaseName(AutotunePhase phase) {
-    switch (phase) {
-        case AutotunePhase::HeatingRamp:
-            return "heating_ramp";
-        case AutotunePhase::HeatingHold:
-            return "heating_hold";
-        case AutotunePhase::CoolingRamp:
-            return "cooling_ramp";
-        case AutotunePhase::CoolingHold:
-            return "cooling_hold";
-        default:
-            return "idle";
-    }
-}
-
 bool ComputeImcPid(const SegmentStats& stats,
                    float kpMin,
                    float kpMax,
@@ -283,6 +268,21 @@ bool ComputeImcPid(const SegmentStats& stats,
     return true;
 }
 }  // namespace
+
+const char* AsymmetricPIDModule::PhaseName(AutotunePhase phase) {
+    switch (phase) {
+        case AutotunePhase::HeatingRamp:
+            return "heating_ramp";
+        case AutotunePhase::HeatingHold:
+            return "heating_hold";
+        case AutotunePhase::CoolingRamp:
+            return "cooling_ramp";
+        case AutotunePhase::CoolingHold:
+            return "cooling_hold";
+        default:
+            return "idle";
+    }
+}
 
 AsymmetricPIDModule::AsymmetricPIDModule()
     : coolingPID(&Input, &coolingOutput, &Setpoint,

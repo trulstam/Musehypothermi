@@ -37,6 +37,8 @@ class PressureModule {
 
     bool hasValidBreathRate;
 
+    bool hasValidBreathRate;
+
     // (Eventuelt kommenter bort failsafe)
     // static const unsigned long BREATH_FAILSAFE_TIMEOUT = 10000;  // ms
 };

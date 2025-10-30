@@ -293,6 +293,11 @@ class MainWindow(QMainWindow):
         controls_row.addStretch()
         advanced_layout.addLayout(controls_row)
 
+        self.breathFailsafeCheckbox = QCheckBox("Breathing failsafe enabled")
+        self.breathFailsafeCheckbox.setChecked(True)
+        self.breathFailsafeCheckbox.stateChanged.connect(self.toggle_breathing_failsafe)
+        advanced_layout.addWidget(self.breathFailsafeCheckbox)
+
         advanced_group.setLayout(advanced_layout)
         left_layout.addWidget(advanced_group)
         
@@ -832,6 +837,13 @@ class MainWindow(QMainWindow):
                     self.failsafeIndicator.setText("🟢 Safe")
                     self.failsafeIndicator.setStyleSheet("color: green; font-weight: bold;")
 
+            if "breathing_failsafe_enabled" in data and hasattr(self, "breathFailsafeCheckbox"):
+                enabled = bool(data["breathing_failsafe_enabled"])
+                if self.breathFailsafeCheckbox.isChecked() != enabled:
+                    self.breathFailsafeCheckbox.blockSignals(True)
+                    self.breathFailsafeCheckbox.setChecked(enabled)
+                    self.breathFailsafeCheckbox.blockSignals(False)
+
             # Update PID status in top bar
             if "pid_output" in data:
                 output = data["pid_output"]
@@ -1017,6 +1029,17 @@ class MainWindow(QMainWindow):
                     
             except Exception as e:
                 self.log(f"❌ Profile load error: {e}", "error")
+
+    def toggle_breathing_failsafe(self, state):
+        enabled = state == Qt.Checked
+
+        if not self.connection_established:
+            self.log("⚠️ Not connected - cannot update breathing failsafe", "warning")
+            return
+
+        if self.send_asymmetric_command("set_breathing_failsafe", {"enabled": enabled}):
+            status = "enabled" if enabled else "disabled"
+            self.log(f"🫁 Breathing failsafe {status}", "info")
 
     def request_status(self):
         """Request status from Arduino"""

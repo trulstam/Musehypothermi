@@ -195,6 +195,15 @@ void CommAPI::handleCommand(const String &jsonString) {
                 sendResponse("Output limit parameters missing");
             }
 
+        } else if (action == "set_breathing_failsafe") {
+            JsonObject params = cmd["params"];
+            bool enabled = true;
+            if (!params.isNull() && params.containsKey("enabled")) {
+                enabled = params["enabled"];
+            }
+            setBreathingFailsafeEnabled(enabled);
+            sendResponse(enabled ? "Breathing failsafe enabled" : "Breathing failsafe disabled");
+
         } else if (action == "start_asymmetric_autotune") {
             pid.startAsymmetricAutotune();
             sendResponse("Asymmetric autotune started");
@@ -372,6 +381,7 @@ void CommAPI::sendData() {
     doc["pid_output"] = pid.getOutput();
     doc["breath_freq_bpm"] = pressure.getBreathRate();
     doc["failsafe"] = isFailsafeActive();
+    doc["breathing_failsafe_enabled"] = isBreathingFailsafeEnabled();
     doc["plate_target_active"] = pid.getActivePlateTarget();
     doc["cooling_mode"] = pid.isCooling();
     doc["temperature_rate"] = pid.getTemperatureRate();
@@ -396,6 +406,7 @@ void CommAPI::sendStatus() {
     doc["anal_probe_temp"] = sensors.getRectalTemp();
     doc["pid_output"] = pid.getOutput();
     doc["breath_freq_bpm"] = pressure.getBreathRate();
+    doc["breathing_failsafe_enabled"] = isBreathingFailsafeEnabled();
     doc["plate_target_active"] = pid.getActivePlateTarget();
     doc["profile_active"] = profileManager.isActive();
     doc["profile_paused"] = profileManager.isPaused();
@@ -481,6 +492,7 @@ void CommAPI::sendConfig() {
     doc["target_temp"] = pid.getTargetTemp();
     doc["debug_level"] = pid.isDebugEnabled() ? 1 : 0;
     doc["failsafe_timeout"] = heartbeatTimeoutMs;
+    doc["breathing_failsafe_enabled"] = isBreathingFailsafeEnabled();
     doc["cooling_rate_limit"] = pid.getCoolingRateLimit();
     doc["deadband"] = pid.getCurrentDeadband();
     doc["safety_margin"] = pid.getSafetyMargin();

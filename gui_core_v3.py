@@ -1330,6 +1330,11 @@ class MainWindow(QMainWindow):
         advanced_layout.addWidget(self.requestStatusButton, 2, 0)
         advanced_layout.addWidget(self.clearFailsafeButton, 2, 1)
 
+        self.breathFailsafeCheckbox = QCheckBox("Breathing failsafe enabled")
+        self.breathFailsafeCheckbox.setChecked(True)
+        self.breathFailsafeCheckbox.stateChanged.connect(self.toggle_breathing_failsafe)
+        advanced_layout.addWidget(self.breathFailsafeCheckbox, 3, 0, 1, 2)
+
         advanced_group.setLayout(advanced_layout)
         layout.addWidget(advanced_group)
 
@@ -1644,6 +1649,13 @@ class MainWindow(QMainWindow):
                 else:
                     self.failsafeIndicator.setText("🟢 Safe")
                     self.failsafeIndicator.setStyleSheet("color: #28a745; font-weight: bold;")
+
+            if "breathing_failsafe_enabled" in data and hasattr(self, "breathFailsafeCheckbox"):
+                enabled = bool(data["breathing_failsafe_enabled"])
+                if self.breathFailsafeCheckbox.isChecked() != enabled:
+                    self.breathFailsafeCheckbox.blockSignals(True)
+                    self.breathFailsafeCheckbox.setChecked(enabled)
+                    self.breathFailsafeCheckbox.blockSignals(False)
 
             # PID status
             if "pid_output" in data:
@@ -2522,6 +2534,17 @@ class MainWindow(QMainWindow):
                 
         except Exception as e:
             self.log(f"❌ Sync error: {e}", "error")
+
+    def toggle_breathing_failsafe(self, state: int):
+        enabled = state == Qt.Checked
+
+        if not self.connection_established:
+            self.log("⚠️ Not connected - cannot update breathing failsafe", "warning")
+            return
+
+        if self.send_asymmetric_command("set_breathing_failsafe", {"enabled": enabled}):
+            status = "enabled" if enabled else "disabled"
+            self.log(f"🫁 Breathing failsafe {status}", "info")
 
     def request_status(self):
         """Request status"""

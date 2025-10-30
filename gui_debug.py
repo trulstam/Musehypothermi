@@ -358,8 +358,13 @@ class MainWindow(QMainWindow):
         button_layout.addWidget(self.startPIDButton)
         button_layout.addWidget(self.stopPIDButton)
         button_layout.addWidget(self.panicButton)
-        
+
         control_layout.addLayout(button_layout)
+
+        self.breathFailsafeCheckbox = QCheckBox("Breathing failsafe enabled")
+        self.breathFailsafeCheckbox.setChecked(True)
+        self.breathFailsafeCheckbox.stateChanged.connect(self.toggle_breathing_failsafe)
+        control_layout.addWidget(self.breathFailsafeCheckbox)
 
         autotune_group = QGroupBox("🎯 Asymmetric Autotune")
         autotune_layout = QVBoxLayout()
@@ -726,6 +731,13 @@ class MainWindow(QMainWindow):
                 breath = data["breath_freq_bpm"]
                 self.breathRateDisplay.setText(f"{breath:.0f} BPM")
 
+            if "breathing_failsafe_enabled" in data and hasattr(self, "breathFailsafeCheckbox"):
+                enabled = bool(data["breathing_failsafe_enabled"])
+                if self.breathFailsafeCheckbox.isChecked() != enabled:
+                    self.breathFailsafeCheckbox.blockSignals(True)
+                    self.breathFailsafeCheckbox.setChecked(enabled)
+                    self.breathFailsafeCheckbox.blockSignals(False)
+
             # Update PID parameters
             if "pid_kp" in data and "pid_ki" in data and "pid_kd" in data:
                 kp = data["pid_kp"]
@@ -852,6 +864,17 @@ class MainWindow(QMainWindow):
         except Exception as e:
             self.log(f"❌ Command send error: {e}", "error")
             return False
+
+    def toggle_breathing_failsafe(self, state):
+        enabled = state == Qt.Checked
+
+        if not self.connection_established:
+            self.log("⚠️ Not connected - cannot update breathing failsafe", "warning")
+            return
+
+        if self.send_asymmetric_command("set_breathing_failsafe", {"enabled": enabled}):
+            status = "enabled" if enabled else "disabled"
+            self.log(f"🫁 Breathing failsafe {status}", "info")
 
     def log(self, message, log_type="info"):
         """Enhanced logging"""

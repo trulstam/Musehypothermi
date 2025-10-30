@@ -23,6 +23,7 @@ extern CommAPI comm;  // Brukes til sendEvent()
 // === Failsafe status ===
 static bool failsafeActive = false;
 static const char* failsafeReason = "";
+static bool breathingFailsafeEnabled = true;
 
 // === Heartbeat monitor ===
 unsigned long lastHeartbeatMillis = 0;
@@ -67,6 +68,25 @@ bool isFailsafeActive() {
 
 const char* getFailsafeReason() {
     return failsafeReason;
+}
+
+bool isBreathingFailsafeEnabled() {
+    return breathingFailsafeEnabled;
+}
+
+void setBreathingFailsafeEnabled(bool enabled) {
+    if (breathingFailsafeEnabled == enabled) {
+        return;
+    }
+
+    breathingFailsafeEnabled = enabled;
+    lastBreathingDetectedMillis = millis();
+
+    if (enabled) {
+        comm.sendEvent("🫁 Breathing failsafe enabled");
+    } else {
+        comm.sendEvent("🧪 Breathing failsafe disabled for testing");
+    }
 }
 
 // === Heartbeat received ===
@@ -155,12 +175,16 @@ void runTasks() {
         lastPressureUpdate = now;
 
         float breathRate = pressure.getBreathRate();
-        if (!isnan(breathRate)) {
-            if (breathRate >= 1.0f) {
-                lastBreathingDetectedMillis = now;
-            } else if (now - lastBreathingDetectedMillis > (unsigned long)breathingTimeoutMs) {
-                triggerFailsafe("no_breathing_detected");
+        if (breathingFailsafeEnabled) {
+            if (!isnan(breathRate)) {
+                if (breathRate >= 1.0f) {
+                    lastBreathingDetectedMillis = now;
+                } else if (now - lastBreathingDetectedMillis > (unsigned long)breathingTimeoutMs) {
+                    triggerFailsafe("no_breathing_detected");
+                }
             }
+        } else {
+            lastBreathingDetectedMillis = now;
         }
     }
 

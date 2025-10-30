@@ -530,9 +530,14 @@ class MainWindow(QMainWindow):
         button_layout.addWidget(self.panicButton)
         button_layout.addWidget(self.clearFailsafeButton)
         button_layout.addStretch()
-        
+
         layout.addLayout(button_layout)
-        
+
+        self.breathFailsafeCheckbox = QCheckBox("Breathing failsafe enabled")
+        self.breathFailsafeCheckbox.setChecked(True)
+        self.breathFailsafeCheckbox.stateChanged.connect(self.toggle_breathing_failsafe)
+        layout.addWidget(self.breathFailsafeCheckbox)
+
         group.setLayout(layout)
         return group
 
@@ -1199,6 +1204,13 @@ class MainWindow(QMainWindow):
                     self.failsafeLabel.setText("Inactive")
                     self.failsafeLabel.setStyleSheet("color: green; font-weight: bold;")
 
+            if "breathing_failsafe_enabled" in data and hasattr(self, "breathFailsafeCheckbox"):
+                enabled = bool(data["breathing_failsafe_enabled"])
+                if self.breathFailsafeCheckbox.isChecked() != enabled:
+                    self.breathFailsafeCheckbox.blockSignals(True)
+                    self.breathFailsafeCheckbox.setChecked(enabled)
+                    self.breathFailsafeCheckbox.blockSignals(False)
+
             # Update autotune status
             status_payload = None
             if "asymmetric_autotune_active" in data:
@@ -1259,6 +1271,17 @@ class MainWindow(QMainWindow):
 
         except Exception as e:
             self.log(f"❌ Error processing status data: {e}", "error")
+
+    def toggle_breathing_failsafe(self, state):
+        enabled = state == Qt.Checked
+
+        if not self.connection_established:
+            self.log("⚠️ Not connected - cannot update breathing failsafe", "warning")
+            return
+
+        if self.send_asymmetric_command("set_breathing_failsafe", {"enabled": enabled}):
+            status = "enabled" if enabled else "disabled"
+            self.log(f"🫁 Breathing failsafe {status}", "info")
 
     def update_live_data_display(self, data):
         """Update the live data display fields"""

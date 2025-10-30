@@ -88,9 +88,175 @@ class MaxOutputDialog(QDialog):
         return dialog.heating_spin.value(), dialog.cooling_spin.value(), accepted
 
 
+class AutotuneResultsPanel(QGroupBox):
+    """Visualise and confirm asymmetric autotune results."""
+
+    def __init__(self, controls: "AsymmetricPIDControls"):
+        super().__init__("📊 Autotune-resultater")
+        self.controls = controls
+        self.current_results: Optional[Dict[str, Any]] = None
+
+        layout = QVBoxLayout()
+        layout.setSpacing(8)
+
+        self.figure = Figure(figsize=(5, 3))
+        self.ax = self.figure.add_subplot(111)
+        self.ax.set_title("Plate-respons på sprang")
+        self.ax.set_xlabel("Tid [s]")
+        self.ax.set_ylabel("Plate-temp [°C]")
+        self.ax.grid(True, linestyle="--", alpha=0.3)
+        self.canvas = FigureCanvas(self.figure)
+        layout.addWidget(self.canvas)
+
+        summary_layout = QGridLayout()
+        summary_layout.setVerticalSpacing(6)
+        summary_layout.setHorizontalSpacing(12)
+
+        heating_title = QLabel("Varme (positiv step):")
+        heating_title.setStyleSheet("font-weight: bold; color: #d9480f;")
+        self.heating_summary = QLabel("–")
+        self.heating_summary.setWordWrap(True)
+        self.heating_summary.setStyleSheet("color: #d9480f;")
+
+        cooling_title = QLabel("Kjøling (negativ step):")
+        cooling_title.setStyleSheet("font-weight: bold; color: #1864ab;")
+        self.cooling_summary = QLabel("–")
+        self.cooling_summary.setWordWrap(True)
+        self.cooling_summary.setStyleSheet("color: #1864ab;")
+
+        summary_layout.addWidget(heating_title, 0, 0)
+        summary_layout.addWidget(self.heating_summary, 0, 1)
+        summary_layout.addWidget(cooling_title, 1, 0)
+        summary_layout.addWidget(self.cooling_summary, 1, 1)
+        summary_layout.setColumnStretch(1, 1)
+        layout.addLayout(summary_layout)
+
+        button_row = QHBoxLayout()
+        button_row.addStretch()
+        self.accept_button = QPushButton("✅ Godkjenn og lagre")
+        self.accept_button.setStyleSheet("background-color: #198754; color: white; font-weight: bold;")
+        self.accept_button.clicked.connect(self.accept_results)
+        self.accept_button.setEnabled(False)
+        button_row.addWidget(self.accept_button)
+
+        self.discard_button = QPushButton("🗑️ Forkast")
+        self.discard_button.setStyleSheet("background-color: #6c757d; color: white; font-weight: bold;")
+        self.discard_button.clicked.connect(self.discard_results)
+        self.discard_button.setEnabled(False)
+        button_row.addWidget(self.discard_button)
+        layout.addLayout(button_row)
+
+        self.setLayout(layout)
+        self.clear_results()
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+    def update_results(self, results: Dict[str, Any]):
+        self.current_results = results
+        status = str(results.get("status", "unknown")).lower()
+        self.setVisible(True)
+
+        heating = results.get("heating", {}) or {}
+        cooling = results.get("cooling", {}) or {}
+        heating_valid = bool(heating.get("valid"))
+        cooling_valid = bool(cooling.get("valid"))
+
+        self.accept_button.setEnabled(status == "complete")
+        self.discard_button.setEnabled(True)
+
+        self._render_plot(results, heating, cooling)
+
+        self.heating_summary.setText(
+            self._format_summary("Varme", heating, heating_valid, results.get("heating_step_percent"))
+        )
+        self.cooling_summary.setText(
+            self._format_summary("Kjøling", cooling, cooling_valid, results.get("cooling_step_percent"))
+        )
+
+    def clear_results(self):
+        self.current_results = None
+        self.accept_button.setEnabled(False)
+        self.discard_button.setEnabled(False)
+        self.heating_summary.setText("–")
+        self.cooling_summary.setText("–")
+        self.ax.clear()
+        self.ax.set_title("Plate-respons på sprang")
+        self.ax.set_xlabel("Tid [s]")
+        self.ax.set_ylabel("Plate-temp [°C]")
+        self.ax.grid(True, linestyle="--", alpha=0.3)
+        self.canvas.draw_idle()
+        self.setVisible(False)
+
+    # ------------------------------------------------------------------
+    # Button handlers
+    # ------------------------------------------------------------------
+    def accept_results(self):
+        self.controls.accept_autotune_results()
+
+    def discard_results(self):
+        self.controls.discard_autotune_results()
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+    def _render_plot(self, results: Dict[str, Any], heating: Dict[str, Any], cooling: Dict[str, Any]):
+        self.ax.clear()
+        self.ax.set_title("Plate-respons på sprang")
+        self.ax.set_xlabel("Tid [s]")
+        self.ax.set_ylabel("Plate-temp [°C]")
+        self.ax.grid(True, linestyle="--", alpha=0.3)
+
+        target = results.get("target")
+        if target is not None:
+            self.ax.axhline(float(target), color="#6c757d", linestyle="--", linewidth=1, label="Setpunkt")
+
+        self._plot_series(heating, "#d9480f", "Varme")
+        self._plot_series(cooling, "#1864ab", "Kjøling")
+
+        if len(self.ax.lines) > 0:
+            self.ax.legend(loc="best")
+
+        self.canvas.draw_idle()
+
+    def _plot_series(self, branch: Dict[str, Any], color: str, label: str):
+        timestamps = [float(t) for t in branch.get("timestamps", [])]
+        temps = [float(t) for t in branch.get("plate_temperatures", [])]
+        if not timestamps or not temps:
+            return
+
+        self.ax.plot(timestamps, temps, color=color, label=label)
+
+        if branch.get("valid") and len(temps) > 1:
+            baseline = float(branch.get("baseline", temps[0]))
+            delta = temps[-1] - baseline
+            if abs(delta) > 0.05:
+                target = baseline + 0.63 * delta
+                self.ax.axhline(target, color=color, linestyle=":", linewidth=1, label=f"{label} 63%")
+
+    def _format_summary(self, title: str, branch: Dict[str, Any], valid: bool, step_percent: Optional[float]) -> str:
+        if not valid:
+            return "<i>Ingen gyldige målinger</i>"
+
+        kp = float(branch.get("kp", 0.0))
+        ki = float(branch.get("ki", 0.0))
+        kd = float(branch.get("kd", 0.0))
+        gain = float(branch.get("process_gain", 0.0))
+        tau = float(branch.get("time_constant", 0.0))
+        dead_time = float(branch.get("dead_time", 0.0))
+        slope = float(branch.get("initial_slope", 0.0))
+        step = float(step_percent or 0.0)
+
+        return (
+            f"<b>Kp:</b> {kp:.3f} • <b>Ki:</b> {ki:.4f} • <b>Kd:</b> {kd:.3f}<br/>"
+            f"<b>Prosessgain:</b> {gain:.3f} • <b>Tidskonstant:</b> {tau:.1f} s • "
+            f"<b>Dødtid:</b> {dead_time:.1f} s • <b>Init. stigning:</b> {slope:.3f} °C/s<br/>"
+            f"<b>Steghøyde:</b> {step:.1f} %"
+        )
+
 class AsymmetricPIDControls(QWidget):
     """Enhanced controls for asymmetric PID system"""
-    
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.parent = parent
@@ -288,16 +454,43 @@ class AsymmetricPIDControls(QWidget):
         self.external_emergency_label: Optional[QLabel] = None
         
         # Asymmetric Autotune
-        autotune_group = QGroupBox("🎯 Asymmetric Autotune")
+        autotune_group = QGroupBox("🎯 Asymmetrisk autotune")
         autotune_layout = QVBoxLayout()
-        
-        autotune_info = QLabel(
-            "Firmware still reports placeholder autotune events –"
-            " PID gains are not adjusted automatically yet."
+
+        guidance_group = QGroupBox("📘 Veiledning")
+        guidance_layout = QVBoxLayout()
+        guidance_layout.setSpacing(4)
+
+        prep_label = QLabel(
+            "<b>Forberedelser</b><br/>"
+            "• Stabiliser platen rundt ønsket setpunkt og stopp aktive profiler.<br/>"
+            "• Kontroller at temperaturprober er korrekt plassert og viser realistiske verdier.<br/>"
+            "• Sørg for at nødstoppen er frigitt og at operatør følger prosessen kontinuerlig."
         )
-        autotune_info.setWordWrap(True)
-        autotune_info.setStyleSheet("color: #6c757d; font-size: 10px;")
-        autotune_layout.addWidget(autotune_info)
+        prep_label.setWordWrap(True)
+
+        safety_label = QLabel(
+            "<b>Sikkerhetssjekk</b><br/>"
+            "• Ha nødstoppen lett tilgjengelig og avbryt ved unormalt rask temperaturendring.<br/>"
+            "• Bekreft at platen ligger mellom 10–45 °C før sekvensen startes.<br/>"
+            "• Pass på at kjøling/varme har fri luftstrøm og at pasientkontakt er trygg."
+        )
+        safety_label.setWordWrap(True)
+
+        interpret_label = QLabel(
+            "<b>Tolkning</b><br/>"
+            "• Grafen viser varmesteget (oransje) og kaldesteget (blått) samt 63 %-nivåer.<br/>"
+            "• Lang dødtid → vurder lavere Kp. Bratt kurve → demp Ki for stabil drift.<br/>"
+            "• Godkjenn og lagre kun når begge retninger er markert som gyldige."
+        )
+        interpret_label.setWordWrap(True)
+
+        for widget in (prep_label, safety_label, interpret_label):
+            widget.setStyleSheet("color: #495057; font-size: 11px;")
+            guidance_layout.addWidget(widget)
+
+        guidance_group.setLayout(guidance_layout)
+        autotune_layout.addWidget(guidance_group)
 
         checklist_frame = QGroupBox("Før du starter autotune")
         checklist_layout = QVBoxLayout()
@@ -746,13 +939,19 @@ class AsymmetricPIDControls(QWidget):
             self._update_progress(data)
 
             if "autotune_status" in data:
-                status = str(data["autotune_status"]).replace("_", " ").title()
+                status_raw = str(data["autotune_status"]).replace("_", " ")
+                status = status_raw.title()
+                status_lower = status_raw.lower()
                 status_style = "color: #6c757d; font-weight: bold;"
-                if status.lower().startswith("run"):
+                if status_lower in {"stabilizing", "heating step", "cooling step"}:
                     status_style = "color: #17a2b8; font-weight: bold;"
-                elif status.lower() in {"done", "complete"}:
+                elif status_lower in {"heating recover", "cooling recover"}:
+                    status_style = "color: #ff922b; font-weight: bold;"
+                elif status_lower in {"done", "complete"}:
                     status_style = "color: #28a745; font-weight: bold;"
-                elif status.lower().startswith("abort"):
+                elif status_lower in {"partial"}:
+                    status_style = "color: #fd7e14; font-weight: bold;"
+                elif status_lower in {"failed"} or status_lower.startswith("abort"):
                     status_style = "color: #dc3545; font-weight: bold;"
                 self.autotune_status_value.setText(status)
                 self.autotune_status_value.setStyleSheet(status_style)
@@ -792,6 +991,88 @@ class AsymmetricPIDControls(QWidget):
             if label is not None:
                 label.setText(text)
                 label.setStyleSheet(style)
+
+    def show_autotune_results(self, results: Dict[str, Any]):
+        """Display autotune results, populate fields and show guidance."""
+        status = str(results.get("status", "unknown")).lower()
+        heating = results.get("heating", {}) or {}
+        cooling = results.get("cooling", {}) or {}
+
+        if status == "failed":
+            self.autotune_results_panel.clear_results()
+            QMessageBox.warning(
+                self,
+                "Autotune mislyktes",
+                "Autotune klarte ikke å hente gyldige målinger. Juster startbetingelser og prøv igjen.",
+            )
+            self.parent.log("⛔ Autotune failed – insufficient response", "error")
+            return
+
+        self.autotune_results_panel.update_results(results)
+
+        if heating.get("valid"):
+            self.kp_heating_input.setText(f"{float(heating.get('kp', 0.0)):.3f}")
+            self.ki_heating_input.setText(f"{float(heating.get('ki', 0.0)):.4f}")
+            self.kd_heating_input.setText(f"{float(heating.get('kd', 0.0)):.3f}")
+        if cooling.get("valid"):
+            self.kp_cooling_input.setText(f"{float(cooling.get('kp', 0.0)):.3f}")
+            self.ki_cooling_input.setText(f"{float(cooling.get('ki', 0.0)):.4f}")
+            self.kd_cooling_input.setText(f"{float(cooling.get('kd', 0.0)):.3f}")
+
+        summary_lines = []
+        if heating.get("valid"):
+            summary_lines.append(
+                "Varme: Kp={kp:.3f}, Ki={ki:.4f}, Kd={kd:.3f}".format(
+                    kp=float(heating.get("kp", 0.0)),
+                    ki=float(heating.get("ki", 0.0)),
+                    kd=float(heating.get("kd", 0.0)),
+                )
+            )
+        if cooling.get("valid"):
+            summary_lines.append(
+                "Kjøling: Kp={kp:.3f}, Ki={ki:.4f}, Kd={kd:.3f}".format(
+                    kp=float(cooling.get("kp", 0.0)),
+                    ki=float(cooling.get("ki", 0.0)),
+                    kd=float(cooling.get("kd", 0.0)),
+                )
+            )
+
+        message = "\n".join(summary_lines) if summary_lines else "Ingen gyldige PID-forslag."
+        if status == "partial":
+            message = (
+                "Autotune ga delvise data. Kontroller grafen nøye før eventuell lagring.\n\n"
+                + message
+            )
+
+        QMessageBox.information(
+            self,
+            "Autotune fullført",
+            message + "\n\nBruk 'Godkjenn og lagre' for å skrive verdiene til EEPROM.",
+        )
+        self.parent.log("🎯 Autotune complete – review the result panel", "success")
+
+    def accept_autotune_results(self):
+        """Persist autotune results to firmware EEPROM."""
+        if not self.autotune_results_panel.current_results:
+            QMessageBox.information(self, "Ingen resultater", "Ingen autotune-resultater å lagre.")
+            return
+
+        if not self.parent.send_asymmetric_command("apply_asymmetric_autotune", {}):
+            QMessageBox.warning(self, "Lagret ikke", "Kunne ikke sende kommando til kontrolleren.")
+            return
+
+        self.parent.log("💾 Autotune parameters stored", "success")
+        QMessageBox.information(
+            self,
+            "Lagret",
+            "De foreslåtte PID-verdiene ble sendt til kontrolleren. EEPROM oppdateres fortløpende.",
+        )
+        self.autotune_results_panel.accept_button.setEnabled(False)
+
+    def discard_autotune_results(self):
+        """Hide autotune results without applying them."""
+        self.autotune_results_panel.clear_results()
+        self.parent.log("🗑️ Autotune results discarded", "warning")
     
     def set_cooling_pid(self):
         """Set cooling PID parameters with validation"""
@@ -939,15 +1220,14 @@ class AsymmetricPIDControls(QWidget):
     def start_asymmetric_autotune(self):
         """Start asymmetric autotune with safety confirmation"""
         reply = QMessageBox.question(
-            self, "🎯 Asymmetric Autotune",
-            "Start asymmetric autotune?\n\n"
-            "This will:\n"
-            "1. Test heating response (safe)\n"
-            "2. Test cooling response (conservative)\n"
-            "3. Calculate optimal PID parameters\n\n"
-            "Process will take 5-10 minutes.",
+            self,
+            "🎯 Asymmetrisk autotune",
+            "Kjør asymmetrisk autotune?\n\n"
+            "Sekvensen stabiliserer platen ved setpunktet, gjør et kontrollert varmesprang "
+            "og deretter et forsiktig kuldesprang for å analysere prosessresponsen.\n\n"
+            "Forbered nødstoppen og følg temperaturene kontinuerlig. Typisk varighet er 5–10 minutter.",
             QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No
+            QMessageBox.No,
         )
 
         if reply == QMessageBox.Yes:
@@ -2229,7 +2509,7 @@ class MainWindow(QMainWindow):
             print(f"Event handling error: {e}")
 
     def handle_autotune_results(self, results: Dict[str, Any]):
-        """Handle autotune completion"""
+        """Handle asymmetric autotune completion payloads."""
         try:
             if all(key in results for key in ["kp", "ki", "kd"]):
                 kp = float(results["kp"])

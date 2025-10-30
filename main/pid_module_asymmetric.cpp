@@ -6,6 +6,7 @@
 #include <Arduino.h>
 #include <ArduinoJson.h>
 #include <PID_v1.h>
+#include <algorithm>
 #include <math.h>
 
 extern SensorModule sensors;
@@ -32,6 +33,19 @@ constexpr float kDefaultSafetyMargin = 2.0f;
 constexpr float kDefaultCoolingRate = 2.0f;
 constexpr double kOutputSmoothingFactor = 0.8;
 constexpr unsigned long kSampleTimeMs = 100;
+
+constexpr unsigned long kAutotuneSampleIntervalMs = 500;
+constexpr unsigned long kAutotuneStabilityDurationMs = 10000;
+constexpr float kAutotuneStabilityTolerance = 0.25f;
+constexpr float kAutotuneSlopeTolerance = 0.05f;
+constexpr float kAutotuneTargetDelta = 2.0f;
+constexpr unsigned long kAutotuneMaxStepDurationMs = 90000;
+constexpr unsigned long kAutotuneMaxSessionDurationMs = 600000;
+constexpr float kAutotuneHeatingStepPercent = 30.0f;
+constexpr float kAutotuneCoolingStepPercent = -20.0f;
+constexpr float kAutotuneRecoveryTolerance = 0.3f;
+constexpr unsigned long kAutotuneRecoveryHoldMs = 6000;
+constexpr float kAutotuneMinDeltaForDeadTime = 0.05f;
 
 bool isInvalidValue(float value) {
     return isnan(value) || isinf(value);
@@ -105,6 +119,8 @@ AsymmetricPIDModule::AsymmetricPIDModule()
     currentParams.heating_limit = kDefaultMaxOutputPercent;
     currentParams.deadband = kDefaultDeadband;
     currentParams.safety_margin = kDefaultSafetyMargin;
+
+    resetAutotuneSession();
 }
 
 void AsymmetricPIDModule::begin(EEPROMManager &eepromManager) {
@@ -424,48 +440,543 @@ void AsymmetricPIDModule::setSafetyParams(float deadband, float safetyMargin, bo
     }
 }
 
+void AsymmetricPIDModule::resetAutotuneSession() {
+    autotuneSession.phase = AutotunePhase::kIdle;
+    autotuneSession.sessionStart = 0;
+    autotuneSession.stateStart = 0;
+    autotuneSession.lastSampleMillis = 0;
+    autotuneSession.lastDerivativeMillis = 0;
+    autotuneSession.lastDerivativeTemp = 0.0f;
+    autotuneSession.currentSlope = 0.0f;
+    autotuneSession.stabilityStart = 0;
+    autotuneSession.target = kDefaultTargetTemp;
+
+    autotuneSession.heating.count = 0;
+    autotuneSession.heating.startMillis = 0;
+    autotuneSession.heating.stepPercent = kAutotuneHeatingStepPercent;
+    autotuneSession.heating.baseline = 0.0f;
+
+    autotuneSession.cooling.count = 0;
+    autotuneSession.cooling.startMillis = 0;
+    autotuneSession.cooling.stepPercent = kAutotuneCoolingStepPercent;
+    autotuneSession.cooling.baseline = 0.0f;
+
+    autotuneSession.recommendation.valid = false;
+    autotuneSession.recommendation.heatingValid = false;
+    autotuneSession.recommendation.coolingValid = false;
+    autotuneSession.recommendation.heatingKp = currentParams.kp_heating;
+    autotuneSession.recommendation.heatingKi = currentParams.ki_heating;
+    autotuneSession.recommendation.heatingKd = currentParams.kd_heating;
+    autotuneSession.recommendation.coolingKp = currentParams.kp_cooling;
+    autotuneSession.recommendation.coolingKi = currentParams.ki_cooling;
+    autotuneSession.recommendation.coolingKd = currentParams.kd_cooling;
+    autotuneSession.recommendation.heatingProcessGain = 0.0f;
+    autotuneSession.recommendation.heatingTimeConstant = 0.0f;
+    autotuneSession.recommendation.heatingDeadTime = 0.0f;
+    autotuneSession.recommendation.heatingInitialSlope = 0.0f;
+    autotuneSession.recommendation.coolingProcessGain = 0.0f;
+    autotuneSession.recommendation.coolingTimeConstant = 0.0f;
+    autotuneSession.recommendation.coolingDeadTime = 0.0f;
+    autotuneSession.recommendation.coolingInitialSlope = 0.0f;
+}
+
+void AsymmetricPIDModule::transitionAutotunePhase(AutotunePhase nextPhase, const char* statusMessage) {
+    autotuneSession.phase = nextPhase;
+    autotuneSession.stateStart = millis();
+    autotuneSession.lastSampleMillis = 0;
+    autotuneSession.stabilityStart = 0;
+    autotuneStatusString = statusMessage;
+}
+
+void AsymmetricPIDModule::applyAutotuneOutput(float percent) {
+    percent = constrain(percent, -100.0f, 100.0f);
+    float magnitude = fabs(percent);
+    int pwmValue = constrain(static_cast<int>(magnitude * MAX_PWM / 100.0f), 0, MAX_PWM);
+
+    if (percent > 0.0f) {
+        digitalWrite(kHeatingDirectionPin, LOW);
+        digitalWrite(kCoolingDirectionPin, HIGH);
+    } else if (percent < 0.0f) {
+        digitalWrite(kHeatingDirectionPin, HIGH);
+        digitalWrite(kCoolingDirectionPin, LOW);
+    } else {
+        digitalWrite(kHeatingDirectionPin, LOW);
+        digitalWrite(kCoolingDirectionPin, LOW);
+    }
+
+    pwm.setDutyCycle(pwmValue);
+    currentPwmOutput = static_cast<int>(percent);
+}
+
+bool AsymmetricPIDModule::datasetFull(const AutotuneDataset& dataset) const {
+    return dataset.count >= static_cast<int>(sizeof(dataset.samples) / sizeof(dataset.samples[0]));
+}
+
+void AsymmetricPIDModule::logAutotuneSample(AutotuneDataset& dataset, unsigned long now, float plateTemp, float coreTemp) {
+    if (datasetFull(dataset) || dataset.startMillis == 0) {
+        return;
+    }
+
+    AutotuneSample sample;
+    sample.timeMs = now - dataset.startMillis;
+    sample.plateTemp = plateTemp;
+    sample.coreTemp = coreTemp;
+    sample.pwmPercent = dataset.stepPercent;
+
+    dataset.samples[dataset.count] = sample;
+    dataset.count = std::min(dataset.count + 1, static_cast<int>(sizeof(dataset.samples) / sizeof(dataset.samples[0])));
+}
+
+bool AsymmetricPIDModule::calculateProcessParameters(const AutotuneDataset& dataset, float& processGain,
+                                                     float& timeConstant, float& deadTime, float& initialSlope) {
+    processGain = 0.0f;
+    timeConstant = 0.0f;
+    deadTime = 0.0f;
+    initialSlope = 0.0f;
+
+    if (dataset.count < 5) {
+        return false;
+    }
+
+    float initialTemp = dataset.samples[0].plateTemp;
+    float finalTemp = dataset.samples[dataset.count - 1].plateTemp;
+    float deltaTemp = finalTemp - initialTemp;
+    if (fabs(deltaTemp) < 0.1f) {
+        return false;
+    }
+
+    float stepFraction = dataset.stepPercent / 100.0f;
+    if (fabs(stepFraction) < 0.01f) {
+        return false;
+    }
+
+    processGain = deltaTemp / stepFraction;
+
+    float targetTemp = initialTemp + 0.63f * deltaTemp;
+    float t63 = dataset.samples[dataset.count - 1].timeMs / 1000.0f;
+    for (int i = 1; i < dataset.count; ++i) {
+        float prevTemp = dataset.samples[i - 1].plateTemp;
+        float currentTemp = dataset.samples[i].plateTemp;
+        bool reached = (deltaTemp > 0.0f && currentTemp >= targetTemp) ||
+                       (deltaTemp < 0.0f && currentTemp <= targetTemp);
+        if (reached) {
+            float tPrev = dataset.samples[i - 1].timeMs / 1000.0f;
+            float tCurr = dataset.samples[i].timeMs / 1000.0f;
+            float denom = currentTemp - prevTemp;
+            if (fabs(denom) < 1e-6f) {
+                t63 = tCurr;
+            } else {
+                float ratio = (targetTemp - prevTemp) / denom;
+                ratio = std::max(0.0f, std::min(1.0f, ratio));
+                t63 = tPrev + (tCurr - tPrev) * ratio;
+            }
+            break;
+        }
+    }
+
+    float threshold = std::max(kAutotuneMinDeltaForDeadTime, 0.05f * fabs(deltaTemp));
+    for (int i = 1; i < dataset.count; ++i) {
+        float deviation = fabs(dataset.samples[i].plateTemp - initialTemp);
+        if (deviation >= threshold) {
+            float y1 = dataset.samples[i - 1].plateTemp;
+            float y2 = dataset.samples[i].plateTemp;
+            float t1 = dataset.samples[i - 1].timeMs / 1000.0f;
+            float t2 = dataset.samples[i].timeMs / 1000.0f;
+            float dt = t2 - t1;
+            if (dt <= 0.0f) {
+                dt = 0.001f;
+            }
+            initialSlope = (y2 - y1) / dt;
+            if (fabs(initialSlope) < 1e-6f) {
+                initialSlope = (deltaTemp > 0.0f) ? 1e-6f : -1e-6f;
+            }
+            float yAtT = dataset.samples[i].plateTemp;
+            float tAtT = t2;
+            deadTime = tAtT - ((yAtT - initialTemp) / initialSlope);
+            if (deadTime < 0.0f) {
+                deadTime = 0.0f;
+            }
+            break;
+        }
+    }
+
+    if (initialSlope == 0.0f) {
+        float y1 = dataset.samples[dataset.count - 2].plateTemp;
+        float y2 = dataset.samples[dataset.count - 1].plateTemp;
+        float t1 = dataset.samples[dataset.count - 2].timeMs / 1000.0f;
+        float t2 = dataset.samples[dataset.count - 1].timeMs / 1000.0f;
+        float dt = std::max(0.001f, t2 - t1);
+        initialSlope = (y2 - y1) / dt;
+    }
+
+    timeConstant = std::max(0.1f, t63 - deadTime);
+    return true;
+}
+
+void AsymmetricPIDModule::computeRecommendedPid(float processGain, float timeConstant, float deadTime, bool heating,
+                                                 float& kp, float& ki, float& kd) {
+    float effectiveGain = std::max(0.01f, processGain);
+    float effectiveTime = std::max(0.1f, timeConstant);
+    float effectiveDead = std::max(0.05f, deadTime);
+
+    float lambda = heating ? std::max(2.0f * effectiveDead, 0.5f * effectiveTime)
+                           : std::max(3.0f * effectiveDead, 1.2f * effectiveTime);
+
+    float baseKp = effectiveTime / (effectiveGain * (lambda + effectiveDead));
+    if (heating) {
+        baseKp *= 1.1f;
+    } else {
+        baseKp *= 0.8f;
+    }
+
+    float ti = effectiveTime + effectiveDead;
+    float td = (effectiveDead * effectiveTime) / (effectiveTime + effectiveDead);
+
+    kp = constrain(baseKp, 0.01f, 30.0f);
+    ki = constrain(kp / std::max(0.1f, ti), 0.0f, 5.0f);
+    kd = constrain(kp * td, 0.0f, 10.0f);
+}
+
+void AsymmetricPIDModule::appendSeries(JsonArray timestamps, JsonArray plateTemps, const AutotuneDataset& dataset,
+                                       JsonArray* coreTemps) {
+    if (dataset.count <= 0) {
+        return;
+    }
+
+    int stride = std::max(1, dataset.count / 120);
+    for (int i = 0; i < dataset.count; i += stride) {
+        timestamps.add(static_cast<float>(dataset.samples[i].timeMs) / 1000.0f);
+        plateTemps.add(dataset.samples[i].plateTemp);
+        if (coreTemps) {
+            coreTemps->add(dataset.samples[i].coreTemp);
+        }
+    }
+
+    if ((dataset.count - 1) % stride != 0) {
+        int idx = dataset.count - 1;
+        timestamps.add(static_cast<float>(dataset.samples[idx].timeMs) / 1000.0f);
+        plateTemps.add(dataset.samples[idx].plateTemp);
+        if (coreTemps) {
+            coreTemps->add(dataset.samples[idx].coreTemp);
+        }
+    }
+}
+
+void AsymmetricPIDModule::sendAutotuneResults(const AutotuneRecommendation& rec, const AutotuneDataset& heating,
+                                              const AutotuneDataset& cooling) {
+    DynamicJsonDocument doc(4096);
+    JsonObject root = doc.createNestedObject("autotune_results");
+
+    const char* status = "failed";
+    if (rec.valid) {
+        status = "complete";
+    } else if (rec.heatingValid || rec.coolingValid) {
+        status = "partial";
+    }
+    root["status"] = status;
+    root["target"] = Setpoint;
+    root["heating_step_percent"] = heating.stepPercent;
+    root["cooling_step_percent"] = cooling.stepPercent;
+
+    unsigned long stabilizationMs = 0;
+    if (autotuneSession.sessionStart > 0 && heating.startMillis > autotuneSession.sessionStart) {
+        stabilizationMs = heating.startMillis - autotuneSession.sessionStart;
+    }
+    unsigned long coolingEnd = 0;
+    if (cooling.count > 0) {
+        coolingEnd = cooling.startMillis + cooling.samples[cooling.count - 1].timeMs;
+    } else if (heating.count > 0) {
+        coolingEnd = heating.startMillis + heating.samples[heating.count - 1].timeMs;
+    }
+    if (coolingEnd > autotuneSession.sessionStart) {
+        root["duration_ms"] = coolingEnd - autotuneSession.sessionStart;
+    } else {
+        root["duration_ms"] = 0;
+    }
+    root["stabilization_ms"] = stabilizationMs;
+
+    JsonObject heatingObj = root.createNestedObject("heating");
+    heatingObj["valid"] = rec.heatingValid;
+    heatingObj["kp"] = rec.heatingKp;
+    heatingObj["ki"] = rec.heatingKi;
+    heatingObj["kd"] = rec.heatingKd;
+    heatingObj["process_gain"] = rec.heatingProcessGain;
+    heatingObj["time_constant"] = rec.heatingTimeConstant;
+    heatingObj["dead_time"] = rec.heatingDeadTime;
+    heatingObj["initial_slope"] = rec.heatingInitialSlope;
+    heatingObj["baseline"] = heating.baseline;
+    JsonArray heatingTimes = heatingObj.createNestedArray("timestamps");
+    JsonArray heatingTemps = heatingObj.createNestedArray("plate_temperatures");
+    JsonArray heatingCore = heatingObj.createNestedArray("core_temperatures");
+    appendSeries(heatingTimes, heatingTemps, heating, &heatingCore);
+
+    JsonObject coolingObj = root.createNestedObject("cooling");
+    coolingObj["valid"] = rec.coolingValid;
+    coolingObj["kp"] = rec.coolingKp;
+    coolingObj["ki"] = rec.coolingKi;
+    coolingObj["kd"] = rec.coolingKd;
+    coolingObj["process_gain"] = rec.coolingProcessGain;
+    coolingObj["time_constant"] = rec.coolingTimeConstant;
+    coolingObj["dead_time"] = rec.coolingDeadTime;
+    coolingObj["initial_slope"] = rec.coolingInitialSlope;
+    coolingObj["baseline"] = cooling.baseline;
+    JsonArray coolingTimes = coolingObj.createNestedArray("timestamps");
+    JsonArray coolingTemps = coolingObj.createNestedArray("plate_temperatures");
+    JsonArray coolingCore = coolingObj.createNestedArray("core_temperatures");
+    appendSeries(coolingTimes, coolingTemps, cooling, &coolingCore);
+
+    serializeJson(doc, Serial);
+    Serial.println();
+}
+
+void AsymmetricPIDModule::finalizeAutotune() {
+    applyAutotuneOutput(0.0f);
+
+    AutotuneRecommendation& rec = autotuneSession.recommendation;
+    float processGain = 0.0f;
+    float timeConstant = 0.0f;
+    float deadTime = 0.0f;
+    float initialSlope = 0.0f;
+
+    rec.heatingValid = calculateProcessParameters(autotuneSession.heating, processGain, timeConstant, deadTime, initialSlope);
+    if (rec.heatingValid) {
+        rec.heatingProcessGain = processGain;
+        rec.heatingTimeConstant = timeConstant;
+        rec.heatingDeadTime = deadTime;
+        rec.heatingInitialSlope = initialSlope;
+        computeRecommendedPid(processGain, timeConstant, deadTime, true, rec.heatingKp, rec.heatingKi, rec.heatingKd);
+    }
+
+    rec.coolingValid = calculateProcessParameters(autotuneSession.cooling, processGain, timeConstant, deadTime, initialSlope);
+    if (rec.coolingValid) {
+        rec.coolingProcessGain = processGain;
+        rec.coolingTimeConstant = timeConstant;
+        rec.coolingDeadTime = deadTime;
+        rec.coolingInitialSlope = initialSlope;
+        computeRecommendedPid(processGain, timeConstant, deadTime, false, rec.coolingKp, rec.coolingKi, rec.coolingKd);
+    }
+
+    rec.valid = rec.heatingValid && rec.coolingValid;
+
+    autotuneActive = false;
+    if (rec.valid) {
+        autotuneStatusString = "done";
+        comm.sendEvent("🎯 Asymmetric autotune completed");
+    } else if (rec.heatingValid || rec.coolingValid) {
+        autotuneStatusString = "partial";
+        comm.sendEvent("⚠️ Autotune completed with partial data");
+    } else {
+        autotuneStatusString = "failed";
+        comm.sendEvent("⛔ Autotune failed: insufficient response");
+    }
+
+    if (!rec.heatingValid && autotuneSession.heating.count == 0) {
+        comm.sendEvent("⚠️ Heating step produced no samples");
+    }
+    if (!rec.coolingValid && autotuneSession.cooling.count == 0) {
+        comm.sendEvent("⚠️ Cooling step produced no samples");
+    }
+
+    autotuneSession.phase = rec.valid ? AutotunePhase::kComplete : AutotunePhase::kFailed;
+
+    sendAutotuneResults(rec, autotuneSession.heating, autotuneSession.cooling);
+}
+
 void AsymmetricPIDModule::startAutotune() {
     startAsymmetricAutotune();
 }
 
 void AsymmetricPIDModule::startAsymmetricAutotune() {
-    if (autotuneActive) {
+    if (autotuneActive || emergencyStop || isFailsafeActive()) {
+        if (isFailsafeActive()) {
+            comm.sendEvent("⛔ Cannot start autotune while failsafe is active");
+        }
         return;
     }
+
+    resetAutotuneSession();
+    unsigned long now = millis();
+    autotuneSession.sessionStart = now;
+    autotuneSession.target = Setpoint;
+    autotuneSession.heating.startMillis = 0;
+    autotuneSession.cooling.startMillis = 0;
+
+    coolingPID.SetMode(MANUAL);
+    heatingPID.SetMode(MANUAL);
+    active = false;
+    applyAutotuneOutput(0.0f);
+
     autotuneActive = true;
-    autotuneStatusString = "running";
-    comm.sendEvent("🎯 Asymmetric autotune started (placeholder)");
-    performCoolingAutotune();
+    transitionAutotunePhase(AutotunePhase::kStabilizing, "stabilizing");
+    comm.sendEvent("🎯 Asymmetric autotune: stabilizing around setpoint");
 }
 
 void AsymmetricPIDModule::runAsymmetricAutotune() {
     if (!autotuneActive) {
         return;
     }
-    static unsigned long autotuneStart = 0;
-    if (autotuneStart == 0) {
-        autotuneStart = millis();
+    if (isFailsafeActive()) {
+        abortAutotune();
+        return;
     }
-    if (millis() - autotuneStart > 30000) {
+
+    unsigned long now = millis();
+    float plateTemp = sensors.getCoolingPlateTemp();
+    float coreTemp = sensors.getRectalTemp();
+
+    if (autotuneSession.lastDerivativeMillis != 0) {
+        unsigned long deltaMs = now - autotuneSession.lastDerivativeMillis;
+        if (deltaMs > 0) {
+            float deltaSeconds = static_cast<float>(deltaMs) / 1000.0f;
+            autotuneSession.currentSlope = (plateTemp - autotuneSession.lastDerivativeTemp) / deltaSeconds;
+        }
+    }
+    autotuneSession.lastDerivativeMillis = now;
+    autotuneSession.lastDerivativeTemp = plateTemp;
+
+    if (autotuneSession.sessionStart > 0 && (now - autotuneSession.sessionStart) > kAutotuneMaxSessionDurationMs) {
         autotuneActive = false;
-        autotuneStatusString = "done";
-        comm.sendEvent("🎯 Asymmetric autotune completed (placeholder)");
-        autotuneStart = 0;
+        autotuneStatusString = "failed";
+        comm.sendEvent("⛔ Autotune aborted: timeout");
+        applyAutotuneOutput(0.0f);
+        return;
+    }
+
+    switch (autotuneSession.phase) {
+        case AutotunePhase::kStabilizing: {
+            applyAutotuneOutput(0.0f);
+            bool withinBand = fabs(plateTemp - autotuneSession.target) <= kAutotuneStabilityTolerance;
+            bool slopeStable = fabs(autotuneSession.currentSlope) <= kAutotuneSlopeTolerance;
+            if (withinBand && slopeStable) {
+                if (autotuneSession.stabilityStart == 0) {
+                    autotuneSession.stabilityStart = now;
+                } else if (now - autotuneSession.stabilityStart >= kAutotuneStabilityDurationMs) {
+                    autotuneSession.heating.startMillis = now;
+                    autotuneSession.heating.count = 0;
+                    autotuneSession.heating.baseline = plateTemp;
+                    logAutotuneSample(autotuneSession.heating, now, plateTemp, coreTemp);
+                    transitionAutotunePhase(AutotunePhase::kHeatingStep, "heating_step");
+                    autotuneSession.lastSampleMillis = now;
+                    comm.sendEvent("🔥 Autotune: applying heating step");
+                }
+            } else {
+                autotuneSession.stabilityStart = 0;
+            }
+            break;
+        }
+        case AutotunePhase::kHeatingStep: {
+            applyAutotuneOutput(kAutotuneHeatingStepPercent);
+            if (autotuneSession.lastSampleMillis == 0 ||
+                now - autotuneSession.lastSampleMillis >= kAutotuneSampleIntervalMs) {
+                logAutotuneSample(autotuneSession.heating, now, plateTemp, coreTemp);
+                autotuneSession.lastSampleMillis = now;
+            }
+
+            bool reachedDelta = fabs(plateTemp - autotuneSession.heating.baseline) >= kAutotuneTargetDelta;
+            bool timeout = (now - autotuneSession.stateStart) >= kAutotuneMaxStepDurationMs;
+            if (datasetFull(autotuneSession.heating) || reachedDelta || timeout) {
+                transitionAutotunePhase(AutotunePhase::kHeatingRecover, "heating_recover");
+                applyAutotuneOutput(0.0f);
+                comm.sendEvent("♨️ Heating step recorded – waiting for plate to settle");
+            }
+            break;
+        }
+        case AutotunePhase::kHeatingRecover: {
+            applyAutotuneOutput(0.0f);
+            bool withinBand = fabs(plateTemp - autotuneSession.target) <= kAutotuneRecoveryTolerance;
+            bool slopeStable = fabs(autotuneSession.currentSlope) <= kAutotuneSlopeTolerance;
+            if (withinBand && slopeStable) {
+                if (autotuneSession.stabilityStart == 0) {
+                    autotuneSession.stabilityStart = now;
+                } else if (now - autotuneSession.stabilityStart >= kAutotuneRecoveryHoldMs) {
+                    autotuneSession.cooling.startMillis = now;
+                    autotuneSession.cooling.count = 0;
+                    autotuneSession.cooling.baseline = plateTemp;
+                    logAutotuneSample(autotuneSession.cooling, now, plateTemp, coreTemp);
+                    transitionAutotunePhase(AutotunePhase::kCoolingStep, "cooling_step");
+                    autotuneSession.lastSampleMillis = now;
+                    comm.sendEvent("❄️ Autotune: applying cooling step");
+                }
+            } else {
+                autotuneSession.stabilityStart = 0;
+            }
+            break;
+        }
+        case AutotunePhase::kCoolingStep: {
+            applyAutotuneOutput(kAutotuneCoolingStepPercent);
+            if (autotuneSession.lastSampleMillis == 0 ||
+                now - autotuneSession.lastSampleMillis >= kAutotuneSampleIntervalMs) {
+                logAutotuneSample(autotuneSession.cooling, now, plateTemp, coreTemp);
+                autotuneSession.lastSampleMillis = now;
+            }
+
+            bool reachedDelta = fabs(plateTemp - autotuneSession.cooling.baseline) >= kAutotuneTargetDelta;
+            bool timeout = (now - autotuneSession.stateStart) >= kAutotuneMaxStepDurationMs;
+            if (datasetFull(autotuneSession.cooling) || reachedDelta || timeout) {
+                transitionAutotunePhase(AutotunePhase::kCoolingRecover, "cooling_recover");
+                applyAutotuneOutput(0.0f);
+                comm.sendEvent("❄️ Cooling step recorded – monitoring recovery");
+            }
+            break;
+        }
+        case AutotunePhase::kCoolingRecover: {
+            applyAutotuneOutput(0.0f);
+            bool withinBand = fabs(plateTemp - autotuneSession.target) <= kAutotuneRecoveryTolerance;
+            bool slopeStable = fabs(autotuneSession.currentSlope) <= kAutotuneSlopeTolerance;
+            if (withinBand && slopeStable) {
+                if (autotuneSession.stabilityStart == 0) {
+                    autotuneSession.stabilityStart = now;
+                } else if (now - autotuneSession.stabilityStart >= kAutotuneRecoveryHoldMs) {
+                    finalizeAutotune();
+                }
+            } else {
+                autotuneSession.stabilityStart = 0;
+            }
+            break;
+        }
+        case AutotunePhase::kComplete:
+        case AutotunePhase::kFailed:
+        case AutotunePhase::kIdle:
+        default:
+            applyAutotuneOutput(0.0f);
+            break;
     }
 }
 
-void AsymmetricPIDModule::performCoolingAutotune() {
-    comm.sendEvent("❄️ Performing cooling autotune (placeholder)");
-}
+void AsymmetricPIDModule::performCoolingAutotune() {}
 
-void AsymmetricPIDModule::performHeatingAutotune() {
-    comm.sendEvent("🔥 Performing heating autotune (placeholder)");
-}
+void AsymmetricPIDModule::performHeatingAutotune() {}
 
 void AsymmetricPIDModule::abortAutotune() {
+    applyAutotuneOutput(0.0f);
     autotuneActive = false;
     autotuneStatusString = "aborted";
+    autotuneSession.phase = AutotunePhase::kFailed;
     comm.sendEvent("⛔ Asymmetric autotune aborted");
+}
+
+bool AsymmetricPIDModule::hasAutotuneRecommendations() const {
+    return autotuneSession.recommendation.valid;
+}
+
+bool AsymmetricPIDModule::applyAutotuneRecommendations() {
+    if (!autotuneSession.recommendation.valid) {
+        return false;
+    }
+
+    setHeatingPID(autotuneSession.recommendation.heatingKp,
+                  autotuneSession.recommendation.heatingKi,
+                  autotuneSession.recommendation.heatingKd,
+                  false);
+    setCoolingPID(autotuneSession.recommendation.coolingKp,
+                  autotuneSession.recommendation.coolingKi,
+                  autotuneSession.recommendation.coolingKd,
+                  false);
+    saveAsymmetricParams();
+    comm.sendEvent("💾 Asymmetric autotune parameters committed");
+
+    autotuneSession.recommendation.valid = false;
+    return true;
 }
 
 void AsymmetricPIDModule::saveAsymmetricParams() {

@@ -211,6 +211,12 @@ void CommAPI::handleCommand(const String &jsonString) {
         } else if (action == "abort_asymmetric_autotune") {
             pid.abortAutotune();
             sendResponse("Asymmetric autotune aborted");
+        } else if (action == "apply_asymmetric_autotune") {
+            if (pid.applyAutotuneRecommendations()) {
+                sendResponse("Asymmetric autotune values applied");
+            } else {
+                sendResponse("Autotune results not available");
+            }
         } else {
             sendResponse("Unknown CMD action");
         }

@@ -5,6 +5,11 @@
 #include "sensor_module.h"
 #include "pressure_module.h"
 #include "eeprom_manager.h"
+#include "system_config.h"
+
+// Sett til true for å bruke den innebygde simulatoren under utvikling.
+// Standard er live-modus for å unngå at simulasjonsdata når PID ved testing.
+const bool USE_SIMULATION = false;
 
 // === Eksterne moduler ===
 AsymmetricPIDModule pid;
@@ -31,6 +36,12 @@ void setup() {
 
     // Init system tasks (heartbeat, failsafe, etc.)
     initTasks();
+
+    if (USE_SIMULATION) {
+        comm.sendEvent("🧪 Simulation mode enabled");
+    } else {
+        comm.sendEvent("🧊 Live hardware mode enabled");
+    }
 
     // Send ferdig event til GUI
     comm.sendEvent("✅ Musehypothermi system initialized");

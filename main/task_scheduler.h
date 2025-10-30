@@ -9,6 +9,8 @@ void triggerFailsafe(const char* reason);
 void clearFailsafe();
 bool isFailsafeActive();
 const char* getFailsafeReason();
+bool isBreathingFailsafeEnabled();
+void setBreathingFailsafeEnabled(bool enabled);
 
 // Heartbeat monitor
 void heartbeatReceived();

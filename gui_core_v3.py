@@ -1330,6 +1330,11 @@ class MainWindow(QMainWindow):
         advanced_layout.addWidget(self.requestStatusButton, 2, 0)
         advanced_layout.addWidget(self.clearFailsafeButton, 2, 1)
 
+        self.breathFailsafeCheckbox = QCheckBox("Breathing failsafe enabled")
+        self.breathFailsafeCheckbox.setChecked(True)
+        self.breathFailsafeCheckbox.stateChanged.connect(self.toggle_breathing_failsafe)
+        advanced_layout.addWidget(self.breathFailsafeCheckbox, 3, 0, 1, 2)
+
         advanced_group.setLayout(advanced_layout)
         layout.addWidget(advanced_group)
 
@@ -1644,6 +1649,13 @@ class MainWindow(QMainWindow):
                 else:
                     self.failsafeIndicator.setText("🟢 Safe")
                     self.failsafeIndicator.setStyleSheet("color: #28a745; font-weight: bold;")
+
+            if "breathing_failsafe_enabled" in data and hasattr(self, "breathFailsafeCheckbox"):
+                enabled = bool(data["breathing_failsafe_enabled"])
+                if self.breathFailsafeCheckbox.isChecked() != enabled:
+                    self.breathFailsafeCheckbox.blockSignals(True)
+                    self.breathFailsafeCheckbox.setChecked(enabled)
+                    self.breathFailsafeCheckbox.blockSignals(False)
 
             # PID status
             if "pid_output" in data:
@@ -1963,23 +1975,26 @@ class MainWindow(QMainWindow):
     def trigger_panic(self):
         """Emergency panic"""
         try:
-            reply = QMessageBox.question(
-                self, "🚨 EMERGENCY PANIC", 
-                "Trigger emergency panic?\n\nThis stops all operations!",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No
+            if not self.connection_established:
+                self.log("❌ Not connected", "error")
+                return
+
+            self.serial_manager.sendCMD("panic", "")
+            self.event_logger.log_event("CMD: panic triggered")
+            self.log("🚨 PANIC TRIGGERED!", "error")
+
+            panic_box = QMessageBox(self)
+            panic_box.setIcon(QMessageBox.Critical)
+            panic_box.setWindowTitle("DON'T PANIC")
+            panic_box.setTextFormat(Qt.RichText)
+            panic_box.setText(
+                "<h2 style='color:#b22222;'>DON'T PANIC</h2>"
+                "<p>Panic-knappen er trykket. Finn frem håndkleet ditt og hold roen.</p>"
             )
-            
-            if reply == QMessageBox.Yes:
-                if not self.connection_established:
-                    self.log("❌ Not connected", "error")
-                    return
-                    
-                self.serial_manager.sendCMD("panic", "")
-                self.event_logger.log_event("CMD: panic triggered")
-                self.log("🚨 PANIC TRIGGERED!", "error")
-                QMessageBox.critical(self, "PANIC", "🚨 PANIC triggered!")
-                
+            panic_box.setInformativeText("Nødstoppsignalet ble sendt umiddelbart.")
+            panic_box.setStandardButtons(QMessageBox.Ok)
+            panic_box.exec()
+
         except Exception as e:
             self.log(f"❌ Panic error: {e}", "error")
 
@@ -2519,6 +2534,17 @@ class MainWindow(QMainWindow):
                 
         except Exception as e:
             self.log(f"❌ Sync error: {e}", "error")
+
+    def toggle_breathing_failsafe(self, state: int):
+        enabled = state == Qt.Checked
+
+        if not self.connection_established:
+            self.log("⚠️ Not connected - cannot update breathing failsafe", "warning")
+            return
+
+        if self.send_asymmetric_command("set_breathing_failsafe", {"enabled": enabled}):
+            status = "enabled" if enabled else "disabled"
+            self.log(f"🫁 Breathing failsafe {status}", "info")
 
     def request_status(self):
         """Request status"""

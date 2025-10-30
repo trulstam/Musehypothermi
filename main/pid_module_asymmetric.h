@@ -2,8 +2,11 @@
 #define PID_MODULE_ASYMMETRIC_H
 
 #include <PID_v1.h>
+#include <ArduinoJson.h>
 #include "eeprom_manager.h"
 #include "pwm_module.h"
+
+#include <stddef.h>
 
 // Forward declarations for external functions
 bool isFailsafeActive();
@@ -91,7 +94,9 @@ public:
     void abortAutotune();
     bool isAutotuneActive() { return autotuneActive; }
     const char* getAutotuneStatus();
-    
+    bool hasAutotuneRecommendations() const;
+    bool applyAutotuneRecommendations();
+
     // Debug methods
     void enableDebug(bool enable);
     bool isDebugEnabled();
@@ -150,10 +155,88 @@ private:
     void updatePIDMode(double error);
     void switchToCoolingPID();
     void switchToHeatingPID();
-    
+
     // Enhanced autotune
     void performCoolingAutotune();
     void performHeatingAutotune();
+
+    struct AutotuneSample {
+        unsigned long timeMs;
+        float plateTemp;
+        float coreTemp;
+        float pwmPercent;
+    };
+
+    struct AutotuneDataset {
+        AutotuneSample samples[600];
+        int count;
+        unsigned long startMillis;
+        float stepPercent;
+        float baseline;
+    };
+
+    struct AutotuneRecommendation {
+        bool valid;
+        bool heatingValid;
+        bool coolingValid;
+        float heatingKp;
+        float heatingKi;
+        float heatingKd;
+        float coolingKp;
+        float coolingKi;
+        float coolingKd;
+        float heatingProcessGain;
+        float heatingTimeConstant;
+        float heatingDeadTime;
+        float heatingInitialSlope;
+        float coolingProcessGain;
+        float coolingTimeConstant;
+        float coolingDeadTime;
+        float coolingInitialSlope;
+    };
+
+    enum class AutotunePhase {
+        kIdle,
+        kStabilizing,
+        kHeatingStep,
+        kHeatingRecover,
+        kCoolingStep,
+        kCoolingRecover,
+        kComplete,
+        kFailed,
+    };
+
+    struct AutotuneSession {
+        AutotunePhase phase;
+        unsigned long sessionStart;
+        unsigned long stateStart;
+        unsigned long lastSampleMillis;
+        unsigned long lastDerivativeMillis;
+        float lastDerivativeTemp;
+        float currentSlope;
+        unsigned long stabilityStart;
+        float target;
+        AutotuneDataset heating;
+        AutotuneDataset cooling;
+        AutotuneRecommendation recommendation;
+    };
+
+    AutotuneSession autotuneSession;
+
+    void resetAutotuneSession();
+    void transitionAutotunePhase(AutotunePhase nextPhase, const char* statusMessage);
+    void applyAutotuneOutput(float percent);
+    void logAutotuneSample(AutotuneDataset& dataset, unsigned long now, float plateTemp, float coreTemp);
+    bool datasetFull(const AutotuneDataset& dataset) const;
+    bool calculateProcessParameters(const AutotuneDataset& dataset, float& processGain, float& timeConstant,
+                                    float& deadTime, float& initialSlope);
+    void computeRecommendedPid(float processGain, float timeConstant, float deadTime, bool heating,
+                               float& kp, float& ki, float& kd);
+    void finalizeAutotune();
+    void sendAutotuneResults(const AutotuneRecommendation& rec, const AutotuneDataset& heating,
+                             const AutotuneDataset& cooling);
+    void appendSeries(JsonArray timestamps, JsonArray plateTemps, const AutotuneDataset& dataset,
+                      JsonArray* coreTemps = nullptr);
 };
 
 #endif // PID_MODULE_ASYMMETRIC_H

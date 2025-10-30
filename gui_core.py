@@ -1224,19 +1224,26 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(400, self.request_status)
 
     def trigger_panic(self):
-        """Trigger emergency panic with confirmation"""
-        reply = QMessageBox.question(
-            self, "EMERGENCY PANIC", 
-            "Are you sure you want to trigger emergency panic?\n\nThis will immediately stop all operations!",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No
+        """Trigger emergency panic"""
+        if not self.serial_manager.is_connected():
+            self.log("❌ Not connected", "error")
+            return
+
+        self.serial_manager.sendCMD("panic", "")
+        self.event_logger.log_event("CMD: panic triggered")
+        self.log("🚨 PANIC TRIGGERED!", "error")
+
+        panic_box = QMessageBox(self)
+        panic_box.setIcon(QMessageBox.Critical)
+        panic_box.setWindowTitle("DON'T PANIC")
+        panic_box.setTextFormat(Qt.RichText)
+        panic_box.setText(
+            "<h2 style='color:#b22222;'>DON'T PANIC</h2>"
+            "<p>Panic-knappen er trykket. Finn frem håndkleet ditt og hold roen.</p>"
         )
-        
-        if reply == QMessageBox.Yes:
-            self.serial_manager.sendCMD("panic", "")
-            self.event_logger.log_event("CMD: panic triggered")
-            self.log("🚨 PANIC TRIGGERED!", "error")
-            QMessageBox.critical(self, "PANIC", "🚨 PANIC triggered! Manual intervention required.")
+        panic_box.setInformativeText("Nødstoppsignalet ble sendt umiddelbart.")
+        panic_box.setStandardButtons(QMessageBox.Ok)
+        panic_box.exec()
 
     def clear_failsafe(self):
         """Clear failsafe state"""

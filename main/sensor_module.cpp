@@ -7,6 +7,15 @@
 
 extern AsymmetricPIDModule pid;
 
+namespace {
+double mapDouble(double x, double in_min, double in_max, double out_min, double out_max) {
+  if (in_max - in_min == 0.0) {
+    return out_min;
+  }
+  return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
+}
+}
+
 static double coolingPlateTemp = 22.0;
 static double rectalTemp = 37.0;
 
@@ -44,7 +53,7 @@ void SensorModule::update() {
     double deltaTempPlate = deltaQPlate / (plateThermalMass * plateSpecificHeat);
     coolingPlateTemp += deltaTempPlate;
 
-    double metabolicPower = map(rectalTemp, 14.0, 37.0, 0.01, 0.21);
+    double metabolicPower = mapDouble(rectalTemp, 14.0, 37.0, 0.01, 0.21);
 
     double deltaQRectal = rectalCoupling * (coolingPlateTemp - rectalTemp) * deltaTime
                         + metabolicPower * deltaTime;
@@ -52,10 +61,10 @@ void SensorModule::update() {
     rectalTemp += deltaTempRectal;
 
     coolingPlateTemp = constrain(coolingPlateTemp, -10.0, 50.0);
-    rectalTemp = constrain(rectalTemp, 14.0, 40.0);
+    rectalTemp = constrain(rectalTemp, 14.0, 45.0);
 
     int adcNoiseRaw = analogRead(A3);
-    double noise = map(adcNoiseRaw, 0, 16383, -0.05, 0.05);
+    double noise = mapDouble(static_cast<double>(adcNoiseRaw), 0.0, 16383.0, -0.05, 0.05);
 
     cachedCoolingPlateTemp = coolingPlateTemp + calibrationOffsetCooling + noise;
     cachedRectalTemp = rectalTemp + calibrationOffsetRectal + noise;

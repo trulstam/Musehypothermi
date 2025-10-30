@@ -29,7 +29,9 @@ unsigned long lastHeartbeatMillis = 0;
 
 // === Failsafe parametre (oppdatert fra EEPROM i initTasks) ===
 int heartbeatTimeoutMs = 5000;  // default, lastes i initTasks
-int breathingTimeoutMs = 10000; // kan lastes fra EEPROM senere
+int breathingTimeoutMs = 120000; // kan lastes fra EEPROM senere
+
+static unsigned long lastBreathingDetectedMillis = 0;
 
 // === Panic Button ===
 #define PANIC_BUTTON_PIN 12
@@ -56,6 +58,7 @@ void triggerFailsafe(const char* reason) {
 void clearFailsafe() {
     failsafeActive = false;
     failsafeReason = "";
+    lastBreathingDetectedMillis = millis();
 }
 
 bool isFailsafeActive() {
@@ -100,6 +103,7 @@ void initTasks() {
     lastPressureUpdate = now;
     lastProfileUpdate = now;
     lastHeartbeatMillis = now;
+    lastBreathingDetectedMillis = now;
 }
 
 // === Check panic button (deaktivert – pin ikke koblet) ===
@@ -134,6 +138,15 @@ void runTasks() {
     if (now - lastSensorUpdate >= 100) {
         sensors.update();
         lastSensorUpdate = now;
+
+        double rectalTemp = sensors.getRectalTemp();
+        if (rectalTemp > 40.5) {
+            triggerFailsafe("rectal_temp_high");
+        }
+    }
+
+    if (isFailsafeActive()) {
+        return;
     }
 
     // === PRESSURE UPDATE (Breathing monitor) ===
@@ -142,8 +155,12 @@ void runTasks() {
         lastPressureUpdate = now;
 
         float breathRate = pressure.getBreathRate();
-        if (!isnan(breathRate) && breathRate < 1.0f) {
-            triggerFailsafe("no_breathing_detected");
+        if (!isnan(breathRate)) {
+            if (breathRate >= 1.0f) {
+                lastBreathingDetectedMillis = now;
+            } else if (now - lastBreathingDetectedMillis > (unsigned long)breathingTimeoutMs) {
+                triggerFailsafe("no_breathing_detected");
+            }
         }
     }
 

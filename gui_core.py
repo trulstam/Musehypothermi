@@ -348,27 +348,44 @@ class MainWindow(QMainWindow):
         # Autotune + Advanced
         bottom_layout = QHBoxLayout()
         bottom_layout.setSpacing(10)
-        
-        # Autotune
-        autotune_group = QGroupBox("Autotune")
-        autotune_group.setMaximumWidth(200)
-        autotune_layout = QHBoxLayout()
-        autotune_layout.setSpacing(5)
-        
-        self.autotuneButton = QPushButton("Start")
-        self.autotuneButton.clicked.connect(self.start_autotune)
-        self.autotuneButton.setFixedSize(60, 25)
-        
-        self.abortAutotuneButton = QPushButton("Abort")
-        self.abortAutotuneButton.clicked.connect(self.abort_autotune)
-        self.abortAutotuneButton.setVisible(False)
-        self.abortAutotuneButton.setFixedSize(60, 25)
-        self.abortAutotuneButton.setStyleSheet("background-color: orange; font-weight: bold;")
-        
-        autotune_layout.addWidget(self.autotuneButton)
-        autotune_layout.addWidget(self.abortAutotuneButton)
-        autotune_layout.addStretch()
-        
+
+        # Asymmetric Autotune
+        autotune_group = QGroupBox("🎯 Asymmetric Autotune")
+        autotune_group.setMaximumWidth(260)
+        autotune_layout = QVBoxLayout()
+        autotune_layout.setSpacing(6)
+
+        autotune_info = QLabel("Tester både varme og kulde for å foreslå nye PID-verdier.")
+        autotune_info.setWordWrap(True)
+        autotune_info.setStyleSheet("color: #6c757d; font-size: 10px;")
+        autotune_layout.addWidget(autotune_info)
+
+        status_row = QHBoxLayout()
+        status_label = QLabel("Status:")
+        status_label.setStyleSheet("font-weight: bold;")
+        self.autotuneStatusValue = QLabel("Idle")
+        self.autotuneStatusValue.setStyleSheet("color: #6c757d; font-size: 11px;")
+        status_row.addWidget(status_label)
+        status_row.addWidget(self.autotuneStatusValue)
+        status_row.addStretch()
+        autotune_layout.addLayout(status_row)
+
+        self.startAsymmetricAutotuneButton = QPushButton("🎯 Start Asymmetric Autotune")
+        self.startAsymmetricAutotuneButton.clicked.connect(self.start_asymmetric_autotune)
+        self.startAsymmetricAutotuneButton.setStyleSheet(
+            "background-color: #6f42c1; color: white; font-weight: bold;"
+        )
+
+        self.abortAsymmetricAutotuneButton = QPushButton("⛔ Abort Autotune")
+        self.abortAsymmetricAutotuneButton.clicked.connect(self.abort_asymmetric_autotune)
+        self.abortAsymmetricAutotuneButton.setVisible(False)
+        self.abortAsymmetricAutotuneButton.setStyleSheet(
+            "background-color: #fd7e14; color: white; font-weight: bold;"
+        )
+
+        autotune_layout.addWidget(self.startAsymmetricAutotuneButton)
+        autotune_layout.addWidget(self.abortAsymmetricAutotuneButton)
+
         autotune_group.setLayout(autotune_layout)
         bottom_layout.addWidget(autotune_group)
         
@@ -803,10 +820,29 @@ class MainWindow(QMainWindow):
             if not self.serial_manager.is_connected():
                 self.log("❌ Cannot send command - not connected", "error")
                 return False
-                
+
             self.serial_manager.sendCMD(action, state)
             self.event_logger.log_event(f"CMD: {action} → {state}")
             self.log(f"🛰️ Sent CMD: {action} = {state}")
+            return True
+        except Exception as e:
+            self.log(f"❌ Error sending command: {e}", "error")
+            return False
+
+    def send_asymmetric_command(self, action, params=None):
+        """Send extended command payloads for asymmetric autotune and tuning"""
+        if params is None:
+            params = {}
+
+        if not self.serial_manager.is_connected():
+            self.log("❌ Cannot send command - not connected", "error")
+            return False
+
+        try:
+            payload = {"CMD": {"action": action, "params": params}}
+            self.serial_manager.send(json.dumps(payload))
+            self.event_logger.log_event(f"CMD: {action} → {params}")
+            self.log(f"🛰️ Sent CMD: {action}")
             return True
         except Exception as e:
             self.log(f"❌ Error sending command: {e}", "error")
@@ -825,19 +861,41 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(200, lambda: self.serial_manager.sendCMD("get", "status"))
         QTimer.singleShot(400, lambda: self.serial_manager.sendCMD("get", "config"))
 
-    def start_autotune(self):
-        """Start autotune with proper state management"""
-        if self.send_and_log_cmd("pid", "autotune"):
-            self.autotune_in_progress = True
-            self.autotuneButton.setVisible(False)
-            self.abortAutotuneButton.setVisible(True)
-            self.autotuneStatusLabel.setText("Starting...")
-            self.log("🔄 Autotune starting...")
+    def start_asymmetric_autotune(self):
+        """Start asymmetric autotune with safety confirmation"""
+        if not self.connection_established:
+            self.log("❌ Not connected", "error")
+            return
 
-    def abort_autotune(self):
-        """Abort autotune with proper state management"""
-        if self.send_and_log_cmd("pid", "abort_autotune"):
-            self.log("⛔ Autotune abort requested...")
+        reply = QMessageBox.question(
+            self,
+            "🎯 Asymmetric Autotune",
+            "Kjør automatisk tuningssekvens?\n\n"
+            "Prosessen vil teste både kjøling og oppvarming for å foreslå nye PID-verdier.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+
+        if reply == QMessageBox.Yes:
+            if self.send_asymmetric_command("start_asymmetric_autotune"):
+                self.autotune_in_progress = True
+                self.startAsymmetricAutotuneButton.setVisible(False)
+                self.abortAsymmetricAutotuneButton.setVisible(True)
+                self.autotuneStatusLabel.setText("Starter...")
+                self.autotuneStatusValue.setText("Starter...")
+                self.log("🎯 Asymmetrisk autotune starter...", "command")
+
+    def abort_asymmetric_autotune(self):
+        """Abort asymmetric autotune"""
+        if self.send_asymmetric_command("abort_asymmetric_autotune"):
+            self.log("⛔ Asymmetrisk autotune avbrutt", "warning")
+
+    # Backwards compatible wrappers
+    def start_autotune(self):  # pragma: no cover - retained for legacy menu bindings
+        self.start_asymmetric_autotune()
+
+    def abort_autotune(self):  # pragma: no cover - retained for legacy menu bindings
+        self.abort_asymmetric_autotune()
 
     def set_max_output_limit(self):
         """Set maximum PID output with validation and better feedback"""
@@ -1142,20 +1200,42 @@ class MainWindow(QMainWindow):
                     self.failsafeLabel.setStyleSheet("color: green; font-weight: bold;")
 
             # Update autotune status
-            if "autotune_active" in data:
-                is_active = data["autotune_active"]
-                self.autotune_in_progress = is_active
-                
-                if is_active:
-                    self.autotuneButton.setVisible(False)
-                    self.abortAutotuneButton.setVisible(True)
-                    status = data.get("autotune_status", "running")
-                    self.autotuneStatusLabel.setText(f"Active: {status}")
+            status_payload = None
+            if "asymmetric_autotune_active" in data:
+                status_payload = (
+                    data["asymmetric_autotune_active"],
+                    data.get("autotune_status", "idle"),
+                )
+            elif "autotune_active" in data:
+                status_payload = (
+                    data["autotune_active"],
+                    data.get("autotune_status", "idle"),
+                )
+
+            if status_payload:
+                is_active, status_raw = status_payload
+                previous_state = self.autotune_in_progress
+                self.autotune_in_progress = bool(is_active)
+
+                status_text = str(status_raw).replace("_", " ").title()
+                status_style = "color: #6c757d; font-size: 11px;"
+
+                if self.autotune_in_progress:
+                    self.startAsymmetricAutotuneButton.setVisible(False)
+                    self.abortAsymmetricAutotuneButton.setVisible(True)
+                    status_style = "color: #d6336c; font-weight: bold;"
+                    if not previous_state:
+                        self.log("🎯 Autotune kjører", "info")
                 else:
-                    self.autotuneButton.setVisible(True)
-                    self.abortAutotuneButton.setVisible(False)
-                    status = data.get("autotune_status", "idle")
-                    self.autotuneStatusLabel.setText(status.title())
+                    self.startAsymmetricAutotuneButton.setVisible(True)
+                    self.abortAsymmetricAutotuneButton.setVisible(False)
+                    if previous_state:
+                        self.log("✅ Autotune fullført", "success")
+
+                self.autotuneStatusLabel.setText(status_text)
+                self.autotuneStatusLabel.setStyleSheet(status_style)
+                self.autotuneStatusValue.setText(status_text)
+                self.autotuneStatusValue.setStyleSheet(status_style)
 
             # Update profile status
             if "profile_active" in data:
@@ -1224,19 +1304,26 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(400, self.request_status)
 
     def trigger_panic(self):
-        """Trigger emergency panic with confirmation"""
-        reply = QMessageBox.question(
-            self, "EMERGENCY PANIC", 
-            "Are you sure you want to trigger emergency panic?\n\nThis will immediately stop all operations!",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No
+        """Trigger emergency panic"""
+        if not self.serial_manager.is_connected():
+            self.log("❌ Not connected", "error")
+            return
+
+        self.serial_manager.sendCMD("panic", "")
+        self.event_logger.log_event("CMD: panic triggered")
+        self.log("🚨 PANIC TRIGGERED!", "error")
+
+        panic_box = QMessageBox(self)
+        panic_box.setIcon(QMessageBox.Critical)
+        panic_box.setWindowTitle("DON'T PANIC")
+        panic_box.setTextFormat(Qt.RichText)
+        panic_box.setText(
+            "<h2 style='color:#b22222;'>DON'T PANIC</h2>"
+            "<p>Panic-knappen er trykket. Finn frem håndkleet ditt og hold roen.</p>"
         )
-        
-        if reply == QMessageBox.Yes:
-            self.serial_manager.sendCMD("panic", "")
-            self.event_logger.log_event("CMD: panic triggered")
-            self.log("🚨 PANIC TRIGGERED!", "error")
-            QMessageBox.critical(self, "PANIC", "🚨 PANIC triggered! Manual intervention required.")
+        panic_box.setInformativeText("Nødstoppsignalet ble sendt umiddelbart.")
+        panic_box.setStandardButtons(QMessageBox.Ok)
+        panic_box.exec()
 
     def clear_failsafe(self):
         """Clear failsafe state"""
@@ -1561,7 +1648,8 @@ class MainWindow(QMainWindow):
         """Enable controls that require active connection"""
         controls = [
             self.startPIDButton, self.stopPIDButton, self.setPIDButton,
-            self.setSetpointButton, self.autotuneButton, self.setMaxOutputButton,
+            self.setSetpointButton, self.startAsymmetricAutotuneButton,
+            self.abortAsymmetricAutotuneButton, self.setMaxOutputButton,
             self.saveEEPROMButton, self.panicButton, self.clearFailsafeButton,
             self.fetchPIDButton
         ]
@@ -1575,9 +1663,10 @@ class MainWindow(QMainWindow):
         """Disable controls that require active connection"""
         controls = [
             self.startPIDButton, self.stopPIDButton, self.setPIDButton,
-            self.setSetpointButton, self.autotuneButton, self.setMaxOutputButton,
+            self.setSetpointButton, self.startAsymmetricAutotuneButton,
+            self.abortAsymmetricAutotuneButton, self.setMaxOutputButton,
             self.saveEEPROMButton, self.panicButton, self.clearFailsafeButton,
-            self.startProfileButton, self.pauseProfileButton, 
+            self.startProfileButton, self.pauseProfileButton,
             self.resumeProfileButton, self.stopProfileButton, self.fetchPIDButton
         ]
         

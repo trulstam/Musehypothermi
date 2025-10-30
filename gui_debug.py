@@ -360,6 +360,33 @@ class MainWindow(QMainWindow):
         button_layout.addWidget(self.panicButton)
         
         control_layout.addLayout(button_layout)
+
+        autotune_group = QGroupBox("🎯 Asymmetric Autotune")
+        autotune_layout = QVBoxLayout()
+        autotune_layout.setSpacing(6)
+
+        self.autotuneStatusLabel = QLabel("Idle")
+        self.autotuneStatusLabel.setStyleSheet("color: #6c757d; font-weight: bold;")
+        autotune_layout.addWidget(self.autotuneStatusLabel)
+
+        self.startAsymmetricAutotuneButton = QPushButton("🎯 Start Asymmetric Autotune")
+        self.startAsymmetricAutotuneButton.setStyleSheet(
+            "background-color: #6f42c1; color: white; font-weight: bold;"
+        )
+        self.startAsymmetricAutotuneButton.clicked.connect(self.start_asymmetric_autotune)
+
+        self.abortAsymmetricAutotuneButton = QPushButton("⛔ Abort Autotune")
+        self.abortAsymmetricAutotuneButton.setStyleSheet(
+            "background-color: #fd7e14; color: white; font-weight: bold;"
+        )
+        self.abortAsymmetricAutotuneButton.clicked.connect(self.abort_asymmetric_autotune)
+        self.abortAsymmetricAutotuneButton.setVisible(False)
+
+        autotune_layout.addWidget(self.startAsymmetricAutotuneButton)
+        autotune_layout.addWidget(self.abortAsymmetricAutotuneButton)
+        autotune_group.setLayout(autotune_layout)
+
+        control_layout.addWidget(autotune_group)
         control_group.setLayout(control_layout)
         layout.addWidget(control_group)
         
@@ -743,6 +770,41 @@ class MainWindow(QMainWindow):
                     # Update matplotlib graphs
                     self.update_matplotlib_graphs()
 
+            status_payload = None
+            if "asymmetric_autotune_active" in data:
+                status_payload = (
+                    data["asymmetric_autotune_active"],
+                    data.get("autotune_status", "idle"),
+                )
+            elif "autotune_active" in data:
+                status_payload = (
+                    data["autotune_active"],
+                    data.get("autotune_status", "idle"),
+                )
+
+            if status_payload:
+                is_active, status_raw = status_payload
+                previous_state = self.autotune_in_progress
+                self.autotune_in_progress = bool(is_active)
+
+                status_text = str(status_raw).replace("_", " ").title()
+                status_style = "color: #6c757d; font-weight: bold;"
+
+                if self.autotune_in_progress:
+                    self.startAsymmetricAutotuneButton.setVisible(False)
+                    self.abortAsymmetricAutotuneButton.setVisible(True)
+                    status_style = "color: #d6336c; font-weight: bold;"
+                    if not previous_state:
+                        self.log("🎯 Autotune kjører", "info")
+                else:
+                    self.startAsymmetricAutotuneButton.setVisible(True)
+                    self.abortAsymmetricAutotuneButton.setVisible(False)
+                    if previous_state:
+                        self.log("✅ Autotune fullført", "success")
+
+                self.autotuneStatusLabel.setText(status_text)
+                self.autotuneStatusLabel.setStyleSheet(status_style)
+
             # Handle events
             if "event" in data:
                 event_msg = data["event"]
@@ -764,13 +826,32 @@ class MainWindow(QMainWindow):
         if not self.serial_manager.is_connected():
             self.log("❌ Not connected - cannot send command", "error")
             return
-            
+
         try:
             self.serial_manager.sendCMD(action, state)
             self.event_logger.log_event(f"CMD: {action} -> {state}")
             self.log(f"📡 Sent CMD: {action} = {state}", "command")
         except Exception as e:
             self.log(f"❌ Command send error: {e}", "error")
+
+    def send_asymmetric_command(self, action, params=None):
+        """Send extended command payload"""
+        if params is None:
+            params = {}
+
+        if not self.serial_manager.is_connected():
+            self.log("❌ Not connected - cannot send command", "error")
+            return False
+
+        try:
+            payload = {"CMD": {"action": action, "params": params}}
+            self.serial_manager.send(json.dumps(payload))
+            self.event_logger.log_event(f"CMD: {action} -> {params}")
+            self.log(f"📡 Sent CMD: {action}", "command")
+            return True
+        except Exception as e:
+            self.log(f"❌ Command send error: {e}", "error")
+            return False
 
     def log(self, message, log_type="info"):
         """Enhanced logging"""
@@ -825,18 +906,51 @@ class MainWindow(QMainWindow):
         """Set manual setpoint"""
         try:
             value = float(self.setpointInput.text())
-            
+
             if not self.serial_manager.is_connected():
                 self.log("❌ Not connected", "error")
                 return
-                
+
             self.serial_manager.sendSET("target_temp", value)
             self.log(f"✅ Target set to {value:.1f}°C", "success")
-            
+
         except ValueError:
             self.log("❌ Invalid target value", "error")
         except Exception as e:
             self.log(f"❌ Target set error: {e}", "error")
+
+    def start_asymmetric_autotune(self):
+        """Start asymmetric autotune"""
+        if not self.serial_manager.is_connected():
+            self.log("❌ Not connected", "error")
+            return
+
+        reply = QMessageBox.question(
+            self,
+            "🎯 Asymmetric Autotune",
+            "Kjør autotune som tester både varme og kulde?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+
+        if reply == QMessageBox.Yes:
+            if self.send_asymmetric_command("start_asymmetric_autotune"):
+                self.autotune_in_progress = True
+                self.autotuneStatusLabel.setText("Running...")
+                self.autotuneStatusLabel.setStyleSheet("color: #d6336c; font-weight: bold;")
+                self.startAsymmetricAutotuneButton.setVisible(False)
+                self.abortAsymmetricAutotuneButton.setVisible(True)
+                self.log("🎯 Asymmetrisk autotune startet", "command")
+
+    def abort_asymmetric_autotune(self):
+        """Abort asymmetric autotune"""
+        if self.send_asymmetric_command("abort_asymmetric_autotune"):
+            self.autotune_in_progress = False
+            self.autotuneStatusLabel.setText("Aborted")
+            self.autotuneStatusLabel.setStyleSheet("color: #6c757d; font-weight: bold;")
+            self.startAsymmetricAutotuneButton.setVisible(True)
+            self.abortAsymmetricAutotuneButton.setVisible(False)
+            self.log("⛔ Autotune avbrutt", "warning")
 
     def request_status(self):
         """Request status from Arduino"""

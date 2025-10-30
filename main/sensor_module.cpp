@@ -34,6 +34,17 @@ SensorModule::SensorModule()
 void SensorModule::begin() {
   analogReadResolution(14);
   analogReference(AR_EXTERNAL);  // Bruk AR_DEFAULT hvis ingen ekstern referanse
+
+  if (USE_SIMULATION) {
+    cachedCoolingPlateTemp = coolingPlateTemp;
+    cachedRectalTemp = rectalTemp;
+  } else {
+    int rawCooling = analogRead(COOLING_PLATE_PIN);
+    int rawRectal = analogRead(RECTAL_PROBE_PIN);
+
+    cachedCoolingPlateTemp = convertRawToTemp(rawCooling);
+    cachedRectalTemp = convertRawToTemp(rawRectal);
+  }
 }
 
 void SensorModule::update() {

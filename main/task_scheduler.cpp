@@ -139,9 +139,9 @@ void runTasks() {
         sensors.update();
         lastSensorUpdate = now;
 
-        double rectalTemp = sensors.getRectalTemp();
-        if (rectalTemp > 40.5) {
-            triggerFailsafe("rectal_temp_high");
+        double plateTemp = sensors.getCoolingPlateTemp();
+        if (plateTemp > 40.5) {
+            triggerFailsafe("plate_temp_high");
         }
     }
 

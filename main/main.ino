@@ -7,8 +7,9 @@
 #include "eeprom_manager.h"
 #include "system_config.h"
 
-// Sett til false for å bruke faktiske sensorer og aktuatorer.
-const bool USE_SIMULATION = true;
+// Sett til true for å bruke den innebygde simulatoren under utvikling.
+// Standard er live-modus for å unngå at simulasjonsdata når PID ved testing.
+const bool USE_SIMULATION = false;
 
 // === Eksterne moduler ===
 AsymmetricPIDModule pid;

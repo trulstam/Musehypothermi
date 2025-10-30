@@ -10,7 +10,7 @@ constexpr float kDefaultCoolingKi = 0.3f;
 constexpr float kDefaultCoolingKd = 0.8f;
 
 constexpr float kDefaultTargetTemp = 37.0f;
-constexpr float kDefaultMaxOutput = 35.0f;
+constexpr float kDefaultMaxOutput = 20.0f;
 constexpr float kDefaultCoolingRate = 2.0f;
 constexpr float kDefaultDeadband = 0.5f;
 constexpr float kDefaultSafetyMargin = 2.0f;

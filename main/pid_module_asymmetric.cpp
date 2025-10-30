@@ -14,6 +14,8 @@ extern CommAPI comm;
 int currentPwmOutput = 0;
 
 namespace {
+constexpr uint8_t kCoolingDirectionPin = 7;
+constexpr uint8_t kHeatingDirectionPin = 8;
 constexpr float kDefaultHeatingKp = 2.0f;
 constexpr float kDefaultHeatingKi = 0.5f;
 constexpr float kDefaultHeatingKd = 1.0f;
@@ -23,7 +25,8 @@ constexpr float kDefaultCoolingKi = 0.3f;
 constexpr float kDefaultCoolingKd = 0.8f;
 
 constexpr float kDefaultTargetTemp = 37.0f;
-constexpr float kDefaultMaxOutputPercent = 35.0f;
+constexpr float kDefaultMaxOutputPercent = 20.0f;
+constexpr float kStartupMaxOutputPercent = 20.0f;
 constexpr float kDefaultDeadband = 0.5f;
 constexpr float kDefaultSafetyMargin = 2.0f;
 constexpr float kDefaultCoolingRate = 2.0f;
@@ -108,6 +111,11 @@ void AsymmetricPIDModule::begin(EEPROMManager &eepromManager) {
     eeprom = &eepromManager;
     loadAsymmetricParams();
 
+    pinMode(kCoolingDirectionPin, OUTPUT);
+    pinMode(kHeatingDirectionPin, OUTPUT);
+    digitalWrite(kCoolingDirectionPin, LOW);
+    digitalWrite(kHeatingDirectionPin, LOW);
+
     // Configure both PID controllers
     coolingPID.SetSampleTime(kSampleTimeMs);
     heatingPID.SetSampleTime(kSampleTimeMs);
@@ -172,14 +180,14 @@ void AsymmetricPIDModule::update(double /*currentTemp*/) {
     int pwmValue = constrain(static_cast<int>(magnitude * MAX_PWM / 100.0), 0, MAX_PWM);
 
     if (finalOutput > 0.0) {
-        digitalWrite(8, LOW);
-        digitalWrite(7, HIGH);
+        digitalWrite(kHeatingDirectionPin, LOW);
+        digitalWrite(kCoolingDirectionPin, HIGH);
     } else if (finalOutput < 0.0) {
-        digitalWrite(8, HIGH);
-        digitalWrite(7, LOW);
+        digitalWrite(kHeatingDirectionPin, HIGH);
+        digitalWrite(kCoolingDirectionPin, LOW);
     } else {
-        digitalWrite(8, LOW);
-        digitalWrite(7, LOW);
+        digitalWrite(kHeatingDirectionPin, LOW);
+        digitalWrite(kCoolingDirectionPin, LOW);
     }
 
     pwm.setDutyCycle(pwmValue);
@@ -504,6 +512,8 @@ void AsymmetricPIDModule::loadAsymmetricParams() {
     float storedDeadband = kDefaultDeadband;
     float storedMargin = kDefaultSafetyMargin;
 
+    bool startupLimitApplied = false;
+
     if (eeprom) {
         eeprom->loadHeatingPIDParams(heatingKp, heatingKi, heatingKd);
         if (shouldRestorePID(heatingKp, heatingKi, heatingKd)) {
@@ -535,6 +545,10 @@ void AsymmetricPIDModule::loadAsymmetricParams() {
             heatingLimit = kDefaultMaxOutputPercent;
             eeprom->saveHeatingMaxOutput(heatingLimit);
             restoredDefaults = true;
+        } else if (heatingLimit > kStartupMaxOutputPercent) {
+            heatingLimit = kStartupMaxOutputPercent;
+            eeprom->saveHeatingMaxOutput(heatingLimit);
+            startupLimitApplied = true;
         }
 
         eeprom->loadCoolingMaxOutput(coolingLimit);
@@ -542,6 +556,10 @@ void AsymmetricPIDModule::loadAsymmetricParams() {
             coolingLimit = kDefaultMaxOutputPercent;
             eeprom->saveCoolingMaxOutput(coolingLimit);
             restoredDefaults = true;
+        } else if (coolingLimit > kStartupMaxOutputPercent) {
+            coolingLimit = kStartupMaxOutputPercent;
+            eeprom->saveCoolingMaxOutput(coolingLimit);
+            startupLimitApplied = true;
         }
 
         eeprom->loadCoolingRateLimit(storedRate);
@@ -594,6 +612,10 @@ void AsymmetricPIDModule::loadAsymmetricParams() {
 
     if (restoredDefaults) {
         Serial.println(F("[PID] Restored asymmetric defaults due to invalid EEPROM data"));
+    }
+
+    if (startupLimitApplied) {
+        comm.sendEvent("🔒 Max output reset to 20% for safe startup");
     }
 }
 

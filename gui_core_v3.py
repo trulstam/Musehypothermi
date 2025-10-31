@@ -256,10 +256,13 @@ class AutotuneResultsPanel(QGroupBox):
 class AsymmetricPIDControls(QWidget):
     """Enhanced controls for asymmetric PID system"""
 
+    # Provide class-level defaults so Qt/designer tooling can safely access
+    # attributes even before ``__init__`` finishes initialising the instance.
+    _autotune_tab_widget: Optional[QWidget] = None
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.parent = parent
-        self.setup_ui()
         self.autotune_active = False
         self.autotune_abort_triggered = False
         self.last_plate_temp: Optional[float] = None
@@ -274,6 +277,7 @@ class AsymmetricPIDControls(QWidget):
         self.autotune_pwm_line = None
         self.autotune_temp_ax = None
         self.autotune_pwm_ax = None
+        self.setup_ui()
         
     def setup_ui(self):
         layout = QVBoxLayout()
@@ -809,6 +813,108 @@ class AsymmetricPIDControls(QWidget):
         status_text, style = self._evaluate_pid_input()
         self.pid_input_check_label.setText(status_text)
         self.pid_input_check_label.setStyleSheet(style)
+
+    # ------------------------------------------------------------------
+    # Command control
+    # ------------------------------------------------------------------
+    def start_asymmetric_autotune(self):
+        """Validate inputs and request an asymmetric autotune run."""
+        if self.autotune_active:
+            QMessageBox.information(self, "Autotune aktiv", "Sekvensen kjører allerede.")
+            return
+
+        connected = bool(getattr(self.parent, "connection_established", False))
+        if not connected:
+            if self.parent is not None:
+                self.parent.log("❌ Not connected", "error")
+            QMessageBox.warning(
+                self,
+                "Ikke tilkoblet",
+                "Koble til kontrolleren før asymmetrisk autotune kan startes.",
+            )
+            return
+
+        reply = QMessageBox.question(
+            self,
+            "🎯 Asymmetrisk autotune",
+            "Kjør asymmetrisk autotune?\n\n"
+            "Sekvensen stabiliserer platen ved setpunktet, gjør et kontrollert varmesprang "
+            "og deretter et forsiktig kuldesprang for å analysere prosessresponsen.\n\n"
+            "Forbered nødstoppen og følg temperaturene kontinuerlig. Typisk varighet er 5–10 minutter.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+
+        if reply != QMessageBox.Yes:
+            return
+
+        try:
+            setpoint = float(self.autotune_setpoint_input.value())
+            heating_step = float(self.autotune_heating_step_input.value())
+            cooling_step = float(self.autotune_cooling_step_input.value())
+            max_duration = int(self.autotune_max_duration_input.value())
+
+            if self.last_plate_temp is not None and self.last_plate_temp > 40.5:
+                raise ValueError(
+                    f"Kjøleplaten er for varm ({self.last_plate_temp:.1f} °C). Avkjøl før autotune."
+                )
+
+            if heating_step < 10 or cooling_step < 10:
+                raise ValueError("Step-størrelser bør være minst 10 % for tydelige responser.")
+
+            payload = {
+                "setpoint": round(setpoint, 2),
+                "heating_step": round(heating_step, 1),
+                "cooling_step": round(cooling_step, 1),
+                "max_duration_s": max_duration * 60,
+            }
+        except ValueError as exc:
+            QMessageBox.warning(self, "Ugyldig oppsett", str(exc))
+            if self.parent is not None:
+                self.parent.log(f"❌ Autotune-oppstart feilet: {exc}", "error")
+            self._append_autotune_log(f"❌ Autotune kunne ikke startes: {exc}")
+            return
+
+        if self.parent.send_asymmetric_command("start_asymmetric_autotune", payload):
+            self.parent.log(
+                "🎯 Starting asymmetric autotune "
+                f"(T={setpoint:.1f} °C, varme {heating_step:.0f} %, kulde {cooling_step:.0f} %, "
+                f"maks {max_duration} min)",
+                "command",
+            )
+            self._set_autotune_active(True)
+            self._append_autotune_log(
+                "🎯 Startkommando sendt – kontroller følger asymmetrisk autotune-sekvensen."
+            )
+        else:
+            self.parent.log("❌ Autotune kunne ikke startes", "error")
+            QMessageBox.warning(
+                self,
+                "Feil",
+                "Kontrolleren avviste start-kommandoen. Kontroller tilkobling og prøv igjen.",
+            )
+            self._append_autotune_log("❌ Kontrolleren avviste start av asymmetrisk autotune.")
+
+    def abort_asymmetric_autotune(self):
+        """Abort an active asymmetric autotune sequence."""
+        connected = bool(getattr(self.parent, "connection_established", False))
+        if not connected:
+            if self.parent is not None:
+                self.parent.log("❌ Not connected", "error")
+            QMessageBox.information(self, "Ikke tilkoblet", "Ingen aktiv tilkobling å avbryte over.")
+            return
+
+        if self.parent.send_asymmetric_command("abort_asymmetric_autotune", {}):
+            self._append_autotune_log("⛔ Operatør avbrøt asymmetrisk autotune.")
+            self.parent.log("⛔ Asymmetric autotune aborted", "warning")
+            self._set_autotune_active(False)
+        else:
+            self.parent.log("❌ Kunne ikke sende abort-kommando", "error")
+            QMessageBox.warning(
+                self,
+                "Feil",
+                "Kontrolleren bekreftet ikke avbrudd. Kontroller serieforbindelsen.",
+            )
 
     def _evaluate_pid_input(self) -> Tuple[str, str]:
         """Compare PID input telemetry with plate temperature."""
@@ -1832,6 +1938,10 @@ class AutotuneTab(QWidget):
     # Command control
     # ------------------------------------------------------------------
     def start_asymmetric_autotune(self):
+        """Public wrapper used by other widgets/actions."""
+        self._handle_start_asymmetric_autotune()
+
+    def _handle_start_asymmetric_autotune(self):
         if self.autotune_active:
             QMessageBox.information(self, "Autotune aktiv", "Sekvensen kjører allerede.")
             return

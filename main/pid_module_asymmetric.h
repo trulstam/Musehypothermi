@@ -17,6 +17,13 @@ extern int currentPwmOutput;
 
 #define MAX_PWM 2399
 
+// The asymmetric autotune previously buffered 600 samples for both the
+// heating and cooling phases (≈19 KB). That exhausted the MCU's RAM once
+// combined with other globals. Limit the buffer to 200 samples per phase,
+// which still covers more than three minutes of data at the 1 Hz sampling
+// rate used by the autotune routines.
+static constexpr size_t AUTOTUNE_SAMPLE_CAPACITY = 200;
+
 class AsymmetricPIDModule {
 public:
     struct AsymmetricPIDParams {
@@ -168,7 +175,7 @@ private:
     };
 
     struct AutotuneDataset {
-        AutotuneSample samples[600];
+        AutotuneSample samples[AUTOTUNE_SAMPLE_CAPACITY];
         int count;
         unsigned long startMillis;
         float stepPercent;

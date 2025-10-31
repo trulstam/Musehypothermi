@@ -205,6 +205,28 @@ void CommAPI::handleCommand(const String &jsonString) {
             sendResponse(enabled ? "Breathing failsafe enabled" : "Breathing failsafe disabled");
 
         } else if (action == "start_asymmetric_autotune") {
+            JsonObject params = cmd["params"];
+            float target = pid.getTargetTemp();
+            float heatingStep = 30.0f;
+            float coolingStep = 20.0f;
+            unsigned long maxDurationMs = 600000UL;
+
+            if (!params.isNull()) {
+                if (params.containsKey("setpoint")) {
+                    target = params["setpoint"].as<float>();
+                }
+                if (params.containsKey("heating_step")) {
+                    heatingStep = params["heating_step"].as<float>();
+                }
+                if (params.containsKey("cooling_step")) {
+                    coolingStep = params["cooling_step"].as<float>();
+                }
+                if (params.containsKey("max_duration_s")) {
+                    maxDurationMs = params["max_duration_s"].as<unsigned long>() * 1000UL;
+                }
+            }
+
+            pid.configureAutotune(target, heatingStep, coolingStep, maxDurationMs);
             pid.startAsymmetricAutotune();
             sendResponse("Asymmetric autotune started");
 

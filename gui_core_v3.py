@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (
     QDialogButtonBox, QDoubleSpinBox
 )
 from PySide6.QtCore import QTimer, Qt, Signal
-from PySide6.QtGui import QFont, QPalette, QColor
+from PySide6.QtGui import QFont, QPalette, QColor, QTextCursor
 
 # Matplotlib imports
 import matplotlib
@@ -256,10 +256,13 @@ class AutotuneResultsPanel(QGroupBox):
 class AsymmetricPIDControls(QWidget):
     """Enhanced controls for asymmetric PID system"""
 
+    # Provide class-level defaults so Qt/designer tooling can safely access
+    # attributes even before ``__init__`` finishes initialising the instance.
+    _autotune_tab_widget: Optional[QWidget] = None
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.parent = parent
-        self.setup_ui()
         self.autotune_active = False
         self.autotune_abort_triggered = False
         self.last_plate_temp: Optional[float] = None
@@ -274,6 +277,7 @@ class AsymmetricPIDControls(QWidget):
         self.autotune_pwm_line = None
         self.autotune_temp_ax = None
         self.autotune_pwm_ax = None
+        self.setup_ui()
         
     def setup_ui(self):
         layout = QVBoxLayout()
@@ -304,11 +308,11 @@ class AsymmetricPIDControls(QWidget):
         cooling_layout.setHorizontalSpacing(14)
         cooling_layout.setVerticalSpacing(8)
 
-        self.kp_cooling_input = QLineEdit("0.8")
+        self.kp_cooling_input = QLineEdit("0.45")
         self.kp_cooling_input.setMinimumWidth(120)
-        self.ki_cooling_input = QLineEdit("0.02")
+        self.ki_cooling_input = QLineEdit("0.015")
         self.ki_cooling_input.setMinimumWidth(120)
-        self.kd_cooling_input = QLineEdit("3.0")
+        self.kd_cooling_input = QLineEdit("1.2")
         self.kd_cooling_input.setMinimumWidth(120)
 
         cooling_layout.addWidget(QLabel("Kp"), 0, 0)
@@ -335,11 +339,11 @@ class AsymmetricPIDControls(QWidget):
         heating_layout.setHorizontalSpacing(14)
         heating_layout.setVerticalSpacing(8)
 
-        self.kp_heating_input = QLineEdit("2.5")
+        self.kp_heating_input = QLineEdit("1.35")
         self.kp_heating_input.setMinimumWidth(120)
-        self.ki_heating_input = QLineEdit("0.2")
+        self.ki_heating_input = QLineEdit("0.08")
         self.ki_heating_input.setMinimumWidth(120)
-        self.kd_heating_input = QLineEdit("1.2")
+        self.kd_heating_input = QLineEdit("0.45")
         self.kd_heating_input.setMinimumWidth(120)
 
         heating_layout.addWidget(QLabel("Kp"), 0, 0)
@@ -809,6 +813,108 @@ class AsymmetricPIDControls(QWidget):
         status_text, style = self._evaluate_pid_input()
         self.pid_input_check_label.setText(status_text)
         self.pid_input_check_label.setStyleSheet(style)
+
+    # ------------------------------------------------------------------
+    # Command control
+    # ------------------------------------------------------------------
+    def start_asymmetric_autotune(self):
+        """Validate inputs and request an asymmetric autotune run."""
+        if self.autotune_active:
+            QMessageBox.information(self, "Autotune aktiv", "Sekvensen kjører allerede.")
+            return
+
+        connected = bool(getattr(self.parent, "connection_established", False))
+        if not connected:
+            if self.parent is not None:
+                self.parent.log("❌ Not connected", "error")
+            QMessageBox.warning(
+                self,
+                "Ikke tilkoblet",
+                "Koble til kontrolleren før asymmetrisk autotune kan startes.",
+            )
+            return
+
+        reply = QMessageBox.question(
+            self,
+            "🎯 Asymmetrisk autotune",
+            "Kjør asymmetrisk autotune?\n\n"
+            "Sekvensen stabiliserer platen ved setpunktet, gjør et kontrollert varmesprang "
+            "og deretter et forsiktig kuldesprang for å analysere prosessresponsen.\n\n"
+            "Forbered nødstoppen og følg temperaturene kontinuerlig. Typisk varighet er 5–10 minutter.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+
+        if reply != QMessageBox.Yes:
+            return
+
+        try:
+            setpoint = float(self.autotune_setpoint_input.value())
+            heating_step = float(self.autotune_heating_step_input.value())
+            cooling_step = float(self.autotune_cooling_step_input.value())
+            max_duration = int(self.autotune_max_duration_input.value())
+
+            if self.last_plate_temp is not None and self.last_plate_temp > 40.5:
+                raise ValueError(
+                    f"Kjøleplaten er for varm ({self.last_plate_temp:.1f} °C). Avkjøl før autotune."
+                )
+
+            if heating_step < 10 or cooling_step < 10:
+                raise ValueError("Step-størrelser bør være minst 10 % for tydelige responser.")
+
+            payload = {
+                "setpoint": round(setpoint, 2),
+                "heating_step": round(heating_step, 1),
+                "cooling_step": round(cooling_step, 1),
+                "max_duration_s": max_duration * 60,
+            }
+        except ValueError as exc:
+            QMessageBox.warning(self, "Ugyldig oppsett", str(exc))
+            if self.parent is not None:
+                self.parent.log(f"❌ Autotune-oppstart feilet: {exc}", "error")
+            self._append_autotune_log(f"❌ Autotune kunne ikke startes: {exc}")
+            return
+
+        if self.parent.send_asymmetric_command("start_asymmetric_autotune", payload):
+            self.parent.log(
+                "🎯 Starting asymmetric autotune "
+                f"(T={setpoint:.1f} °C, varme {heating_step:.0f} %, kulde {cooling_step:.0f} %, "
+                f"maks {max_duration} min)",
+                "command",
+            )
+            self._set_autotune_active(True)
+            self._append_autotune_log(
+                "🎯 Startkommando sendt – kontroller følger asymmetrisk autotune-sekvensen."
+            )
+        else:
+            self.parent.log("❌ Autotune kunne ikke startes", "error")
+            QMessageBox.warning(
+                self,
+                "Feil",
+                "Kontrolleren avviste start-kommandoen. Kontroller tilkobling og prøv igjen.",
+            )
+            self._append_autotune_log("❌ Kontrolleren avviste start av asymmetrisk autotune.")
+
+    def abort_asymmetric_autotune(self):
+        """Abort an active asymmetric autotune sequence."""
+        connected = bool(getattr(self.parent, "connection_established", False))
+        if not connected:
+            if self.parent is not None:
+                self.parent.log("❌ Not connected", "error")
+            QMessageBox.information(self, "Ikke tilkoblet", "Ingen aktiv tilkobling å avbryte over.")
+            return
+
+        if self.parent.send_asymmetric_command("abort_asymmetric_autotune", {}):
+            self._append_autotune_log("⛔ Operatør avbrøt asymmetrisk autotune.")
+            self.parent.log("⛔ Asymmetric autotune aborted", "warning")
+            self._set_autotune_active(False)
+        else:
+            self.parent.log("❌ Kunne ikke sende abort-kommando", "error")
+            QMessageBox.warning(
+                self,
+                "Feil",
+                "Kontrolleren bekreftet ikke avbrudd. Kontroller serieforbindelsen.",
+            )
 
     def _evaluate_pid_input(self) -> Tuple[str, str]:
         """Compare PID input telemetry with plate temperature."""
@@ -1535,6 +1641,8 @@ class AutotuneTab(QWidget):
         self.autotune_start_time: Optional[float] = None
         self.last_status_text = ""
         self.pending_results: Optional[Dict[str, Any]] = None
+        self.last_plate_temp: Optional[float] = None
+        self.last_pid_input_temp: Optional[float] = None
         self.setup_ui()
 
     def setup_ui(self):
@@ -1832,6 +1940,10 @@ class AutotuneTab(QWidget):
     # Command control
     # ------------------------------------------------------------------
     def start_asymmetric_autotune(self):
+        """Public wrapper used by other widgets/actions."""
+        self._handle_start_asymmetric_autotune()
+
+    def _handle_start_asymmetric_autotune(self):
         if self.autotune_active:
             QMessageBox.information(self, "Autotune aktiv", "Sekvensen kjører allerede.")
             return
@@ -1909,6 +2021,13 @@ class AutotuneTab(QWidget):
     # ------------------------------------------------------------------
     # State handling
     # ------------------------------------------------------------------
+    def _set_autotune_active(self, active: bool):
+        if active:
+            self.prepare_capture()
+            self.append_log("🎯 Startkommando sendt – kontroller følger asymmetrisk autotune.")
+        else:
+            self.finish_capture()
+
     def prepare_capture(self):
         self.autotune_active = True
         self.autotune_start_time = time.time()
@@ -2001,6 +2120,20 @@ class AutotuneTab(QWidget):
                 elif not active and self.autotune_active:
                     self.append_log("Controller meldte at autotune er ferdig eller stoppet.")
                     self.finish_capture()
+
+            if "cooling_plate_temp" in data:
+                try:
+                    self.last_plate_temp = float(data["cooling_plate_temp"])
+                except (TypeError, ValueError):
+                    pass
+
+            for pid_key in ("pid_feedback_temp", "pid_input_temp", "pid_input"):
+                if pid_key in data:
+                    try:
+                        self.last_pid_input_temp = float(data[pid_key])
+                        break
+                    except (TypeError, ValueError):
+                        continue
 
             if self.autotune_active and "cooling_plate_temp" in data:
                 self.record_sample(data)
@@ -2217,8 +2350,9 @@ class AutotuneTab(QWidget):
         timestamp = time.strftime("%H:%M:%S")
         self.autotune_log_box.append(f"[{timestamp}] {message}")
         cursor = self.autotune_log_box.textCursor()
-        cursor.movePosition(cursor.End)
+        cursor.movePosition(QTextCursor.End)
         self.autotune_log_box.setTextCursor(cursor)
+        self.autotune_log_box.ensureCursorVisible()
 
     def clear_autotune_log(self):
         self.autotune_log_box.clear()
@@ -2541,7 +2675,6 @@ class MainWindow(QMainWindow):
             self.create_control_tab()
             self.create_autotune_tab()
             self.create_monitoring_tab()
-            self.create_autotune_tab()
             self.create_profile_tab()
             
             # ============================================================================
@@ -2626,14 +2759,6 @@ class MainWindow(QMainWindow):
         control_layout.addStretch()
 
         self.tab_widget.addTab(control_widget, "⚙️ Drift")
-
-    def create_autotune_tab(self):
-        """Create dedicated autotune tab"""
-        autotune_widget = self.asymmetric_controls.get_autotune_tab()
-        scroll_area = QScrollArea()
-        scroll_area.setWidgetResizable(True)
-        scroll_area.setWidget(autotune_widget)
-        self.tab_widget.addTab(scroll_area, "🤖 Autotune")
 
     def create_autotune_tab(self):
         """Create dedicated autotune tab"""

@@ -17,6 +17,13 @@ extern int currentPwmOutput;
 
 #define MAX_PWM 2399
 
+// The asymmetric autotune previously buffered 600 samples for both the
+// heating and cooling phases (≈19 KB). That exhausted the MCU's RAM once
+// combined with other globals. Limit the buffer to 200 samples per phase,
+// which still covers more than three minutes of data at the 1 Hz sampling
+// rate used by the autotune routines.
+static constexpr size_t AUTOTUNE_SAMPLE_CAPACITY = 200;
+
 class AsymmetricPIDModule {
 public:
     struct AsymmetricPIDParams {
@@ -89,6 +96,8 @@ public:
 
     // Autotune functionality
     void startAutotune();  // Standard autotune for compatibility
+    void configureAutotune(float target, float heatingStepPercent, float coolingStepPercent,
+                           unsigned long maxDurationMs);
     void startAsymmetricAutotune();
     void runAsymmetricAutotune();
     void abortAutotune();
@@ -168,11 +177,18 @@ private:
     };
 
     struct AutotuneDataset {
-        AutotuneSample samples[600];
+        AutotuneSample samples[AUTOTUNE_SAMPLE_CAPACITY];
         int count;
         unsigned long startMillis;
         float stepPercent;
         float baseline;
+    };
+
+    struct AutotuneConfig {
+        float target;
+        float heatingStepPercent;
+        float coolingStepPercent;
+        unsigned long maxDurationMs;
     };
 
     struct AutotuneRecommendation {
@@ -216,17 +232,23 @@ private:
         float currentSlope;
         unsigned long stabilityStart;
         float target;
+        float holdOutputPercent;
+        float heatingCommandPercent;
+        float coolingCommandPercent;
+        unsigned long maxDurationMs;
         AutotuneDataset heating;
         AutotuneDataset cooling;
         AutotuneRecommendation recommendation;
     };
 
     AutotuneSession autotuneSession;
+    AutotuneConfig autotuneConfig;
 
     void resetAutotuneSession();
     void transitionAutotunePhase(AutotunePhase nextPhase, const char* statusMessage);
     void applyAutotuneOutput(float percent);
-    void logAutotuneSample(AutotuneDataset& dataset, unsigned long now, float plateTemp, float coreTemp);
+    void logAutotuneSample(AutotuneDataset& dataset, unsigned long now, float plateTemp, float coreTemp,
+                           float appliedOutputPercent);
     bool datasetFull(const AutotuneDataset& dataset) const;
     bool calculateProcessParameters(const AutotuneDataset& dataset, float& processGain, float& timeConstant,
                                     float& deadTime, float& initialSlope);

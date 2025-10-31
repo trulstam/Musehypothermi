@@ -25,6 +25,14 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(1400, 900)
         self.resize(1600, 1000)
 
+        # PID state tracking (heating & cooling branches)
+        self.pid_values = {
+            "heating": {"kp": 0.0, "ki": 0.0, "kd": 0.0},
+            "cooling": {"kp": 0.0, "ki": 0.0, "kd": 0.0},
+        }
+        self.latest_pid_mode = None
+        self.pid_edit_mode = "heating"
+
         # Initialize UI first
         self.init_ui()
 
@@ -76,6 +84,9 @@ class MainWindow(QMainWindow):
         
         # Populate ports
         self.refresh_ports()
+
+        # Ensure PID summaries reflect initial state
+        self._refresh_pid_labels()
 
     def init_ui(self):
         # Main layout with splitter
@@ -269,12 +280,27 @@ class MainWindow(QMainWindow):
         pid_layout.addWidget(self.kiInput, 0, 3)
         pid_layout.addWidget(QLabel("Kd:"), 1, 0)
         pid_layout.addWidget(self.kdInput, 1, 1)
-        
+
         self.setPIDButton = QPushButton("Set")
         self.setPIDButton.setFixedSize(60, 22)
         self.setPIDButton.clicked.connect(self.set_pid_values)
         pid_layout.addWidget(self.setPIDButton, 1, 2, 1, 2)
-        
+
+        # PID branch selector and status
+        self.pidBranchSelector = QComboBox()
+        self.pidBranchSelector.addItem("Varme (heating)", "heating")
+        self.pidBranchSelector.addItem("Kjøling (cooling)", "cooling")
+        self.pidBranchSelector.currentIndexChanged.connect(self._on_pid_branch_changed)
+
+        branch_label = QLabel("Gren:")
+        branch_label.setStyleSheet("font-size: 10px;")
+        pid_layout.addWidget(branch_label, 2, 0)
+        pid_layout.addWidget(self.pidBranchSelector, 2, 1, 1, 3)
+
+        self.pidActiveLabel = QLabel("Aktiv gren: ukjent")
+        self.pidActiveLabel.setStyleSheet("font-size: 10px; font-style: italic;")
+        pid_layout.addWidget(self.pidActiveLabel, 3, 0, 1, 4)
+
         pid_params_group.setLayout(pid_layout)
         params_target_layout.addWidget(pid_params_group)
         
@@ -972,13 +998,8 @@ class MainWindow(QMainWindow):
             # Update live data display first
             self.update_live_data_display(data)
             
-            # Update PID parameters
-            if all(key in data for key in ["pid_kp", "pid_ki", "pid_kd"]):
-                kp, ki, kd = data["pid_kp"], data["pid_ki"], data["pid_kd"]
-                self.kpInput.setText(str(kp))
-                self.kiInput.setText(str(ki))
-                self.kdInput.setText(str(kd))
-                self.pidParamsLabel.setText(f"Kp: {kp}, Ki: {ki}, Kd: {kd}")
+            # Update PID parameters (heating & cooling aware)
+            self._update_pid_state_from_data(data)
 
             # NEW: Handle autotune results specifically
             if "autotune_results" in data:
@@ -992,7 +1013,17 @@ class MainWindow(QMainWindow):
                     self.kpInput.setText(f"{new_kp:.3f}")
                     self.kiInput.setText(f"{new_ki:.3f}")
                     self.kdInput.setText(f"{new_kd:.3f}")
-                    self.pidParamsLabel.setText(f"Kp: {new_kp:.3f}, Ki: {new_ki:.3f}, Kd: {new_kd:.3f}")
+
+                    target_branch = self.pid_edit_mode or self.pidBranchSelector.currentData()
+                    if target_branch not in ("heating", "cooling"):
+                        target_branch = "heating"
+
+                    self.pid_values[target_branch] = {
+                        "kp": float(new_kp),
+                        "ki": float(new_ki),
+                        "kd": float(new_kd),
+                    }
+                    self._refresh_pid_labels()
                     
                     # Show success message with results
                     QMessageBox.information(
@@ -1358,6 +1389,116 @@ class MainWindow(QMainWindow):
         if self.send_and_log_cmd("save_eeprom", ""):
             self.log("💾 EEPROM save requested", "success")
 
+    def _on_pid_branch_changed(self, index: int):
+        """Handle user changing which PID branch to edit."""
+        mode = self.pidBranchSelector.itemData(index)
+        if mode not in ("heating", "cooling"):
+            return
+
+        self.pid_edit_mode = mode
+        values = self.pid_values.get(mode, {})
+        self._apply_pid_inputs_from_values(values)
+
+    def _apply_pid_inputs_from_values(self, values: dict):
+        """Update the PID input widgets from a values dict."""
+        if not values:
+            return
+
+        try:
+            kp = float(values.get("kp", 0.0))
+            ki = float(values.get("ki", 0.0))
+            kd = float(values.get("kd", 0.0))
+        except (TypeError, ValueError):
+            return
+
+        # Format with sensible precision without locale issues
+        self.kpInput.setText(f"{kp:.3f}")
+        self.kiInput.setText(f"{ki:.4f}")
+        self.kdInput.setText(f"{kd:.3f}")
+
+    def _format_pid_triplet(self, values: dict) -> str:
+        """Return a formatted string for PID values."""
+        if not values:
+            return "Kp:-, Ki:-, Kd:-"
+
+        def fmt(number, precision):
+            try:
+                return f"{float(number):.{precision}f}"
+            except (TypeError, ValueError):
+                return "-"
+
+        return "Kp:{kp}, Ki:{ki}, Kd:{kd}".format(
+            kp=fmt(values.get("kp"), 3),
+            ki=fmt(values.get("ki"), 4),
+            kd=fmt(values.get("kd"), 3),
+        )
+
+    def _refresh_pid_labels(self):
+        """Refresh textual PID summaries and active branch indicator."""
+        if not hasattr(self, "pidParamsLabel"):
+            return
+
+        heating = self.pid_values.get("heating", {})
+        cooling = self.pid_values.get("cooling", {})
+
+        summary = (
+            f"H: {self._format_pid_triplet(heating)} | "
+            f"C: {self._format_pid_triplet(cooling)}"
+        )
+        self.pidParamsLabel.setText(summary)
+
+        active = self.latest_pid_mode or "ukjent"
+        self.pidActiveLabel.setText(f"Aktiv gren: {active}")
+
+    def _update_pid_state_from_data(self, data: dict):
+        """Process incoming PID-related data in a single place."""
+        if not hasattr(self, "pidBranchSelector"):
+            return
+
+        updated_branches = set()
+
+        heating_keys = ["pid_heating_kp", "pid_heating_ki", "pid_heating_kd"]
+        cooling_keys = ["pid_cooling_kp", "pid_cooling_ki", "pid_cooling_kd"]
+
+        if all(key in data for key in heating_keys):
+            try:
+                self.pid_values["heating"] = {
+                    "kp": float(data["pid_heating_kp"]),
+                    "ki": float(data["pid_heating_ki"]),
+                    "kd": float(data["pid_heating_kd"]),
+                }
+                updated_branches.add("heating")
+            except (TypeError, ValueError):
+                pass
+
+        if all(key in data for key in cooling_keys):
+            try:
+                self.pid_values["cooling"] = {
+                    "kp": float(data["pid_cooling_kp"]),
+                    "ki": float(data["pid_cooling_ki"]),
+                    "kd": float(data["pid_cooling_kd"]),
+                }
+                updated_branches.add("cooling")
+            except (TypeError, ValueError):
+                pass
+
+        if "pid_mode" in data:
+            mode = str(data["pid_mode"]).lower()
+            if mode in ("heating", "cooling"):
+                if mode != self.latest_pid_mode:
+                    self.latest_pid_mode = mode
+                    # If the user follows the active branch, sync inputs
+                    if self.pidBranchSelector.currentData() == mode:
+                        updated_branches.add(mode)
+
+        if updated_branches:
+            branch = self.pidBranchSelector.currentData()
+            if branch in updated_branches:
+                self._apply_pid_inputs_from_values(self.pid_values.get(branch, {}))
+
+        # Always refresh summaries after processing
+        self._refresh_pid_labels()
+
     def set_pid_values(self):
         """Set PID parameters with validation"""
         try:
@@ -1373,13 +1514,34 @@ class MainWindow(QMainWindow):
             if not (0 <= kd <= 50):
                 raise ValueError("Kd must be between 0 and 50")
             
-            self.serial_manager.sendSET("pid_kp", kp)
-            self.serial_manager.sendSET("pid_ki", ki)
-            self.serial_manager.sendSET("pid_kd", kd)
-            
-            self.event_logger.log_event(f"SET: PID → Kp={kp}, Ki={ki}, Kd={kd}")
-            self.log(f"✅ PID parameters set: Kp={kp}, Ki={ki}, Kd={kd}", "success")
-            
+            target_branch = self.pid_edit_mode or self.pidBranchSelector.currentData()
+            if target_branch not in ("heating", "cooling"):
+                target_branch = "heating"
+
+            if target_branch == "cooling":
+                self.serial_manager.sendSET("pid_cooling_kp", kp)
+                self.serial_manager.sendSET("pid_cooling_ki", ki)
+                self.serial_manager.sendSET("pid_cooling_kd", kd)
+            else:
+                self.serial_manager.sendSET("pid_kp", kp)
+                self.serial_manager.sendSET("pid_ki", ki)
+                self.serial_manager.sendSET("pid_kd", kd)
+
+            branch_label = "kjøling" if target_branch == "cooling" else "varme"
+            self.pid_values[target_branch] = {"kp": kp, "ki": ki, "kd": kd}
+            self._refresh_pid_labels()
+
+            self.event_logger.log_event(
+                f"SET: PID ({branch_label}) → Kp={kp}, Ki={ki}, Kd={kd}"
+            )
+            self.log(
+                f"✅ PID ({branch_label}) satt: Kp={kp}, Ki={ki}, Kd={kd}",
+                "success",
+            )
+
+            # Request fresh parameters to confirm update
+            QTimer.singleShot(300, lambda: self.serial_manager.sendCMD("get", "pid_params"))
+
         except ValueError as e:
             QMessageBox.warning(self, "Invalid Input", f"Error in PID parameters: {e}")
             self.log(f"❌ Invalid PID input: {e}", "error")

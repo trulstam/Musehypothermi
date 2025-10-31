@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (
     QDialogButtonBox, QDoubleSpinBox
 )
 from PySide6.QtCore import QTimer, Qt, Signal
-from PySide6.QtGui import QFont, QPalette, QColor
+from PySide6.QtGui import QFont, QPalette, QColor, QTextCursor
 
 # Matplotlib imports
 import matplotlib
@@ -308,11 +308,11 @@ class AsymmetricPIDControls(QWidget):
         cooling_layout.setHorizontalSpacing(14)
         cooling_layout.setVerticalSpacing(8)
 
-        self.kp_cooling_input = QLineEdit("0.8")
+        self.kp_cooling_input = QLineEdit("0.45")
         self.kp_cooling_input.setMinimumWidth(120)
-        self.ki_cooling_input = QLineEdit("0.02")
+        self.ki_cooling_input = QLineEdit("0.015")
         self.ki_cooling_input.setMinimumWidth(120)
-        self.kd_cooling_input = QLineEdit("3.0")
+        self.kd_cooling_input = QLineEdit("1.2")
         self.kd_cooling_input.setMinimumWidth(120)
 
         cooling_layout.addWidget(QLabel("Kp"), 0, 0)
@@ -339,11 +339,11 @@ class AsymmetricPIDControls(QWidget):
         heating_layout.setHorizontalSpacing(14)
         heating_layout.setVerticalSpacing(8)
 
-        self.kp_heating_input = QLineEdit("2.5")
+        self.kp_heating_input = QLineEdit("1.35")
         self.kp_heating_input.setMinimumWidth(120)
-        self.ki_heating_input = QLineEdit("0.2")
+        self.ki_heating_input = QLineEdit("0.08")
         self.ki_heating_input.setMinimumWidth(120)
-        self.kd_heating_input = QLineEdit("1.2")
+        self.kd_heating_input = QLineEdit("0.45")
         self.kd_heating_input.setMinimumWidth(120)
 
         heating_layout.addWidget(QLabel("Kp"), 0, 0)
@@ -1641,6 +1641,8 @@ class AutotuneTab(QWidget):
         self.autotune_start_time: Optional[float] = None
         self.last_status_text = ""
         self.pending_results: Optional[Dict[str, Any]] = None
+        self.last_plate_temp: Optional[float] = None
+        self.last_pid_input_temp: Optional[float] = None
         self.setup_ui()
 
     def setup_ui(self):
@@ -2019,6 +2021,13 @@ class AutotuneTab(QWidget):
     # ------------------------------------------------------------------
     # State handling
     # ------------------------------------------------------------------
+    def _set_autotune_active(self, active: bool):
+        if active:
+            self.prepare_capture()
+            self.append_log("🎯 Startkommando sendt – kontroller følger asymmetrisk autotune.")
+        else:
+            self.finish_capture()
+
     def prepare_capture(self):
         self.autotune_active = True
         self.autotune_start_time = time.time()
@@ -2111,6 +2120,20 @@ class AutotuneTab(QWidget):
                 elif not active and self.autotune_active:
                     self.append_log("Controller meldte at autotune er ferdig eller stoppet.")
                     self.finish_capture()
+
+            if "cooling_plate_temp" in data:
+                try:
+                    self.last_plate_temp = float(data["cooling_plate_temp"])
+                except (TypeError, ValueError):
+                    pass
+
+            for pid_key in ("pid_feedback_temp", "pid_input_temp", "pid_input"):
+                if pid_key in data:
+                    try:
+                        self.last_pid_input_temp = float(data[pid_key])
+                        break
+                    except (TypeError, ValueError):
+                        continue
 
             if self.autotune_active and "cooling_plate_temp" in data:
                 self.record_sample(data)
@@ -2327,8 +2350,9 @@ class AutotuneTab(QWidget):
         timestamp = time.strftime("%H:%M:%S")
         self.autotune_log_box.append(f"[{timestamp}] {message}")
         cursor = self.autotune_log_box.textCursor()
-        cursor.movePosition(cursor.End)
+        cursor.movePosition(QTextCursor.End)
         self.autotune_log_box.setTextCursor(cursor)
+        self.autotune_log_box.ensureCursorVisible()
 
     def clear_autotune_log(self):
         self.autotune_log_box.clear()
@@ -2651,7 +2675,6 @@ class MainWindow(QMainWindow):
             self.create_control_tab()
             self.create_autotune_tab()
             self.create_monitoring_tab()
-            self.create_autotune_tab()
             self.create_profile_tab()
             
             # ============================================================================
@@ -2736,14 +2759,6 @@ class MainWindow(QMainWindow):
         control_layout.addStretch()
 
         self.tab_widget.addTab(control_widget, "⚙️ Drift")
-
-    def create_autotune_tab(self):
-        """Create dedicated autotune tab"""
-        autotune_widget = self.asymmetric_controls.get_autotune_tab()
-        scroll_area = QScrollArea()
-        scroll_area.setWidgetResizable(True)
-        scroll_area.setWidget(autotune_widget)
-        self.tab_widget.addTab(scroll_area, "🤖 Autotune")
 
     def create_autotune_tab(self):
         """Create dedicated autotune tab"""

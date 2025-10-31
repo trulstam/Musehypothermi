@@ -14,7 +14,8 @@ constexpr float kDefaultKp = 2.0f;
 constexpr float kDefaultKi = 0.5f;
 constexpr float kDefaultKd = 1.0f;
 constexpr float kDefaultTargetTemp = 37.0f;
-constexpr float kDefaultMaxOutputPercent = 35.0f;
+constexpr float kDefaultMaxOutputPercent = 20.0f;
+constexpr float kStartupMaxOutputPercent = 20.0f;
 
 bool isInvalidPidValue(float value) {
     return isnan(value) || isinf(value) || value < 0.0f;
@@ -81,15 +82,24 @@ void PIDModule::begin(EEPROMManager &eepromManager) {
 
     float maxOutput;
     eeprom->loadMaxOutput(maxOutput);
+    bool startupLimitApplied = false;
     if (shouldRestoreMaxOutput(maxOutput)) {
         maxOutput = kDefaultMaxOutputPercent;
         eeprom->saveMaxOutput(maxOutput);
         restoredDefaults = true;
+    } else if (maxOutput > kStartupMaxOutputPercent) {
+        maxOutput = kStartupMaxOutputPercent;
+        eeprom->saveMaxOutput(maxOutput);
+        startupLimitApplied = true;
     }
     setMaxOutputPercent(maxOutput);
 
     if (restoredDefaults) {
         Serial.println(F("[PID] Restored default parameters due to invalid EEPROM data"));
+    }
+
+    if (startupLimitApplied) {
+        comm.sendEvent("🔒 Max output reset to 20% for safe startup");
     }
 
     pwm.begin();

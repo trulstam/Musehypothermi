@@ -10,6 +10,7 @@
 #include "comm_api.h"
 
 #include <Arduino.h>
+#include <math.h>
 
 // === Eksterne moduler ===
 extern AsymmetricPIDModule pid;  // Changed from PIDModule
@@ -22,16 +23,19 @@ extern CommAPI comm;  // Brukes til sendEvent()
 // === Failsafe status ===
 static bool failsafeActive = false;
 static const char* failsafeReason = "";
+static bool breathingFailsafeEnabled = true;
 
 // === Heartbeat monitor ===
 unsigned long lastHeartbeatMillis = 0;
 
 // === Failsafe parametre (oppdatert fra EEPROM i initTasks) ===
 int heartbeatTimeoutMs = 5000;  // default, lastes i initTasks
-int breathingTimeoutMs = 10000; // kan lastes fra EEPROM senere
+int breathingTimeoutMs = 120000; // kan lastes fra EEPROM senere
+
+static unsigned long lastBreathingDetectedMillis = 0;
 
 // === Panic Button ===
-#define PANIC_BUTTON_PIN 7
+#define PANIC_BUTTON_PIN 12
 
 // === Trigger failsafe ===
 void triggerFailsafe(const char* reason) {
@@ -55,6 +59,7 @@ void triggerFailsafe(const char* reason) {
 void clearFailsafe() {
     failsafeActive = false;
     failsafeReason = "";
+    lastBreathingDetectedMillis = millis();
 }
 
 bool isFailsafeActive() {
@@ -63,6 +68,25 @@ bool isFailsafeActive() {
 
 const char* getFailsafeReason() {
     return failsafeReason;
+}
+
+bool isBreathingFailsafeEnabled() {
+    return breathingFailsafeEnabled;
+}
+
+void setBreathingFailsafeEnabled(bool enabled) {
+    if (breathingFailsafeEnabled == enabled) {
+        return;
+    }
+
+    breathingFailsafeEnabled = enabled;
+    lastBreathingDetectedMillis = millis();
+
+    if (enabled) {
+        comm.sendEvent("🫁 Breathing failsafe enabled");
+    } else {
+        comm.sendEvent("🧪 Breathing failsafe disabled for testing");
+    }
 }
 
 // === Heartbeat received ===
@@ -99,11 +123,12 @@ void initTasks() {
     lastPressureUpdate = now;
     lastProfileUpdate = now;
     lastHeartbeatMillis = now;
+    lastBreathingDetectedMillis = now;
 }
 
 // === Check panic button (deaktivert – pin ikke koblet) ===
 void checkPanicButton() {
-    // Deaktivert fordi pin 7 ikke er koblet til fysisk knapp.
+    // Deaktivert fordi pin 12 ikke er koblet til fysisk knapp.
     // Hvis du kobler opp en knapp senere, fjern kommentaren under:
     /*
     if (digitalRead(PANIC_BUTTON_PIN) == LOW) {
@@ -133,6 +158,15 @@ void runTasks() {
     if (now - lastSensorUpdate >= 100) {
         sensors.update();
         lastSensorUpdate = now;
+
+        double plateTemp = sensors.getCoolingPlateTemp();
+        if (plateTemp > 40.5) {
+            triggerFailsafe("plate_temp_high");
+        }
+    }
+
+    if (isFailsafeActive()) {
+        return;
     }
 
     // === PRESSURE UPDATE (Breathing monitor) ===
@@ -140,8 +174,17 @@ void runTasks() {
         pressure.update();
         lastPressureUpdate = now;
 
-        if (pressure.getBreathRate() < 1.0) {
-            triggerFailsafe("no_breathing_detected");
+        float breathRate = pressure.getBreathRate();
+        if (breathingFailsafeEnabled) {
+            if (!isnan(breathRate)) {
+                if (breathRate >= 1.0f) {
+                    lastBreathingDetectedMillis = now;
+                } else if (now - lastBreathingDetectedMillis > (unsigned long)breathingTimeoutMs) {
+                    triggerFailsafe("no_breathing_detected");
+                }
+            }
+        } else {
+            lastBreathingDetectedMillis = now;
         }
     }
 

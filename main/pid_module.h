@@ -64,7 +64,9 @@ public:
     bool isDebugEnabled();
 
 private:
-#define AUTOTUNE_LOG_SIZE 300
+// Reduced from 300 to 150 to cut RAM usage on the microcontroller while
+// retaining sufficient history for autotune analysis (75 seconds @500ms).
+#define AUTOTUNE_LOG_SIZE 150
     unsigned long autotuneTimestamps[AUTOTUNE_LOG_SIZE];
     float autotuneTemperatures[AUTOTUNE_LOG_SIZE];
     int autotuneLogIndex;

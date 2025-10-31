@@ -30,7 +30,6 @@ matplotlib.use('Qt5Agg')
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
-import numpy as np
 
 # Local imports
 from serial_comm import SerialManager
@@ -743,6 +742,15 @@ class AutotuneTab(QWidget):
 
         log_group = QGroupBox("Logg og resultater")
         log_layout = QVBoxLayout()
+
+        log_controls = QHBoxLayout()
+        self.clear_log_button = QPushButton("🧹 Tøm logg")
+        self.clear_log_button.setToolTip("Tømmer loggvinduet for denne autotune-økten.")
+        self.clear_log_button.clicked.connect(self.clear_log)
+        log_controls.addWidget(self.clear_log_button)
+        log_controls.addStretch()
+        log_layout.addLayout(log_controls)
+
         self.log_output = QTextEdit()
         self.log_output.setReadOnly(True)
         self.log_output.setMinimumHeight(180)
@@ -864,11 +872,18 @@ class AutotuneTab(QWidget):
             self.autotune_start_time = time.time()
 
         timestamp = time.time() - self.autotune_start_time
+        target_value = data.get("plate_target_active", data.get("target_temp"))
+
+        try:
+            target_float = float(target_value)
+        except (TypeError, ValueError):
+            target_float = float(self.setpoint_input.value())
+
         sample = {
             "time": timestamp,
             "plate_temp": float(data.get("cooling_plate_temp", float("nan"))),
             "pid_output": float(data.get("pid_output", float("nan"))),
-            "target": float(data.get("plate_target_active", data.get("target_temp", float("nan")))),
+            "target": target_float,
         }
 
         self.samples.append(sample)
@@ -948,6 +963,10 @@ class AutotuneTab(QWidget):
         cursor = self.log_output.textCursor()
         cursor.movePosition(cursor.End)
         self.log_output.setTextCursor(cursor)
+
+    def clear_log(self):
+        self.log_output.clear()
+        self.append_log("Loggen er tømt.")
 
 
 # ============================================================================

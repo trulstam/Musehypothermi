@@ -267,9 +267,19 @@ class AsymmetricPIDControls(QWidget):
         self.last_pid_input_temp: Optional[float] = None
         self._autotune_lock_states: Dict[QWidget, bool] = {}
         self.autotune_last_results: Optional[Dict[str, Any]] = None
+        self.autotune_measurements: List[Tuple[float, float, float]] = []
+        self.autotune_start_time: Optional[float] = None
+        self._autotune_tab_widget: Optional[QWidget] = None
+        self.autotune_log_box: Optional[QTextEdit] = None
+        self.autotune_temp_line = None
+        self.autotune_pwm_line = None
+        self.autotune_temp_ax = None
+        self.autotune_pwm_ax = None
         
     def setup_ui(self):
         layout = QVBoxLayout()
+        layout.setSpacing(12)
+        self.setLayout(layout)
 
         # Mode indicator
         self.mode_indicator = QLabel("REGULATION MODE - HEATING")
@@ -436,26 +446,38 @@ class AsymmetricPIDControls(QWidget):
         self.temperature_rate_label.setStyleSheet("color: #28a745; font-weight: bold;")
         self.emergency_status_label = QLabel("✅ Clear")
         self.emergency_status_label.setStyleSheet("color: #28a745; font-weight: bold;")
-        
+
         status_layout.addWidget(QLabel("Current Mode:"), 0, 0)
         status_layout.addWidget(self.current_mode_label, 0, 1)
-        
+
         status_layout.addWidget(QLabel("Temp Rate:"), 1, 0)
         status_layout.addWidget(self.temperature_rate_label, 1, 1)
-        
+
         status_layout.addWidget(QLabel("Emergency:"), 2, 0)
         status_layout.addWidget(self.emergency_status_label, 2, 1)
-        
+
         status_group.setLayout(status_layout)
         layout.addWidget(status_group)
         self.status_group = status_group
         self.external_mode_label: Optional[QLabel] = None
         self.external_rate_label: Optional[QLabel] = None
         self.external_emergency_label: Optional[QLabel] = None
-        
-        # Asymmetric Autotune
-        autotune_group = QGroupBox("🎯 Asymmetrisk autotune")
-        autotune_layout = QVBoxLayout()
+
+        layout.addStretch()
+
+        # Build autotune tab components to ensure attributes are available
+        self.get_autotune_tab()
+    def get_autotune_tab(self) -> QWidget:
+        if self._autotune_tab_widget is None:
+            self._autotune_tab_widget = self._build_autotune_tab()
+        return self._autotune_tab_widget
+
+    def _build_autotune_tab(self) -> QWidget:
+        container = QWidget()
+        layout = QVBoxLayout()
+        layout.setSpacing(12)
+        layout.setContentsMargins(16, 16, 16, 16)
+        container.setLayout(layout)
 
         guidance_group = QGroupBox("📘 Veiledning")
         guidance_layout = QVBoxLayout()
@@ -490,9 +512,9 @@ class AsymmetricPIDControls(QWidget):
             guidance_layout.addWidget(widget)
 
         guidance_group.setLayout(guidance_layout)
-        autotune_layout.addWidget(guidance_group)
+        layout.addWidget(guidance_group)
 
-        checklist_frame = QGroupBox("Før du starter autotune")
+        checklist_group = QGroupBox("Før du starter autotune")
         checklist_layout = QVBoxLayout()
         checklist_layout.setContentsMargins(12, 8, 12, 8)
 
@@ -523,12 +545,15 @@ class AsymmetricPIDControls(QWidget):
         quickcheck_row.addWidget(quickcheck_button)
         checklist_layout.addLayout(quickcheck_row)
 
-        checklist_frame.setLayout(checklist_layout)
-        autotune_layout.addWidget(checklist_frame)
+        checklist_group.setLayout(checklist_layout)
+        layout.addWidget(checklist_group)
 
-        autotune_params_group = QGroupBox("Autotune-parametre")
+        params_group = QGroupBox("Autotune-parametre")
         params_form = QFormLayout()
         params_form.setLabelAlignment(Qt.AlignRight)
+        params_form.setHorizontalSpacing(12)
+        params_form.setVerticalSpacing(8)
+        params_form.setContentsMargins(12, 8, 12, 8)
 
         self.autotune_setpoint_input = QDoubleSpinBox()
         self.autotune_setpoint_input.setRange(5.0, 38.0)
@@ -560,41 +585,84 @@ class AsymmetricPIDControls(QWidget):
         self.autotune_max_duration_input.setSuffix(" min")
         params_form.addRow("Maks varighet:", self.autotune_max_duration_input)
 
-        autotune_params_group.setLayout(params_form)
-        autotune_layout.addWidget(autotune_params_group)
+        params_group.setLayout(params_form)
+        layout.addWidget(params_group)
 
-        status_row = QHBoxLayout()
-        status_label = QLabel("Status:")
-        status_label.setStyleSheet("font-weight: bold;")
+        control_group = QGroupBox("Sekvenskontroll")
+        control_layout = QGridLayout()
+        control_layout.setHorizontalSpacing(12)
+        control_layout.setVerticalSpacing(8)
+
+        control_layout.addWidget(QLabel("Status:"), 0, 0)
         self.autotune_status_value = QLabel("Idle")
         self.autotune_status_value.setStyleSheet("color: #6c757d; font-weight: bold;")
-        status_row.addWidget(status_label)
-        status_row.addWidget(self.autotune_status_value)
-        status_row.addStretch()
-        autotune_layout.addLayout(status_row)
+        control_layout.addWidget(self.autotune_status_value, 0, 1)
 
-        progress_row = QHBoxLayout()
+        control_layout.addWidget(QLabel("Fase:"), 1, 0)
+        self.autotune_phase_label = QLabel("Ingen autotune")
+        self.autotune_phase_label.setStyleSheet("color: #6c757d; font-weight: bold;")
+        control_layout.addWidget(self.autotune_phase_label, 1, 1)
+
         self.autotune_progress_bar = QProgressBar()
         self.autotune_progress_bar.setRange(0, 100)
         self.autotune_progress_bar.setValue(0)
         self.autotune_progress_bar.setTextVisible(True)
-        self.autotune_phase_label = QLabel("Ingen autotune")
-        self.autotune_phase_label.setStyleSheet("color: #6c757d; font-weight: bold;")
-        progress_row.addWidget(self.autotune_progress_bar)
-        progress_row.addWidget(self.autotune_phase_label)
-        autotune_layout.addLayout(progress_row)
-        
+        control_layout.addWidget(self.autotune_progress_bar, 2, 0, 1, 2)
+
+        button_row = QHBoxLayout()
+        button_row.setSpacing(8)
         self.start_asymmetric_autotune_button = QPushButton("🎯 Start Asymmetric Autotune")
         self.start_asymmetric_autotune_button.clicked.connect(self.start_asymmetric_autotune)
-        self.start_asymmetric_autotune_button.setStyleSheet("background-color: #6f42c1; color: white; font-weight: bold;")
-
+        self.start_asymmetric_autotune_button.setStyleSheet(
+            "background-color: #6f42c1; color: white; font-weight: bold;"
+        )
         self.abort_asymmetric_autotune_button = QPushButton("⛔ Abort Autotune")
         self.abort_asymmetric_autotune_button.clicked.connect(self.abort_asymmetric_autotune)
-        self.abort_asymmetric_autotune_button.setStyleSheet("background-color: #fd7e14; color: white; font-weight: bold;")
+        self.abort_asymmetric_autotune_button.setStyleSheet(
+            "background-color: #fd7e14; color: white; font-weight: bold;"
+        )
         self.abort_asymmetric_autotune_button.setVisible(False)
+        button_row.addWidget(self.start_asymmetric_autotune_button)
+        button_row.addWidget(self.abort_asymmetric_autotune_button)
+        button_row.addStretch()
+        control_layout.addLayout(button_row, 3, 0, 1, 2)
 
-        autotune_layout.addWidget(self.start_asymmetric_autotune_button)
-        autotune_layout.addWidget(self.abort_asymmetric_autotune_button)
+        control_group.setLayout(control_layout)
+        layout.addWidget(control_group)
+
+        graph_group = QGroupBox("📈 Prosessmålinger")
+        graph_layout = QVBoxLayout()
+        graph_layout.setSpacing(8)
+
+        self.autotune_plot_figure = Figure(figsize=(5, 3))
+        self.autotune_temp_ax = self.autotune_plot_figure.add_subplot(111)
+        self.autotune_temp_ax.set_title("Kjøleplate & PWM")
+        self.autotune_temp_ax.set_xlabel("Tid [s]")
+        self.autotune_temp_ax.set_ylabel("Plate-temp [°C]")
+        self.autotune_temp_ax.grid(True, linestyle="--", alpha=0.3)
+        self.autotune_pwm_ax = self.autotune_temp_ax.twinx()
+        self.autotune_pwm_ax.set_ylabel("PWM [%]")
+        self.autotune_pwm_ax.set_ylim(0, 100)
+
+        self.autotune_temp_line, = self.autotune_temp_ax.plot(
+            [], [], color="#d9480f", linewidth=2.0, label="Plate-temp"
+        )
+        self.autotune_pwm_line, = self.autotune_pwm_ax.plot(
+            [], [], color="#364fc7", linewidth=2.0, linestyle="--", label="PWM"
+        )
+
+        self.autotune_plot_canvas = FigureCanvas(self.autotune_plot_figure)
+        graph_layout.addWidget(self.autotune_plot_canvas)
+
+        graph_buttons = QHBoxLayout()
+        graph_buttons.addStretch()
+        self.autotune_export_csv_button = QPushButton("💾 Eksporter måledata (CSV)")
+        self.autotune_export_csv_button.clicked.connect(self.export_autotune_csv)
+        graph_buttons.addWidget(self.autotune_export_csv_button)
+        graph_layout.addLayout(graph_buttons)
+
+        graph_group.setLayout(graph_layout)
+        layout.addWidget(graph_group)
 
         self.autotune_summary_group = QGroupBox("Autotune-resultat")
         summary_layout = QVBoxLayout()
@@ -604,27 +672,139 @@ class AsymmetricPIDControls(QWidget):
         summary_layout.addWidget(self.autotune_summary_label)
 
         summary_button_row = QHBoxLayout()
-        self.autotune_export_button = QPushButton("📤 Eksporter data")
+        self.autotune_export_button = QPushButton("📤 Eksporter JSON")
         self.autotune_export_button.clicked.connect(self.export_autotune_results)
         self.autotune_apply_button = QPushButton("✅ Bruk parametere")
         self.autotune_apply_button.clicked.connect(self.apply_autotune_parameters)
         self.autotune_retry_button = QPushButton("🔁 Kjør på nytt")
         self.autotune_retry_button.clicked.connect(self.retry_autotune)
-        for button in (self.autotune_export_button, self.autotune_apply_button, self.autotune_retry_button):
+        for button in (
+            self.autotune_export_button,
+            self.autotune_apply_button,
+            self.autotune_retry_button,
+        ):
             button.setStyleSheet("font-weight: bold;")
             summary_button_row.addWidget(button)
         summary_button_row.addStretch()
         summary_layout.addLayout(summary_button_row)
         self.autotune_summary_group.setLayout(summary_layout)
         self.autotune_summary_group.setVisible(False)
-        autotune_layout.addWidget(self.autotune_summary_group)
+        layout.addWidget(self.autotune_summary_group)
 
-        autotune_group.setLayout(autotune_layout)
-        layout.addWidget(autotune_group)
+        self.autotune_results_panel = AutotuneResultsPanel(self)
+        self.autotune_results_panel.setVisible(False)
+        layout.addWidget(self.autotune_results_panel)
+
+        log_group = QGroupBox("📝 Autotune-logg")
+        log_layout = QVBoxLayout()
+        log_controls = QHBoxLayout()
+        self.autotune_clear_log_button = QPushButton("🧹 Tøm logg")
+        self.autotune_clear_log_button.clicked.connect(self.clear_autotune_log)
+        log_controls.addWidget(self.autotune_clear_log_button)
+        log_controls.addStretch()
+        log_layout.addLayout(log_controls)
+
+        self.autotune_log_box = QTextEdit()
+        self.autotune_log_box.setReadOnly(True)
+        self.autotune_log_box.setMinimumHeight(140)
+        self.autotune_log_box.setStyleSheet("""
+            QTextEdit {
+                background-color: #f8f9fa;
+                border: 1px solid #dee2e6;
+                border-radius: 5px;
+                padding: 6px;
+                font-family: 'Courier New';
+                font-size: 11px;
+            }
+        """)
+        log_layout.addWidget(self.autotune_log_box)
+        log_group.setLayout(log_layout)
+        layout.addWidget(log_group)
 
         layout.addStretch()
-        self.setLayout(layout)
+        self._refresh_autotune_plot()
+        return container
 
+    def _append_autotune_log(self, message: str):
+        if self.autotune_log_box is None:
+            return
+        timestamp = time.strftime("%H:%M:%S")
+        self.autotune_log_box.append(f"[{timestamp}] {message}")
+        scrollbar = self.autotune_log_box.verticalScrollBar()
+        scrollbar.setValue(scrollbar.maximum())
+
+    def forward_autotune_log(self, message: str, level: str):
+        lower = message.lower()
+        if "autotune" in lower or (self.autotune_active and any(word in lower for word in ("plate", "pid", "step"))):
+            self._append_autotune_log(message)
+
+    def _refresh_autotune_plot(self):
+        if not self.autotune_temp_line or not self.autotune_pwm_line:
+            return
+        if not self.autotune_measurements:
+            self.autotune_temp_line.set_data([], [])
+            self.autotune_pwm_line.set_data([], [])
+            self.autotune_temp_ax.relim()
+            self.autotune_temp_ax.autoscale_view()
+            self.autotune_pwm_ax.relim()
+            self.autotune_pwm_ax.set_ylim(0, 100)
+        else:
+            times = [row[0] for row in self.autotune_measurements]
+            temps = [row[1] for row in self.autotune_measurements]
+            pwm = [row[2] for row in self.autotune_measurements]
+            self.autotune_temp_line.set_data(times, temps)
+            self.autotune_pwm_line.set_data(times, pwm)
+            self.autotune_temp_ax.relim()
+            self.autotune_temp_ax.autoscale_view()
+            self.autotune_pwm_ax.relim()
+            self.autotune_pwm_ax.set_ylim(0, max(100, max(pwm) * 1.1))
+            handles = [self.autotune_temp_line, self.autotune_pwm_line]
+            labels = ["Plate-temp", "PWM"]
+            self.autotune_temp_ax.legend(handles, labels, loc="upper right")
+        self.autotune_plot_canvas.draw_idle()
+
+    def _record_autotune_sample(self, data: Dict[str, Any]):
+        if not self.autotune_active:
+            return
+        if self.autotune_start_time is None:
+            self.autotune_start_time = time.time()
+        plate = data.get("cooling_plate_temp")
+        pwm = data.get("pid_output")
+        if plate is None or pwm is None:
+            return
+        try:
+            timestamp = time.time() - self.autotune_start_time
+            self.autotune_measurements.append((timestamp, float(plate), float(pwm)))
+            if len(self.autotune_measurements) > 2000:
+                self.autotune_measurements = self.autotune_measurements[-2000:]
+            self._refresh_autotune_plot()
+        except (TypeError, ValueError):
+            pass
+
+    def clear_autotune_log(self):
+        if self.autotune_log_box is not None:
+            self.autotune_log_box.clear()
+
+    def export_autotune_csv(self):
+        if not self.autotune_measurements:
+            QMessageBox.information(self, "Ingen data", "Ingen måledata å eksportere enda.")
+            return
+        filename, _ = QFileDialog.getSaveFileName(
+            self,
+            "Eksporter autotune-målinger",
+            "autotune_data.csv",
+            "CSV (*.csv);;Alle filer (*)",
+        )
+        if not filename:
+            return
+        try:
+            with open(filename, "w", encoding="utf-8", newline="") as handle:
+                writer = csv.writer(handle)
+                writer.writerow(["time_s", "plate_temp_c", "pid_output_pct"])
+                writer.writerows(self.autotune_measurements)
+            QMessageBox.information(self, "Lagret", f"Måledata lagret til {filename}.")
+        except OSError as exc:
+            QMessageBox.warning(self, "Feil", f"Kunne ikke lagre CSV: {exc}")
     def run_pid_input_check(self):
         """Manually trigger PID input verification."""
         status_text, style = self._evaluate_pid_input()
@@ -669,7 +849,7 @@ class AsymmetricPIDControls(QWidget):
         ]
 
     def _set_autotune_active(self, active: bool):
-        """Toggle lockouts and indicators when autotune runs."""
+        """Toggle lockouts, logging and graph state when autotune runs."""
         if self.autotune_active == active:
             return
 
@@ -680,7 +860,15 @@ class AsymmetricPIDControls(QWidget):
             self.autotune_phase_label.setText("Oppstart")
             self.autotune_phase_label.setStyleSheet("color: #17a2b8; font-weight: bold;")
             self.autotune_summary_group.setVisible(False)
+            if hasattr(self, "autotune_results_panel"):
+                self.autotune_results_panel.clear_results()
+                self.autotune_results_panel.setVisible(False)
             self.autotune_last_results = None
+            self.autotune_measurements = []
+            self.autotune_start_time = None
+            self._refresh_autotune_plot()
+            self.clear_autotune_log()
+            self._append_autotune_log("🎯 Autotune startes")
             self._autotune_lock_states = {
                 widget: widget.isEnabled() for widget in self._get_autotune_lock_widgets()
             }
@@ -697,6 +885,8 @@ class AsymmetricPIDControls(QWidget):
             if self.parent is not None:
                 self.parent.set_autotune_lockout(False)
             self.autotune_abort_triggered = False
+            self._refresh_autotune_plot()
+            self._append_autotune_log("✅ Autotune stoppet")
 
     def _update_progress(self, data: Dict[str, Any]):
         """Update progress bar and phase label."""
@@ -775,6 +965,8 @@ class AsymmetricPIDControls(QWidget):
             QMessageBox.information(self, "Autotune pågår", "Avslutt pågående autotune før ny kjøring.")
             return
         self.autotune_summary_group.setVisible(False)
+        if hasattr(self, "autotune_results_panel"):
+            self.autotune_results_panel.setVisible(False)
         self.start_asymmetric_autotune()
 
     def show_autotune_summary(self, results: Dict[str, Any]):
@@ -838,6 +1030,8 @@ class AsymmetricPIDControls(QWidget):
                         break
                     except (TypeError, ValueError):
                         continue
+
+            self._record_autotune_sample(data)
 
             status_text, style = self._evaluate_pid_input()
             self.pid_input_check_label.setText(status_text)
@@ -1587,6 +1781,7 @@ class MainWindow(QMainWindow):
             
             # Create tabs
             self.create_control_tab()
+            self.create_autotune_tab()
             self.create_monitoring_tab()
             self.create_profile_tab()
             
@@ -1658,20 +1853,28 @@ class MainWindow(QMainWindow):
         control_widget = QWidget()
         control_layout = QHBoxLayout()
         control_widget.setLayout(control_layout)
-        
+
         # Left panel
         left_panel = self.create_control_panel()
         left_panel.setMaximumWidth(520)
-        
+
         # Right panel
         right_panel = self.create_live_data_panel()
         right_panel.setMaximumWidth(480)
-        
+
         control_layout.addWidget(left_panel)
         control_layout.addWidget(right_panel)
         control_layout.addStretch()
-        
-        self.tab_widget.addTab(control_widget, "🎛️ Control")
+
+        self.tab_widget.addTab(control_widget, "⚙️ Drift")
+
+    def create_autotune_tab(self):
+        """Create dedicated autotune tab"""
+        autotune_widget = self.asymmetric_controls.get_autotune_tab()
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setWidget(autotune_widget)
+        self.tab_widget.addTab(scroll_area, "🤖 Autotune")
 
     def create_control_panel(self):
         """Create control panel with connection"""
@@ -3239,7 +3442,10 @@ class MainWindow(QMainWindow):
             formatted_message = f'<span style="color: {color}; font-weight: bold;">[{timestamp}]</span> {message}'
             
             self.logBox.append(formatted_message)
-            
+
+            if hasattr(self, "asymmetric_controls"):
+                self.asymmetric_controls.forward_autotune_log(message, level)
+
             if self.autoScrollCheckbox.isChecked():
                 scrollbar = self.logBox.verticalScrollBar()
                 scrollbar.setValue(scrollbar.maximum())

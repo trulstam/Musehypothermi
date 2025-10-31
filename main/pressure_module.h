@@ -36,10 +36,6 @@ class PressureModule {
     unsigned long lastBreathEventMillis;
 
     bool hasValidBreathRate;
-
-    bool hasValidBreathRate;
-
-    bool hasValidBreathRate;
 };
 
 #endif // PRESSURE_MODULE_H

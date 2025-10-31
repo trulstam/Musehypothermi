@@ -96,6 +96,8 @@ public:
 
     // Autotune functionality
     void startAutotune();  // Standard autotune for compatibility
+    void configureAutotune(float target, float heatingStepPercent, float coolingStepPercent,
+                           unsigned long maxDurationMs);
     void startAsymmetricAutotune();
     void runAsymmetricAutotune();
     void abortAutotune();
@@ -182,6 +184,13 @@ private:
         float baseline;
     };
 
+    struct AutotuneConfig {
+        float target;
+        float heatingStepPercent;
+        float coolingStepPercent;
+        unsigned long maxDurationMs;
+    };
+
     struct AutotuneRecommendation {
         bool valid;
         bool heatingValid;
@@ -223,17 +232,23 @@ private:
         float currentSlope;
         unsigned long stabilityStart;
         float target;
+        float holdOutputPercent;
+        float heatingCommandPercent;
+        float coolingCommandPercent;
+        unsigned long maxDurationMs;
         AutotuneDataset heating;
         AutotuneDataset cooling;
         AutotuneRecommendation recommendation;
     };
 
     AutotuneSession autotuneSession;
+    AutotuneConfig autotuneConfig;
 
     void resetAutotuneSession();
     void transitionAutotunePhase(AutotunePhase nextPhase, const char* statusMessage);
     void applyAutotuneOutput(float percent);
-    void logAutotuneSample(AutotuneDataset& dataset, unsigned long now, float plateTemp, float coreTemp);
+    void logAutotuneSample(AutotuneDataset& dataset, unsigned long now, float plateTemp, float coreTemp,
+                           float appliedOutputPercent);
     bool datasetFull(const AutotuneDataset& dataset) const;
     bool calculateProcessParameters(const AutotuneDataset& dataset, float& processGain, float& timeConstant,
                                     float& deadTime, float& initialSlope);

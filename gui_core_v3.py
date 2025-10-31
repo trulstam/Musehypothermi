@@ -259,7 +259,6 @@ class AsymmetricPIDControls(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.parent = parent
-        self.setup_ui()
         self.autotune_active = False
         self.autotune_abort_triggered = False
         self.last_plate_temp: Optional[float] = None
@@ -274,6 +273,7 @@ class AsymmetricPIDControls(QWidget):
         self.autotune_pwm_line = None
         self.autotune_temp_ax = None
         self.autotune_pwm_ax = None
+        self.setup_ui()
         
     def setup_ui(self):
         layout = QVBoxLayout()

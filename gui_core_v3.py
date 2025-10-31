@@ -256,10 +256,13 @@ class AutotuneResultsPanel(QGroupBox):
 class AsymmetricPIDControls(QWidget):
     """Enhanced controls for asymmetric PID system"""
 
+    # Provide class-level defaults so Qt/designer tooling can safely access
+    # attributes even before ``__init__`` finishes initialising the instance.
+    _autotune_tab_widget: Optional[QWidget] = None
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.parent = parent
-        self.setup_ui()
         self.autotune_active = False
         self.autotune_abort_triggered = False
         self.last_plate_temp: Optional[float] = None
@@ -274,6 +277,7 @@ class AsymmetricPIDControls(QWidget):
         self.autotune_pwm_line = None
         self.autotune_temp_ax = None
         self.autotune_pwm_ax = None
+        self.setup_ui()
         
     def setup_ui(self):
         layout = QVBoxLayout()

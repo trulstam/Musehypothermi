@@ -31,9 +31,13 @@ class PressureModule {
     unsigned int breathCount;
     float breathsPerMinute;
 
-    // Nytt felt for å lagre start-tid for BPM-vindu
-    unsigned long breathWindowStart;
+    // NYTT felt for å lagre start-tid for BPM-vindu:
+    unsigned long breathWindowStart;  // <--- Legg denne til
     unsigned long lastBreathEventMillis;
+
+    bool hasValidBreathRate;
+
+    bool hasValidBreathRate;
 
     bool hasValidBreathRate;
 };

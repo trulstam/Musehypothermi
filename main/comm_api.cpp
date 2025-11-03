@@ -335,8 +335,13 @@ void CommAPI::handleCommand(const String &jsonString) {
 
         } else if (variable == "debug_level") {
             int value = set["value"];
-            pid.enableDebug(value > 0);
+            bool enabled = value > 0;
+            pid.enableDebug(enabled);
             eeprom.saveDebugLevel(value);
+            sendEvent(enabled
+                          ? "\U0001f41e Debug telemetry enabled via GUI"
+                          : "\U0001f41e Debug telemetry disabled via GUI");
+            sendStatus("debug_level", enabled ? 1 : 0);
             sendResponse("Debug level updated");
 
         } else if (variable == "failsafe_timeout") {
@@ -469,6 +474,7 @@ void CommAPI::sendStatus() {
     doc["pid_output"] = pid.getOutput();
     doc["breath_freq_bpm"] = pressure.getBreathRate();
     doc["breathing_failsafe_enabled"] = isBreathingFailsafeEnabled();
+    doc["debug_level"] = pid.isDebugEnabled() ? 1 : 0;
     doc["plate_target_active"] = pid.getActivePlateTarget();
     doc["profile_active"] = profileManager.isActive();
     doc["profile_paused"] = profileManager.isPaused();

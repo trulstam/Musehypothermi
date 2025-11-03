@@ -2655,6 +2655,7 @@ class MainWindow(QMainWindow):
         self.profile_elapsed_paused: float = 0.0
         self.autotune_lockout_active = False
         self._autotune_locked_widgets: Dict[QWidget, bool] = {}
+        self.debug_enabled = False
 
         print("✅ Data structures initialized")
 
@@ -2810,12 +2811,27 @@ class MainWindow(QMainWindow):
         self.pidStatusIndicator = QLabel("⚫ PID Off")
         self.pidStatusIndicator.setStyleSheet("color: gray; font-weight: bold;")
         status_row.addWidget(self.pidStatusIndicator)
-        
+
         status_row.addStretch()
-        
+
+        # Debug telemetry row
+        debug_row = QHBoxLayout()
+        self.debugStatusIndicator = QLabel("🐞 Debug Off")
+        self.debugStatusIndicator.setStyleSheet("color: #6c757d; font-weight: bold;")
+        debug_row.addWidget(self.debugStatusIndicator)
+
+        self.toggleDebugButton = QPushButton("Enable Debug")
+        self.toggleDebugButton.setFixedWidth(140)
+        self.toggleDebugButton.setCursor(Qt.PointingHandCursor)
+        self.toggleDebugButton.setEnabled(False)
+        self.toggleDebugButton.clicked.connect(self.toggle_debug_mode)
+        debug_row.addWidget(self.toggleDebugButton)
+
+        debug_row.addStretch()
+
         # Emergency row
         emergency_row = QHBoxLayout()
-        
+
         self.panicButton = QPushButton("🚨 PANIC")
         self.panicButton.setFixedSize(110, 38)
         self.panicButton.setStyleSheet("""
@@ -2832,13 +2848,14 @@ class MainWindow(QMainWindow):
         self.panicButton.clicked.connect(self.trigger_panic)
         emergency_row.addWidget(self.panicButton)
         emergency_row.addStretch()
-        
+
         conn_layout.addLayout(port_row)
         conn_layout.addLayout(status_row)
+        conn_layout.addLayout(debug_row)
         conn_layout.addLayout(emergency_row)
         conn_group.setLayout(conn_layout)
         layout.addWidget(conn_group)
-        
+
         # ASYMMETRIC PID CONTROLS
         self.asymmetric_controls = AsymmetricPIDControls(self)
         layout.addWidget(self.asymmetric_controls)
@@ -3105,6 +3122,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(advanced_group)
 
         layout.addStretch()
+        self._apply_debug_state(self.debug_enabled)
         return panel
 
     def create_monitoring_tab(self):
@@ -3426,6 +3444,17 @@ class MainWindow(QMainWindow):
                     self.breathFailsafeCheckbox.blockSignals(True)
                     self.breathFailsafeCheckbox.setChecked(enabled)
                     self.breathFailsafeCheckbox.blockSignals(False)
+
+            if "debug_level" in data:
+                raw_value = data["debug_level"]
+                debug_enabled = False
+                if isinstance(raw_value, (int, float)):
+                    debug_enabled = float(raw_value) != 0.0
+                elif isinstance(raw_value, str):
+                    debug_enabled = raw_value.strip().lower() in {"1", "true", "on", "yes", "enabled"}
+                else:
+                    debug_enabled = bool(raw_value)
+                self._apply_debug_state(debug_enabled)
 
             # PID status
             if "pid_output" in data:
@@ -4269,6 +4298,7 @@ class MainWindow(QMainWindow):
                 self.connectionStatusLabel.setText("❌ Disconnected")
                 self.connectionStatusLabel.setStyleSheet("color: red; font-weight: bold;")
                 self.connection_established = False
+                self._apply_debug_state(False)
                 self.start_time = None
 
                 self.profile_ready = False
@@ -4292,6 +4322,7 @@ class MainWindow(QMainWindow):
                     self.connectionStatusLabel.setText(f"✅ Connected to {port}")
                     self.connectionStatusLabel.setStyleSheet("color: green; font-weight: bold;")
                     self.connection_established = True
+                    self._apply_debug_state(self.debug_enabled)
 
                     self.log(f"🔌 Connected to {port}", "success")
                     self.event_logger.log_event(f"Connected to {port}")
@@ -4333,12 +4364,46 @@ class MainWindow(QMainWindow):
         try:
             if self.serial_manager.is_connected():
                 self.log("🔄 Syncing...", "info")
-                
+
                 self.serial_manager.sendCMD("get", "pid_params")
                 QTimer.singleShot(300, lambda: self.serial_manager.sendCMD("get", "status"))
-                
+
         except Exception as e:
             self.log(f"❌ Sync error: {e}", "error")
+
+    def _apply_debug_state(self, enabled: bool):
+        """Update cached debug flag and refresh UI elements."""
+        self.debug_enabled = bool(enabled)
+
+        if hasattr(self, "debugStatusIndicator") and self.debugStatusIndicator is not None:
+            if self.debug_enabled:
+                self.debugStatusIndicator.setText("🐞 Debug On")
+                self.debugStatusIndicator.setStyleSheet("color: #0d6efd; font-weight: bold;")
+            else:
+                self.debugStatusIndicator.setText("🐞 Debug Off")
+                self.debugStatusIndicator.setStyleSheet("color: #6c757d; font-weight: bold;")
+
+        if hasattr(self, "toggleDebugButton") and self.toggleDebugButton is not None:
+            self.toggleDebugButton.setText("Disable Debug" if self.debug_enabled else "Enable Debug")
+            self.toggleDebugButton.setEnabled(self.connection_established)
+
+    def toggle_debug_mode(self):
+        """Toggle firmware debug telemetry via SET command."""
+        if not self.connection_established or not self.serial_manager.is_connected():
+            self.log("⚠️ Connect to the controller before toggling debug mode", "warning")
+            return
+
+        target_state = not self.debug_enabled
+        try:
+            self.serial_manager.sendSET("debug_level", 1 if target_state else 0)
+        except Exception as exc:
+            self.log(f"❌ Failed to toggle debug mode: {exc}", "error")
+            return
+
+        state_text = "enabled" if target_state else "disabled"
+        self.log(f"🐞 Debug telemetry {state_text}", "info")
+        self._apply_debug_state(target_state)
+        QTimer.singleShot(500, self.request_status)
 
     def toggle_breathing_failsafe(self, state: int):
         enabled = state == Qt.Checked

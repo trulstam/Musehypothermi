@@ -158,6 +158,7 @@ private:
     void applySafetyConstraints();
     void applyRateLimiting();
     void applyOutputSmoothing();
+    void publishFilterTelemetry(const char* stage, double rawValue, double finalValue);
     void resetOutputState();
 
     // PID switching logic

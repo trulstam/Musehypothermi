@@ -51,6 +51,7 @@ public:
     float getTargetTemp();
     float getActivePlateTarget();
     float getMaxOutputPercent();
+    float getPersistedMaxOutputPercent() const;
     float getOutput();
     float getCurrentInput();
     float getPwmOutput();
@@ -87,6 +88,7 @@ private:
 
     float kp, ki, kd;
     float maxOutputPercent;
+    float persistedMaxOutputPercent;
 
     bool active;
     bool autotuneActive;
@@ -94,6 +96,10 @@ private:
     float backupKp, backupKi, backupKd;
     unsigned long autotuneStartMillis;
     int autotuneCycles;
+
+    bool startupLimitActive;
+    bool startupClampNotified;
+    unsigned long startupLimitEndMillis;
 
     bool debugEnabled;
 

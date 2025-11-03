@@ -16,6 +16,7 @@ constexpr float kDefaultKd = 1.0f;
 constexpr float kDefaultTargetTemp = 37.0f;
 constexpr float kDefaultMaxOutputPercent = 20.0f;
 constexpr float kStartupMaxOutputPercent = 20.0f;
+constexpr unsigned long kStartupClampDurationMs = 60000UL;
 
 bool isInvalidPidValue(float value) {
     return isnan(value) || isinf(value) || value < 0.0f;
@@ -47,10 +48,12 @@ extern CommAPI comm;
 PIDModule::PIDModule()
   : pid(&Input, &Output, &Setpoint, kDefaultKp, kDefaultKi, kDefaultKd, DIRECT),
     kp(kDefaultKp), ki(kDefaultKi), kd(kDefaultKd), maxOutputPercent(kDefaultMaxOutputPercent),
+    persistedMaxOutputPercent(kDefaultMaxOutputPercent),
     active(false), autotuneActive(false), autotuneStatus("idle"),
     Input(0), Output(0), Setpoint(kDefaultTargetTemp),
     profileLength(0), currentProfileStep(0), profileStartMillis(0), profileActive(false),
-    debugEnabled(false), actualPlateTarget(kDefaultTargetTemp) {}
+    debugEnabled(false), actualPlateTarget(kDefaultTargetTemp),
+    startupLimitActive(false), startupClampNotified(false), startupLimitEndMillis(0) {}
 
 void PIDModule::begin(EEPROMManager &eepromManager) {
     eeprom = &eepromManager;
@@ -65,6 +68,7 @@ void PIDModule::begin(EEPROMManager &eepromManager) {
         eKd = kDefaultKd;
         eeprom->savePIDParams(eKp, eKi, eKd);
         restoredDefaults = true;
+        comm.sendEvent("⚠️ EEPROM PID gains invalid – restored defaults");
     }
 
     setKp(eKp);
@@ -77,29 +81,37 @@ void PIDModule::begin(EEPROMManager &eepromManager) {
         tTemp = kDefaultTargetTemp;
         eeprom->saveTargetTemp(tTemp);
         restoredDefaults = true;
+        comm.sendEvent("⚠️ EEPROM target temperature invalid – restored to 37°C");
     }
     setTargetTemp(tTemp);
 
     float maxOutput;
     eeprom->loadMaxOutput(maxOutput);
-    bool startupLimitApplied = false;
     if (shouldRestoreMaxOutput(maxOutput)) {
         maxOutput = kDefaultMaxOutputPercent;
         eeprom->saveMaxOutput(maxOutput);
         restoredDefaults = true;
-    } else if (maxOutput > kStartupMaxOutputPercent) {
-        maxOutput = kStartupMaxOutputPercent;
-        eeprom->saveMaxOutput(maxOutput);
-        startupLimitApplied = true;
+        comm.sendEvent("⚠️ EEPROM max output invalid – restored to 20% default");
     }
-    setMaxOutputPercent(maxOutput);
+
+    persistedMaxOutputPercent = maxOutput;
+    startupLimitActive = persistedMaxOutputPercent > kStartupMaxOutputPercent;
+    startupClampNotified = false;
+    startupLimitEndMillis = startupLimitActive ? millis() + kStartupClampDurationMs : 0;
+    setMaxOutputPercent(persistedMaxOutputPercent);
+
+    if (startupLimitActive && !startupClampNotified) {
+        String message = "🔒 Startup max output limited to 20% for ";
+        message += String(kStartupClampDurationMs / 1000);
+        message += "s (requested ";
+        message += String(persistedMaxOutputPercent, 1);
+        message += "%)";
+        comm.sendEvent(message);
+        startupClampNotified = true;
+    }
 
     if (restoredDefaults) {
         Serial.println(F("[PID] Restored default parameters due to invalid EEPROM data"));
-    }
-
-    if (startupLimitApplied) {
-        comm.sendEvent("🔒 Max output reset to 20% for safe startup");
     }
 
     pwm.begin();
@@ -109,6 +121,17 @@ void PIDModule::begin(EEPROMManager &eepromManager) {
 }
 
 void PIDModule::update(double currentTemp) {
+    if (startupLimitActive && millis() >= startupLimitEndMillis) {
+        startupLimitActive = false;
+        startupClampNotified = false;
+        setMaxOutputPercent(persistedMaxOutputPercent);
+
+        String message = "🔓 Startup max output clamp released – restored to ";
+        message += String(persistedMaxOutputPercent, 1);
+        message += "%";
+        comm.sendEvent(message);
+    }
+
     if (isFailsafeActive()) {
         stop();
         pwm.stopPWM();
@@ -306,7 +329,26 @@ void PIDModule::setTargetTemp(float value) { Setpoint = value; actualPlateTarget
 void PIDModule::setMaxOutputPercent(float percent) {
     if (percent < 0.0f) percent = 0.0f;
     if (percent > 100.0f) percent = 100.0f;
-    maxOutputPercent = percent;
+
+    persistedMaxOutputPercent = percent;
+
+    float appliedPercent = percent;
+    if (startupLimitActive && appliedPercent > kStartupMaxOutputPercent) {
+        appliedPercent = kStartupMaxOutputPercent;
+        if (!startupClampNotified) {
+            String message = "🔒 Startup max output limited to 20% for ";
+            message += String(kStartupClampDurationMs / 1000);
+            message += "s (requested ";
+            message += String(persistedMaxOutputPercent, 1);
+            message += "%)";
+            comm.sendEvent(message);
+            startupClampNotified = true;
+        }
+    } else if (!startupLimitActive) {
+        startupClampNotified = false;
+    }
+
+    maxOutputPercent = appliedPercent;
     applyOutputLimit();
 
     comm.sendStatus("pid_output_limit", maxOutputPercent);
@@ -318,6 +360,7 @@ float PIDModule::getKd() { return kd; }
 float PIDModule::getTargetTemp() { return Setpoint; }
 float PIDModule::getActivePlateTarget() { return actualPlateTarget; }
 float PIDModule::getMaxOutputPercent() { return maxOutputPercent; }
+float PIDModule::getPersistedMaxOutputPercent() const { return persistedMaxOutputPercent; }
 float PIDModule::getOutput() { return Output; }
 float PIDModule::getCurrentInput() { return Input; }
 float PIDModule::getPwmOutput() { return currentPwmOutput; }

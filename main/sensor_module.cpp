@@ -55,8 +55,11 @@ void SensorModule::update() {
     if (deltaTime <= 0.0) return;
     lastUpdate = now;
 
-    double pwmOutput = pid.getPwmOutput();
-    double peltierPower = (pwmOutput / 2399.0) * 120.0;
+    constexpr double kMaxPeltierPowerWatts = 120.0;
+
+    double pwmOutputPercent = pid.getPwmOutput();
+    pwmOutputPercent = constrain(pwmOutputPercent, -100.0, 100.0);
+    double peltierPower = (pwmOutputPercent / 100.0) * kMaxPeltierPowerWatts;
 
     double ambientTemp = 22.0;
     double heatLoss = plateCoolingLoss * (coolingPlateTemp - ambientTemp);

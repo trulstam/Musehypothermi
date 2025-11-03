@@ -27,7 +27,7 @@ Denne README beskriver hvordan dummy-simuleringen av Musehypothermi-systemet fun
   - Spesifikk varme: **900 J/(kg·K)**.
   - Varmelekkasje: **0.01** proporsjonal faktor.
 - **Effekt fra PID**:
-  - PWM-output: -2399 til +2399.
+  - PWM-output: -100 % til +100 %.
   - Skaleres til -120W til +120W.
 
 ### Rectal Temperatur (Kjernetemp)
@@ -92,7 +92,7 @@ if (pressure.getBreathRate() < 1.0) {
 
 2. **Rektal temperatur fungerer kun som en begrensning av PID setpoint** når dette er definert i en profil.
 
-3. **PWM output**: Styres av PID-regulator, som påvirker simulert platetemperatur. Det er **PWM-verdien** som i realitet ville påvirket Peltier, men her brukes til simulering.
+3. **PWM output**: Styres av PID-regulator, som påvirker simulert platetemperatur. Verdien er i prosent (-100 til +100) og simulatoren bruker den direkte (prosent × 120 W) slik at enhetene matcher resten av systemet.
 
 4. **Failsafe**: Apné er den primære triggeren, men du kan også overvåke temperaturer for å sette egne grenser.
 
@@ -109,7 +109,7 @@ if (pressure.getBreathRate() < 1.0) {
 | Mus spesifikk varme      | 3470 J/(kg·K)                  |
 | Mus-plate kobling        | 0.02                           |
 | Metabolisme (14-37°C)    | 0.01W → 0.21W                  |
-| PWM-output område        | -2399 til +2399 (skalert til ±120W) |
+| PWM-output område        | -100 % til +100 % (skalert til ±120W) |
 | Romtemperatur            | 22°C                           |
 | Plate begrensning        | -10°C til +50°C                |
 | Rektal begrensning       | 14°C til 40°C                  |

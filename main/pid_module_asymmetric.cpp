@@ -28,6 +28,7 @@ constexpr float kDefaultCoolingKd = 0.8f;
 constexpr float kDefaultTargetTemp = 37.0f;
 constexpr float kDefaultMaxOutputPercent = 20.0f;
 constexpr float kStartupMaxOutputPercent = 20.0f;
+constexpr unsigned long kStartupClampDurationMs = 60000UL;
 constexpr float kDefaultDeadband = 0.5f;
 constexpr float kDefaultSafetyMargin = 2.0f;
 constexpr float kDefaultCoolingRate = 2.0f;
@@ -106,7 +107,10 @@ AsymmetricPIDModule::AsymmetricPIDModule()
       maxCoolingRate(kDefaultCoolingRate), lastUpdateTime(0),
       lastTemperature(0.0), temperatureRate(0.0),
       outputSmoothingFactor(kOutputSmoothingFactor), lastOutput(0.0),
-      eeprom(nullptr) {
+      eeprom(nullptr),
+      persistedHeatingLimit(kDefaultMaxOutputPercent),
+      persistedCoolingLimit(kDefaultMaxOutputPercent),
+      startupClampActive(false), startupClampNotified(false), startupClampEndMillis(0) {
 
     // Initialize default parameters
     currentParams.kp_cooling = kDefaultCoolingKp;
@@ -150,6 +154,19 @@ void AsymmetricPIDModule::begin(EEPROMManager &eepromManager) {
 }
 
 void AsymmetricPIDModule::update(double /*currentTemp*/) {
+    if (startupClampActive && millis() >= startupClampEndMillis) {
+        startupClampActive = false;
+        startupClampNotified = false;
+        setOutputLimits(persistedCoolingLimit, persistedHeatingLimit, false);
+
+        String message = "🔓 Startup output clamp released – heating ";
+        message += String(persistedHeatingLimit, 1);
+        message += "% / cooling ";
+        message += String(persistedCoolingLimit, 1);
+        message += "%";
+        comm.sendEvent(message);
+    }
+
     if (emergencyStop || isFailsafeActive()) {
         stop();
         return;
@@ -387,8 +404,39 @@ void AsymmetricPIDModule::setOutputLimits(float coolingLimit, float heatingLimit
     float constrainedCooling = constrain(coolingLimit, 0.0f, 100.0f);
     float constrainedHeating = constrain(heatingLimit, 0.0f, 100.0f);
 
-    currentParams.cooling_limit = -constrainedCooling;
-    currentParams.heating_limit = constrainedHeating;
+    persistedCoolingLimit = constrainedCooling;
+    persistedHeatingLimit = constrainedHeating;
+
+    if (persistedHeatingLimit <= kStartupMaxOutputPercent &&
+        persistedCoolingLimit <= kStartupMaxOutputPercent) {
+        startupClampActive = false;
+        startupClampEndMillis = 0;
+    }
+
+    float appliedCooling = constrainedCooling;
+    float appliedHeating = constrainedHeating;
+
+    if (startupClampActive) {
+        float clampedCooling = std::min(appliedCooling, kStartupMaxOutputPercent);
+        float clampedHeating = std::min(appliedHeating, kStartupMaxOutputPercent);
+        bool clampApplied = (clampedCooling < appliedCooling) || (clampedHeating < appliedHeating);
+        appliedCooling = clampedCooling;
+        appliedHeating = clampedHeating;
+        if (clampApplied && !startupClampNotified) {
+            String message = "🔒 Startup output clamp active – applying ";
+            message += String(appliedHeating, 1);
+            message += "% / ";
+            message += String(appliedCooling, 1);
+            message += "% (heating/cooling)";
+            comm.sendEvent(message);
+            startupClampNotified = true;
+        }
+    } else {
+        startupClampNotified = false;
+    }
+
+    currentParams.cooling_limit = -appliedCooling;
+    currentParams.heating_limit = appliedHeating;
 
     coolingPID.SetOutputLimits(currentParams.cooling_limit, 0.0);
     heatingPID.SetOutputLimits(0.0, currentParams.heating_limit);
@@ -1129,8 +1177,8 @@ void AsymmetricPIDModule::saveAsymmetricParams() {
                                  currentParams.kd_cooling);
 
     EEPROMManager::OutputLimits limits{
-        fabs(currentParams.heating_limit),
-        fabs(currentParams.cooling_limit),
+        persistedHeatingLimit,
+        persistedCoolingLimit,
     };
     eeprom->saveOutputLimits(limits);
 
@@ -1160,8 +1208,6 @@ void AsymmetricPIDModule::loadAsymmetricParams() {
     float storedDeadband = kDefaultDeadband;
     float storedMargin = kDefaultSafetyMargin;
 
-    bool startupLimitApplied = false;
-
     if (eeprom) {
         eeprom->loadHeatingPIDParams(heatingKp, heatingKi, heatingKd);
         if (shouldRestorePID(heatingKp, heatingKi, heatingKd)) {
@@ -1170,6 +1216,7 @@ void AsymmetricPIDModule::loadAsymmetricParams() {
             heatingKd = kDefaultHeatingKd;
             eeprom->saveHeatingPIDParams(heatingKp, heatingKi, heatingKd);
             restoredDefaults = true;
+            comm.sendEvent("⚠️ EEPROM heating PID invalid – restored defaults");
         }
 
         eeprom->loadCoolingPIDParams(coolingKp, coolingKi, coolingKd);
@@ -1179,6 +1226,7 @@ void AsymmetricPIDModule::loadAsymmetricParams() {
             coolingKd = kDefaultCoolingKd;
             eeprom->saveCoolingPIDParams(coolingKp, coolingKi, coolingKd);
             restoredDefaults = true;
+            comm.sendEvent("⚠️ EEPROM cooling PID invalid – restored defaults");
         }
 
         eeprom->loadTargetTemp(target);
@@ -1186,6 +1234,7 @@ void AsymmetricPIDModule::loadAsymmetricParams() {
             target = kDefaultTargetTemp;
             eeprom->saveTargetTemp(target);
             restoredDefaults = true;
+            comm.sendEvent("⚠️ EEPROM target temperature invalid – restored to 37°C");
         }
 
         eeprom->loadHeatingMaxOutput(heatingLimit);
@@ -1193,10 +1242,7 @@ void AsymmetricPIDModule::loadAsymmetricParams() {
             heatingLimit = kDefaultMaxOutputPercent;
             eeprom->saveHeatingMaxOutput(heatingLimit);
             restoredDefaults = true;
-        } else if (heatingLimit > kStartupMaxOutputPercent) {
-            heatingLimit = kStartupMaxOutputPercent;
-            eeprom->saveHeatingMaxOutput(heatingLimit);
-            startupLimitApplied = true;
+            comm.sendEvent("⚠️ EEPROM heating max output invalid – restored to 20%");
         }
 
         eeprom->loadCoolingMaxOutput(coolingLimit);
@@ -1204,10 +1250,7 @@ void AsymmetricPIDModule::loadAsymmetricParams() {
             coolingLimit = kDefaultMaxOutputPercent;
             eeprom->saveCoolingMaxOutput(coolingLimit);
             restoredDefaults = true;
-        } else if (coolingLimit > kStartupMaxOutputPercent) {
-            coolingLimit = kStartupMaxOutputPercent;
-            eeprom->saveCoolingMaxOutput(coolingLimit);
-            startupLimitApplied = true;
+            comm.sendEvent("⚠️ EEPROM cooling max output invalid – restored to 20%");
         }
 
         eeprom->loadCoolingRateLimit(storedRate);
@@ -1215,6 +1258,7 @@ void AsymmetricPIDModule::loadAsymmetricParams() {
             storedRate = kDefaultCoolingRate;
             eeprom->saveCoolingRateLimit(storedRate);
             restoredDefaults = true;
+            comm.sendEvent("⚠️ EEPROM cooling rate limit invalid – restored to default");
         }
 
         eeprom->loadDeadband(storedDeadband);
@@ -1222,6 +1266,7 @@ void AsymmetricPIDModule::loadAsymmetricParams() {
             storedDeadband = kDefaultDeadband;
             eeprom->saveDeadband(storedDeadband);
             restoredDefaults = true;
+            comm.sendEvent("⚠️ EEPROM deadband invalid – restored to default");
         }
 
         eeprom->loadSafetyMargin(storedMargin);
@@ -1229,6 +1274,7 @@ void AsymmetricPIDModule::loadAsymmetricParams() {
             storedMargin = kDefaultSafetyMargin;
             eeprom->saveSafetyMargin(storedMargin);
             restoredDefaults = true;
+            comm.sendEvent("⚠️ EEPROM safety margin invalid – restored to default");
         }
     }
 
@@ -1242,7 +1288,14 @@ void AsymmetricPIDModule::loadAsymmetricParams() {
     currentParams.safety_margin = storedMargin;
 
     setTargetTemp(target);
-    setOutputLimits(coolingLimit, heatingLimit, false);
+    persistedHeatingLimit = heatingLimit;
+    persistedCoolingLimit = coolingLimit;
+    startupClampActive = (persistedHeatingLimit > kStartupMaxOutputPercent) ||
+                         (persistedCoolingLimit > kStartupMaxOutputPercent);
+    startupClampNotified = false;
+    startupClampEndMillis = startupClampActive ? millis() + kStartupClampDurationMs : 0;
+
+    setOutputLimits(persistedCoolingLimit, persistedHeatingLimit, false);
     maxCoolingRate = storedRate;
 
     heatingPID.SetTunings(currentParams.kp_heating,
@@ -1260,10 +1313,6 @@ void AsymmetricPIDModule::loadAsymmetricParams() {
 
     if (restoredDefaults) {
         Serial.println(F("[PID] Restored asymmetric defaults due to invalid EEPROM data"));
-    }
-
-    if (startupLimitApplied) {
-        comm.sendEvent("🔒 Max output reset to 20% for safe startup");
     }
 }
 

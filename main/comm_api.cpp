@@ -301,12 +301,12 @@ void CommAPI::handleCommand(const String &jsonString) {
 
         } else if (variable == "pid_heating_limit") {
             float value = set["value"];
-            pid.setOutputLimits(pid.getCoolingOutputLimit(), value);
+            pid.setOutputLimits(pid.getPersistedCoolingOutputLimit(), value);
             sendResponse("Heating output limit updated");
 
         } else if (variable == "pid_cooling_limit") {
             float value = set["value"];
-            pid.setOutputLimits(value, pid.getHeatingOutputLimit());
+            pid.setOutputLimits(value, pid.getPersistedHeatingOutputLimit());
             sendResponse("Cooling output limit updated");
 
         } else if (variable == "pid_cooling_kp") {
@@ -574,8 +574,8 @@ void CommAPI::saveAllToEEPROM() {
     eeprom.saveTargetTemp(pid.getTargetTemp());
 
     EEPROMManager::OutputLimits limits{
-        pid.getHeatingOutputLimit(),
-        pid.getCoolingOutputLimit(),
+        pid.getPersistedHeatingOutputLimit(),
+        pid.getPersistedCoolingOutputLimit(),
     };
     eeprom.saveOutputLimits(limits);
 

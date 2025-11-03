@@ -86,6 +86,8 @@ public:
     float getCoolingOutputLimit() const {
         return currentParams.cooling_limit < 0 ? -currentParams.cooling_limit : currentParams.cooling_limit;
     }
+    float getPersistedHeatingOutputLimit() const { return persistedHeatingLimit; }
+    float getPersistedCoolingOutputLimit() const { return persistedCoolingLimit; }
 
     // Compatibility setters
     void setTargetTemp(float value) { Setpoint = value; }
@@ -152,6 +154,12 @@ private:
     // EEPROM management
     EEPROMManager* eeprom;
     PWMModule pwm;
+
+    float persistedHeatingLimit;
+    float persistedCoolingLimit;
+    bool startupClampActive;
+    bool startupClampNotified;
+    unsigned long startupClampEndMillis;
     
     // Safety methods
     bool checkSafetyLimits(double currentTemp, double targetTemp);

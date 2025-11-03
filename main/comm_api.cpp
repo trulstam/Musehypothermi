@@ -136,6 +136,14 @@ void CommAPI::handleCommand(const String &jsonString) {
                 float ki = params["ki"];
                 float kd = params["kd"];
                 pid.setCoolingPID(kp, ki, kd);
+                String message = "🧊 Cooling PID via GUI (kp=";
+                message += String(kp, 4);
+                message += ", ki=";
+                message += String(ki, 4);
+                message += ", kd=";
+                message += String(kd, 4);
+                message += ")";
+                sendEvent(message);
                 sendResponse("Cooling PID updated");
             } else {
                 sendResponse("Cooling PID parameters missing");
@@ -149,6 +157,14 @@ void CommAPI::handleCommand(const String &jsonString) {
                 float ki = params["ki"];
                 float kd = params["kd"];
                 pid.setHeatingPID(kp, ki, kd);
+                String message = "🔥 Heating PID via GUI (kp=";
+                message += String(kp, 4);
+                message += ", ki=";
+                message += String(ki, 4);
+                message += ", kd=";
+                message += String(kd, 4);
+                message += ")";
+                sendEvent(message);
                 sendResponse("Heating PID updated");
             } else {
                 sendResponse("Heating PID parameters missing");
@@ -257,16 +273,25 @@ void CommAPI::handleCommand(const String &jsonString) {
         } else if (variable == "pid_kp") {
             float value = set["value"];
             pid.setHeatingPID(value, pid.getHeatingKi(), pid.getHeatingKd());
+            String message = "🔥 Heating PID Kp via GUI = ";
+            message += String(value, 4);
+            sendEvent(message);
             sendResponse("Heating Kp updated");
 
         } else if (variable == "pid_ki") {
             float value = set["value"];
             pid.setHeatingPID(pid.getHeatingKp(), value, pid.getHeatingKd());
+            String message = "🔥 Heating PID Ki via GUI = ";
+            message += String(value, 4);
+            sendEvent(message);
             sendResponse("Heating Ki updated");
 
         } else if (variable == "pid_kd") {
             float value = set["value"];
             pid.setHeatingPID(pid.getHeatingKp(), pid.getHeatingKi(), value);
+            String message = "🔥 Heating PID Kd via GUI = ";
+            message += String(value, 4);
+            sendEvent(message);
             sendResponse("Heating Kd updated");
 
         } else if (variable == "pid_max_output") {
@@ -287,22 +312,36 @@ void CommAPI::handleCommand(const String &jsonString) {
         } else if (variable == "pid_cooling_kp") {
             float value = set["value"];
             pid.setCoolingPID(value, pid.getCoolingKi(), pid.getCoolingKd());
+            String message = "🧊 Cooling PID Kp via GUI = ";
+            message += String(value, 4);
+            sendEvent(message);
             sendResponse("Cooling Kp updated");
 
         } else if (variable == "pid_cooling_ki") {
             float value = set["value"];
             pid.setCoolingPID(pid.getCoolingKp(), value, pid.getCoolingKd());
+            String message = "🧊 Cooling PID Ki via GUI = ";
+            message += String(value, 4);
+            sendEvent(message);
             sendResponse("Cooling Ki updated");
 
         } else if (variable == "pid_cooling_kd") {
             float value = set["value"];
             pid.setCoolingPID(pid.getCoolingKp(), pid.getCoolingKi(), value);
+            String message = "🧊 Cooling PID Kd via GUI = ";
+            message += String(value, 4);
+            sendEvent(message);
             sendResponse("Cooling Kd updated");
 
         } else if (variable == "debug_level") {
             int value = set["value"];
-            pid.enableDebug(value > 0);
+            bool enabled = value > 0;
+            pid.enableDebug(enabled);
             eeprom.saveDebugLevel(value);
+            sendEvent(enabled
+                          ? "\U0001f41e Debug telemetry enabled via GUI"
+                          : "\U0001f41e Debug telemetry disabled via GUI");
+            sendStatus("debug_level", enabled ? 1 : 0);
             sendResponse("Debug level updated");
 
         } else if (variable == "failsafe_timeout") {
@@ -435,6 +474,7 @@ void CommAPI::sendStatus() {
     doc["pid_output"] = pid.getOutput();
     doc["breath_freq_bpm"] = pressure.getBreathRate();
     doc["breathing_failsafe_enabled"] = isBreathingFailsafeEnabled();
+    doc["debug_level"] = pid.isDebugEnabled() ? 1 : 0;
     doc["plate_target_active"] = pid.getActivePlateTarget();
     doc["profile_active"] = profileManager.isActive();
     doc["profile_paused"] = profileManager.isPaused();

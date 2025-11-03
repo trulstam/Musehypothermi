@@ -193,9 +193,17 @@ void AsymmetricPIDModule::update(double /*currentTemp*/) {
         rawPIDOutput = heatingOutput;
     }
 
+    publishFilterTelemetry("after_pid_compute", rawPIDOutput, rawPIDOutput);
+
+    publishFilterTelemetry("before_safety_constraints", rawPIDOutput, rawPIDOutput);
     applySafetyConstraints();
+    publishFilterTelemetry("after_safety_constraints", rawPIDOutput, rawPIDOutput);
+    publishFilterTelemetry("before_rate_limit", rawPIDOutput, rawPIDOutput);
     applyRateLimiting();
+    publishFilterTelemetry("after_rate_limit", rawPIDOutput, rawPIDOutput);
+    publishFilterTelemetry("before_output_smoothing", rawPIDOutput, rawPIDOutput);
     applyOutputSmoothing();
+    publishFilterTelemetry("after_output_smoothing", rawPIDOutput, finalOutput);
 
     double magnitude = fabs(finalOutput);
     int pwmValue = constrain(static_cast<int>(magnitude * MAX_PWM / 100.0), 0, MAX_PWM);
@@ -296,6 +304,25 @@ void AsymmetricPIDModule::applyOutputSmoothing() {
     lastOutput = finalOutput;
 }
 
+void AsymmetricPIDModule::publishFilterTelemetry(const char* stage, double rawValue, double finalValue) {
+    if (!debugEnabled) {
+        return;
+    }
+
+    String message = "[PID DEBUG] ";
+    message += stage;
+    message += " | mode=";
+    message += coolingMode ? "cooling" : "heating";
+    message += " | command=";
+    double command = coolingMode ? coolingOutput : heatingOutput;
+    message += String(command, 2);
+    message += " | raw=";
+    message += String(rawValue, 2);
+    message += " | final=";
+    message += String(finalValue, 2);
+    comm.sendEvent(message);
+}
+
 void AsymmetricPIDModule::resetOutputState() {
     rawPIDOutput = 0.0;
     finalOutput = 0.0;
@@ -376,13 +403,19 @@ void AsymmetricPIDModule::setCoolingPID(float kp, float ki, float kd, bool persi
     currentParams.ki_cooling = ki;
     currentParams.kd_cooling = kd;
 
-    if (coolingMode) {
-        coolingPID.SetTunings(kp, ki, kd);
-    }
+    coolingPID.SetTunings(kp, ki, kd);
+    coolingPID.SetOutputLimits(currentParams.cooling_limit, 0.0);
 
     if (persist) {
         saveAsymmetricParams();
-        comm.sendEvent("Cooling PID parameters updated");
+        String message = "🧊 Cooling PID parameters committed (kp=";
+        message += String(kp, 4);
+        message += ", ki=";
+        message += String(ki, 4);
+        message += ", kd=";
+        message += String(kd, 4);
+        message += ")";
+        comm.sendEvent(message);
     }
 }
 
@@ -391,13 +424,19 @@ void AsymmetricPIDModule::setHeatingPID(float kp, float ki, float kd, bool persi
     currentParams.ki_heating = ki;
     currentParams.kd_heating = kd;
 
-    if (!coolingMode) {
-        heatingPID.SetTunings(kp, ki, kd);
-    }
+    heatingPID.SetTunings(kp, ki, kd);
+    heatingPID.SetOutputLimits(0.0, currentParams.heating_limit);
 
     if (persist) {
         saveAsymmetricParams();
-        comm.sendEvent("Heating PID parameters updated");
+        String message = "🔥 Heating PID parameters committed (kp=";
+        message += String(kp, 4);
+        message += ", ki=";
+        message += String(ki, 4);
+        message += ", kd=";
+        message += String(kd, 4);
+        message += ")";
+        comm.sendEvent(message);
     }
 }
 

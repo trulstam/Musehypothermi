@@ -589,6 +589,13 @@ void AsymmetricPIDModule::applyAutotuneOutput(float percent) {
     float magnitude = fabs(percent);
     int pwmValue = constrain(static_cast<int>(magnitude * MAX_PWM / 100.0f), 0, MAX_PWM);
 
+    // Mirror the commanded percent into the PID bookkeeping so that
+    // instrumentation (simulator, telemetry, etc.) observes the same
+    // effective output even while the autotune bypasses the PID filters.
+    rawPIDOutput = percent;
+    finalOutput = percent;
+    lastOutput = percent;
+
     if (percent > 0.0f) {
         digitalWrite(kHeatingDirectionPin, LOW);
         digitalWrite(kCoolingDirectionPin, HIGH);

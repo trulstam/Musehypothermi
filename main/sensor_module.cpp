@@ -55,8 +55,28 @@ void SensorModule::update() {
     if (deltaTime <= 0.0) return;
     lastUpdate = now;
 
-    double pwmOutput = pid.getPwmOutput();
-    double peltierPower = (pwmOutput / 2399.0) * 120.0;
+    constexpr double kMaxPeltierPowerWatts = 120.0;
+
+    double pwmCommand = pid.getPwmOutput();
+    double maxOutputPercent = pid.getMaxOutputPercent();
+
+    // Detect whether the PID reports raw PWM ticks (±MAX_PWM scaled by
+    // maxOutputPercent) or already normalised percentages.
+    double pwmOutputPercent = 0.0;
+    if (maxOutputPercent <= 0.0) {
+      pwmOutputPercent = 0.0;
+    } else if (fabs(pwmCommand) <= maxOutputPercent + 0.5) {
+      // Asymmetric PID reports the final output directly in percent.
+      pwmOutputPercent = pwmCommand;
+    } else {
+      double pwmMaxCounts = (maxOutputPercent / 100.0) * MAX_PWM;
+      if (pwmMaxCounts > 0.0) {
+        pwmOutputPercent = (pwmCommand / pwmMaxCounts) * maxOutputPercent;
+      }
+    }
+
+    pwmOutputPercent = constrain(pwmOutputPercent, -maxOutputPercent, maxOutputPercent);
+    double peltierPower = (pwmOutputPercent / 100.0) * kMaxPeltierPowerWatts;
 
     double ambientTemp = 22.0;
     double heatLoss = plateCoolingLoss * (coolingPlateTemp - ambientTemp);

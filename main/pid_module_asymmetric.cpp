@@ -32,7 +32,12 @@ constexpr unsigned long kStartupClampDurationMs = 60000UL;
 constexpr float kDefaultDeadband = 0.5f;
 constexpr float kDefaultSafetyMargin = 2.0f;
 constexpr float kDefaultCoolingRate = 2.0f;
-constexpr double kOutputSmoothingFactor = 0.8;
+// The original controller smoothed 80% of the previous command into each new
+// output. That heavy filtering effectively masked the PID tuning and produced
+// similar oscillations regardless of the configured gains. Relax the
+// smoothing so the PID output can directly shape the actuator behaviour while
+// still avoiding abrupt jumps on the hardware.
+constexpr double kOutputSmoothingFactor = 0.2;
 constexpr unsigned long kSampleTimeMs = 100;
 
 constexpr unsigned long kAutotuneSampleIntervalMs = 500;
@@ -293,11 +298,6 @@ bool AsymmetricPIDModule::checkSafetyLimits(double currentTemp, double targetTem
 
 void AsymmetricPIDModule::applySafetyConstraints() {
     if (coolingMode) {
-        double distance = fabs(Input - Setpoint);
-        if (distance < 2.0) {
-            double scale = distance / 2.0;
-            rawPIDOutput *= scale;
-        }
         rawPIDOutput = max(rawPIDOutput, static_cast<double>(currentParams.cooling_limit));
     } else {
         rawPIDOutput = min(rawPIDOutput, static_cast<double>(currentParams.heating_limit));
@@ -315,9 +315,18 @@ void AsymmetricPIDModule::applyRateLimiting() {
 }
 
 void AsymmetricPIDModule::applyOutputSmoothing() {
-    // Smooth output changes to prevent sudden jumps
-    finalOutput = (outputSmoothingFactor * lastOutput) +
-                  ((1.0 - outputSmoothingFactor) * rawPIDOutput);
+    // Smooth output changes to prevent sudden jumps. Allow the filter to be
+    // effectively disabled when the factor is zero so the PID output reaches
+    // the actuator without additional attenuation.
+    if (outputSmoothingFactor <= 0.0) {
+        finalOutput = rawPIDOutput;
+    } else if (outputSmoothingFactor >= 1.0) {
+        finalOutput = lastOutput;
+    } else {
+        finalOutput = (outputSmoothingFactor * lastOutput) +
+                      ((1.0 - outputSmoothingFactor) * rawPIDOutput);
+    }
+
     lastOutput = finalOutput;
 }
 

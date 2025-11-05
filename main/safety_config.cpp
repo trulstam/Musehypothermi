@@ -16,18 +16,18 @@ namespace SafetyConfig {
     const float SAFETY_MARGIN_HEATING = 0.5;  // Less critical for heating
     
     // Rate limits (°C/second)
-    const float MAX_COOLING_RATE = 1.5;        // Conservative cooling rate
+    const float MAX_COOLING_RATE = 1.5;        // Nominal cooling rate
     const float MAX_HEATING_RATE = 3.0;        // Heating can be faster
     const float EMERGENCY_RATE_LIMIT = 2.5;    // Emergency stop threshold
     
-    // PID Parameters - COOLING (Conservative)
+    // PID Parameters - COOLING
     const float DEFAULT_KP_COOLING = 0.8;      // Lower Kp for stability
     const float DEFAULT_KI_COOLING = 0.02;     // Very low Ki to prevent windup
     const float DEFAULT_KD_COOLING = 3.0;      // High Kd for damping
     const float MAX_KP_COOLING = 2.0;          // Never exceed this Kp
     const float MAX_KI_COOLING = 0.1;          // Never exceed this Ki
     
-    // PID Parameters - HEATING (More Aggressive)
+    // PID Parameters - HEATING
     const float DEFAULT_KP_HEATING = 2.5;      // Higher Kp for responsiveness
     const float DEFAULT_KI_HEATING = 0.2;      // Higher Ki for steady-state
     const float DEFAULT_KD_HEATING = 1.2;      // Moderate Kd
@@ -37,7 +37,7 @@ namespace SafetyConfig {
     // Output limits (%)
     const float MAX_COOLING_OUTPUT = 60.0;     // Limit cooling power
     const float MAX_HEATING_OUTPUT = 100.0;    // Full heating allowed
-    const float STARTUP_COOLING_LIMIT = 30.0;  // Even more conservative at startup
+    const float STARTUP_COOLING_LIMIT = 30.0;  // Additional restriction at startup
     
     // Control deadbands (°C)
     const float TEMPERATURE_DEADBAND = 0.08;   // ±0.08°C around target
@@ -61,7 +61,7 @@ namespace SafetyConfig {
     // Water cooling system parameters (for your specific setup)
     const float WATER_TEMP_SPRING = 8.0;                 // Approximate spring water temp
     const float PELTIER_MAX_DELTA_T = 70.0;              // Max Peltier ΔT
-    const float THEORETICAL_MIN_TEMP = WATER_TEMP_SPRING - 10.0; // Conservative estimate
+    const float THEORETICAL_MIN_TEMP = WATER_TEMP_SPRING - 10.0; // Safety estimate
     
     // System-specific thermal parameters
     const float COOLING_EFFICIENCY_FACTOR = 2.5;         // Cooling is 2.5x more efficient

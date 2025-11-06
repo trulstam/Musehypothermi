@@ -36,8 +36,10 @@ constexpr float kDefaultCoolingRate = 2.0f;
 // output. That heavy filtering effectively masked the PID tuning and produced
 // similar oscillations regardless of the configured gains. Relax the
 // smoothing so the PID output can directly shape the actuator behaviour while
-// still avoiding abrupt jumps on the hardware.
-constexpr double kOutputSmoothingFactor = 0.2;
+// still avoiding abrupt jumps on the hardware. The field is kept so the
+// firmware can re-enable filtering if ever needed, but the default blend is 0
+// so the raw PID command reaches the actuator unchanged.
+constexpr double kOutputSmoothingFactor = 0.0;
 constexpr unsigned long kSampleTimeMs = 100;
 
 constexpr unsigned long kAutotuneSampleIntervalMs = 500;
@@ -140,6 +142,9 @@ AsymmetricPIDModule::AsymmetricPIDModule()
 void AsymmetricPIDModule::begin(EEPROMManager &eepromManager) {
     eeprom = &eepromManager;
     loadAsymmetricParams();
+
+    outputSmoothingFactor = kOutputSmoothingFactor;
+    lastOutput = 0.0;
 
     pinMode(kCoolingDirectionPin, OUTPUT);
     pinMode(kHeatingDirectionPin, OUTPUT);
@@ -346,6 +351,12 @@ void AsymmetricPIDModule::publishFilterTelemetry(const char* stage, double rawVa
     message += String(rawValue, 2);
     message += " | final=";
     message += String(finalValue, 2);
+    message += " | smooth=";
+    message += String(outputSmoothingFactor, 2);
+    message += " | limit=";
+    float limitPercent = coolingMode ? fabs(currentParams.cooling_limit)
+                                     : currentParams.heating_limit;
+    message += String(limitPercent, 2);
     comm.sendEvent(message);
 }
 

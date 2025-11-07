@@ -303,7 +303,7 @@ class AsymmetricPIDControls(QWidget):
         params_group = QGroupBox("Asymmetric PID Parameters")
         params_layout = QGridLayout()
 
-        cooling_group = QGroupBox("Cooling PID (Conservative)")
+        cooling_group = QGroupBox("Cooling PID")
         cooling_layout = QGridLayout()
         cooling_layout.setHorizontalSpacing(14)
         cooling_layout.setVerticalSpacing(8)
@@ -317,24 +317,21 @@ class AsymmetricPIDControls(QWidget):
 
         cooling_layout.addWidget(QLabel("Kp"), 0, 0)
         cooling_layout.addWidget(self.kp_cooling_input, 0, 1)
-        cooling_layout.addWidget(QLabel("0.1 – 2.0"), 0, 2)
 
         cooling_layout.addWidget(QLabel("Ki"), 1, 0)
         cooling_layout.addWidget(self.ki_cooling_input, 1, 1)
-        cooling_layout.addWidget(QLabel("0.01 – 0.10"), 1, 2)
 
         cooling_layout.addWidget(QLabel("Kd"), 2, 0)
         cooling_layout.addWidget(self.kd_cooling_input, 2, 1)
-        cooling_layout.addWidget(QLabel("0.5 – 5.0"), 2, 2)
 
         self.set_cooling_pid_button = QPushButton("Apply Cooling PID")
         self.set_cooling_pid_button.clicked.connect(self.set_cooling_pid)
-        cooling_layout.addWidget(self.set_cooling_pid_button, 3, 0, 1, 3)
+        cooling_layout.addWidget(self.set_cooling_pid_button, 3, 0, 1, 2)
         cooling_layout.setColumnStretch(1, 1)
 
         cooling_group.setLayout(cooling_layout)
 
-        heating_group = QGroupBox("Heating PID (Aggressive)")
+        heating_group = QGroupBox("Heating PID")
         heating_layout = QGridLayout()
         heating_layout.setHorizontalSpacing(14)
         heating_layout.setVerticalSpacing(8)
@@ -348,19 +345,16 @@ class AsymmetricPIDControls(QWidget):
 
         heating_layout.addWidget(QLabel("Kp"), 0, 0)
         heating_layout.addWidget(self.kp_heating_input, 0, 1)
-        heating_layout.addWidget(QLabel("0.5 – 5.0"), 0, 2)
 
         heating_layout.addWidget(QLabel("Ki"), 1, 0)
         heating_layout.addWidget(self.ki_heating_input, 1, 1)
-        heating_layout.addWidget(QLabel("0.05 – 1.0"), 1, 2)
 
         heating_layout.addWidget(QLabel("Kd"), 2, 0)
         heating_layout.addWidget(self.kd_heating_input, 2, 1)
-        heating_layout.addWidget(QLabel("0.1 – 3.0"), 2, 2)
 
         self.set_heating_pid_button = QPushButton("Apply Heating PID")
         self.set_heating_pid_button.clicked.connect(self.set_heating_pid)
-        heating_layout.addWidget(self.set_heating_pid_button, 3, 0, 1, 3)
+        heating_layout.addWidget(self.set_heating_pid_button, 3, 0, 1, 2)
         heating_layout.setColumnStretch(1, 1)
 
         heating_group.setLayout(heating_layout)
@@ -1374,48 +1368,30 @@ class AsymmetricPIDControls(QWidget):
         self.parent.log("🗑️ Autotune results discarded", "warning")
     
     def set_cooling_pid(self):
-        """Set cooling PID parameters with validation"""
+        """Send cooling PID parameters without range restrictions"""
         try:
             kp = float(self.kp_cooling_input.text())
             ki = float(self.ki_cooling_input.text())
             kd = float(self.kd_cooling_input.text())
-            
-            # Validate cooling parameters (conservative limits)
-            if not (0.1 <= kp <= 2.0):
-                raise ValueError("Cooling Kp must be 0.1-2.0 (conservative)")
-            if not (0.01 <= ki <= 0.1):
-                raise ValueError("Cooling Ki must be 0.01-0.1 (prevent windup)")
-            if not (0.5 <= kd <= 5.0):
-                raise ValueError("Cooling Kd must be 0.5-5.0 (damping)")
-            
-            if self.parent.send_asymmetric_command("set_cooling_pid", {"kp": kp, "ki": ki, "kd": kd}):
-                self.parent.log(f"❄️ Cooling PID set: Kp={kp:.3f}, Ki={ki:.4f}, Kd={kd:.3f}", "success")
-            
         except ValueError as e:
             QMessageBox.warning(self, "Invalid Input", f"Cooling PID error: {e}")
             self.parent.log(f"❌ Invalid cooling PID: {e}", "error")
-    
+        else:
+            if self.parent.send_asymmetric_command("set_cooling_pid", {"kp": kp, "ki": ki, "kd": kd}):
+                self.parent.log(f"❄️ Cooling PID set: Kp={kp:.3f}, Ki={ki:.4f}, Kd={kd:.3f}", "success")
+
     def set_heating_pid(self):
-        """Set heating PID parameters with validation"""
+        """Send heating PID parameters without range restrictions"""
         try:
             kp = float(self.kp_heating_input.text())
             ki = float(self.ki_heating_input.text())
             kd = float(self.kd_heating_input.text())
-
-            # Validate heating parameters (more aggressive allowed)
-            if not (0.5 <= kp <= 5.0):
-                raise ValueError("Heating Kp must be 0.5-5.0")
-            if not (0.05 <= ki <= 1.0):
-                raise ValueError("Heating Ki must be 0.05-1.0")
-            if not (0.1 <= kd <= 3.0):
-                raise ValueError("Heating Kd must be 0.1-3.0")
-
-            if self.parent.send_asymmetric_command("set_heating_pid", {"kp": kp, "ki": ki, "kd": kd}):
-                self.parent.log(f"Heating PID set: Kp={kp:.3f}, Ki={ki:.4f}, Kd={kd:.3f}", "success")
-
         except ValueError as e:
             QMessageBox.warning(self, "Invalid Input", f"Heating PID error: {e}")
             self.parent.log(f"❌ Invalid heating PID: {e}", "error")
+        else:
+            if self.parent.send_asymmetric_command("set_heating_pid", {"kp": kp, "ki": ki, "kd": kd}):
+                self.parent.log(f"Heating PID set: Kp={kp:.3f}, Ki={ki:.4f}, Kd={kd:.3f}", "success")
 
     def apply_both_pid(self):
         """Apply both cooling and heating PID parameters"""
@@ -1424,26 +1400,14 @@ class AsymmetricPIDControls(QWidget):
             cool_kp = float(self.kp_cooling_input.text())
             cool_ki = float(self.ki_cooling_input.text())
             cool_kd = float(self.kd_cooling_input.text())
-
-            if not (0.1 <= cool_kp <= 2.0):
-                raise ValueError("Cooling Kp must be 0.1-2.0")
-            if not (0.01 <= cool_ki <= 0.1):
-                raise ValueError("Cooling Ki must be 0.01-0.1")
-            if not (0.5 <= cool_kd <= 5.0):
-                raise ValueError("Cooling Kd must be 0.5-5.0")
-
             # Heating values
             heat_kp = float(self.kp_heating_input.text())
             heat_ki = float(self.ki_heating_input.text())
             heat_kd = float(self.kd_heating_input.text())
-
-            if not (0.5 <= heat_kp <= 5.0):
-                raise ValueError("Heating Kp must be 0.5-5.0")
-            if not (0.05 <= heat_ki <= 1.0):
-                raise ValueError("Heating Ki must be 0.05-1.0")
-            if not (0.1 <= heat_kd <= 3.0):
-                raise ValueError("Heating Kd must be 0.1-3.0")
-
+        except ValueError as e:
+            QMessageBox.warning(self, "Invalid Input", str(e))
+            self.parent.log(f"❌ PID input error: {e}", "error")
+        else:
             ok_cool = self.parent.send_asymmetric_command(
                 "set_cooling_pid", {"kp": cool_kp, "ki": cool_ki, "kd": cool_kd}
             )
@@ -1460,10 +1424,6 @@ class AsymmetricPIDControls(QWidget):
                     ),
                     "success",
                 )
-
-        except ValueError as e:
-            QMessageBox.warning(self, "Invalid Input", str(e))
-            self.parent.log(f"❌ PID input error: {e}", "error")
 
     def refresh_pid_from_device(self):
         """Request PID parameters from device"""

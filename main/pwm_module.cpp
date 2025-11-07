@@ -9,14 +9,28 @@ void PWMModule::begin() {
 }
 
 void PWMModule::configurePin6() {
+    constexpr uint8_t kPwmPin = 6;
+
+    // Sørg for at portkontrolleren kjenner pinnen som utgang før den
+    // overlates til GPT0 – ellers blir den liggende som en vanlig
+    // digital-pin som default dras høy av intern pull-up.
+    pinMode(kPwmPin, OUTPUT);
+    digitalWrite(kPwmPin, LOW);
+
     R_PMISC->PWPR_b.B0WI = 0;
     R_PMISC->PWPR_b.PFSWE = 1;
 
-    // Pin 6 (P313) til GPT0 GTIOCA
-    R_PFS->PORT[3].PIN[13].PmnPFS = 0x11;
+    // Pin 6 (P313) til GPT0 GTIOCA: sett funksjonsvelgeren (0x11)
+    // og sørg for at PMR-biten er aktivert slik at periferien tar eierskap
+    // til pinnen. Vi bevarer øvrige flagg i tilfelle oppstartskoden har
+    // konfigurert pull-ups el.l.
+    volatile uint32_t &p313_pfs = R_PFS->PORT[3].PIN[13].PmnPFS;
+    p313_pfs = (p313_pfs & ~0x3Fu) | 0x11u;
+    p313_pfs |= (1u << 6);  // PMR = 1 → peripheral mode
 
     R_PMISC->PWPR_b.PFSWE = 0;
     R_PMISC->PWPR_b.B0WI = 1;
+
 }
 
 void PWMModule::enableGPT0() {

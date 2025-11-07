@@ -9,6 +9,14 @@ void PWMModule::begin() {
 }
 
 void PWMModule::configurePin6() {
+    constexpr uint8_t kPwmPin = 6;
+
+    // Sørg for at portkontrolleren kjenner pinnen som utgang før den
+    // overlates til GPT0 – ellers blir den liggende som en vanlig
+    // digital-pin som default dras høy av intern pull-up.
+    pinMode(kPwmPin, OUTPUT);
+    digitalWrite(kPwmPin, LOW);
+
     R_PMISC->PWPR_b.B0WI = 0;
     R_PMISC->PWPR_b.PFSWE = 1;
 
@@ -17,6 +25,9 @@ void PWMModule::configurePin6() {
 
     R_PMISC->PWPR_b.PFSWE = 0;
     R_PMISC->PWPR_b.B0WI = 1;
+
+    // Sett pinnen i periferimodus slik at GPT0 får lov til å drive den.
+    R_PORT3->PMR_b.PMR13 = 1;
 }
 
 void PWMModule::enableGPT0() {

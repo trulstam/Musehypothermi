@@ -27,7 +27,7 @@ void PWMModule::configurePin6() {
     R_PMISC->PWPR_b.B0WI = 1;
 
     // Sett pinnen i periferimodus slik at GPT0 får lov til å drive den.
-    R_PORT3->PMR_b.PMR13 = 1;
+    R_PORT3->PMR |= (1u << 13);
 }
 
 void PWMModule::enableGPT0() {

@@ -19,6 +19,7 @@ void pwmPinMux_P313_GPT0A() {
     R_PMISC->PWPR_b.PFSWE = 0;
     R_PMISC->PWPR_b.B0WI = 1;
 }
+} // namespace
 
 uint32_t pwmCalcPeriodCounts(uint32_t targetHz) {
     if (targetHz < kMinTargetHz) {

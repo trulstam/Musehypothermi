@@ -3,16 +3,19 @@
 
 #include <stdint.h>
 
+// Lavnivå-API for høyfrekvent PWM på Arduino UNO R4 (Renesas RA4M1, GPT0).
+// Frekvens og duty styres direkte via GPT0-registrene uten bruk av Arduino-
+// bibliotekenes analogWrite().
+bool pwmBegin(uint32_t targetHz); // Returnerer false dersom parameter er ugyldig
+void pwmSetDuty01(float duty01);  // Setter duty i området 0.0–1.0
+void pwmStop();                   // Stopper GPT0 og setter duty til 0
+
 class PWMModule {
 public:
     PWMModule();
-    void begin();              // Init: konfigurer pin og start GPT0
-    void setDutyCycle(int duty); // 0–2399 (20kHz PWM)
-    void stopPWM();           // Stopper teller og setter duty til 0
-
-private:
-    void configurePin6();     // Setter opp pin 6 (P313) for GPT0
-    void enableGPT0();        // Init GPT0 med 20kHz PWM
+    void begin();                // Initierer GPT0 med standard 20 kHz PWM
+    void setDutyCycle(int duty); // 0–2399 (maps til 0.0–1.0 duty)
+    void stopPWM();              // Setter duty til 0 og stopper generatoren
 };
 
 #endif

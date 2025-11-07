@@ -272,8 +272,7 @@ void PIDModule::calculateAutotuneParams() {
     // Find dead time (simplified - assume minimal for this system)
     float deadTime = 1.0; // seconds (estimated)
     
-    // Ziegler-Nichols PID tuning for step response
-    // For temperature control, use conservative settings
+    // Ziegler-Nichols PID tuning for step response tuned for temperature control
     float timeConstant = t63 / 0.63;
     
     float newKp = 1.2 / (processGain * (deadTime / timeConstant));

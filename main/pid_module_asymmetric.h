@@ -27,13 +27,13 @@ static constexpr size_t AUTOTUNE_SAMPLE_CAPACITY = 200;
 class AsymmetricPIDModule {
 public:
     struct AsymmetricPIDParams {
-        float kp_cooling;     // Conservative Kp for cooling (lower)
-        float ki_cooling;     // Conservative Ki for cooling (lower)
-        float kd_cooling;     // Higher Kd for cooling (more damping)
-        
-        float kp_heating;     // More aggressive Kp for heating
-        float ki_heating;     // Higher Ki for heating
-        float kd_heating;     // Lower Kd for heating
+        float kp_cooling;     // Cooling proportional gain
+        float ki_cooling;     // Cooling integral gain
+        float kd_cooling;     // Cooling derivative gain
+
+        float kp_heating;     // Heating proportional gain
+        float ki_heating;     // Heating integral gain
+        float kd_heating;     // Heating derivative gain
         
         float cooling_limit;  // Max cooling output (negative, e.g., -50%)
         float heating_limit;  // Max heating output (positive, e.g., +100%)

@@ -54,6 +54,7 @@ bool pwmBegin(uint32_t targetHz) {
     R_MSTP->MSTPCRD_b.MSTPD5 = 0;   // Enable GPT0
     R_GPT0->GTCR_b.CST = 0;
     R_GPT0->GTCR = 0x0000;
+    R_GPT0->GTCR_b.CCLR = 1;        // Clear counter on GTPR compare to use the period register
     R_GPT0->GTUDDTYC = 0x0000;      // Count up
 
     // 2) Pin-mux for P313 -> GPT0A (pin 6)

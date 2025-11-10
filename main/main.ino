@@ -11,6 +11,8 @@
 // Sett til true for å bruke den innebygde simulatoren under utvikling.
 // Standard er live-modus for å unngå at simulasjonsdata når PID ved testing.
 const bool USE_SIMULATION = false;
+// Sett til true for å aktivere den manuelle scope-testen (25 % / 75 % duty-sveip).
+// Standard er false slik at den vanlige hovedsløyfen kjører uhindret.
 constexpr bool kEnablePwmScopeTest = false;
 
 namespace {

@@ -6,10 +6,12 @@
 #include "pressure_module.h"
 #include "eeprom_manager.h"
 #include "system_config.h"
+#include "pwm_module.h"
 
 // Sett til true for å bruke den innebygde simulatoren under utvikling.
 // Standard er live-modus for å unngå at simulasjonsdata når PID ved testing.
 const bool USE_SIMULATION = false;
+constexpr bool kEnablePwmScopeTest = true;
 
 // === Eksterne moduler ===
 AsymmetricPIDModule pid;
@@ -31,6 +33,10 @@ void setup() {
     pressure.begin();
     pid.begin(eeprom);
 
+    if (kEnablePwmScopeTest) {
+        pwmDebugDump();
+    }
+
     // Start kommunikasjonsgrensesnitt + EEPROM factory reset-sjekk + events
     comm.begin(Serial, resetOccurred);
 
@@ -49,6 +55,14 @@ void setup() {
 
 // === LOOP ===
 void loop() {
+    if (kEnablePwmScopeTest) {
+        pwmSetDuty01(0.25f);
+        delay(1000);
+        pwmSetDuty01(0.75f);
+        delay(1000);
+        return;
+    }
+
     runTasks();       // Oppdater sensorer, PID, profil, failsafe
     comm.process();   // Les og behandle innkommende kommandoer fra GUI
 }

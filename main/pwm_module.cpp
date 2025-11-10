@@ -54,7 +54,11 @@ bool pwmBegin(uint32_t targetHz) {
     R_MSTP->MSTPCRD_b.MSTPD5 = 0;   // Enable GPT0
     R_GPT0->GTCR_b.CST = 0;
     R_GPT0->GTCR = 0x0000;
-    R_GPT0->GTCR_b.CCLR = 1;        // Clear counter on GTPR compare to use the period register
+    // Configure automatic counter clear on GTPR compare so the period register
+    // defines the PWM cycle length. CCLR resides in bits [6:4] of GTCR; value 0b001
+    // selects "clear on GTPR compare" without starting the counter (CST remains 0).
+    R_GPT0->GTCR = (R_GPT0->GTCR & static_cast<uint16_t>(~0x0070u)) |
+                   static_cast<uint16_t>(0x0010u);
     R_GPT0->GTUDDTYC = 0x0000;      // Count up
 
     // 2) Pin-mux for P313 -> GPT0A (pin 6)

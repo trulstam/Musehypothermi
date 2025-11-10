@@ -60,6 +60,10 @@ void setup() {
     pressure.begin();
     pid.begin(eeprom);
 
+    if (kEnablePwmScopeTest) {
+        pwmDebugDump();
+    }
+
     // Start kommunikasjonsgrensesnitt + EEPROM factory reset-sjekk + events
     comm.begin(Serial, resetOccurred);
 

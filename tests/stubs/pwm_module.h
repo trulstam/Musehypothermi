@@ -1,5 +1,11 @@
 #pragma once
 
+#include <stdint.h>
+
+inline bool pwmBegin(uint32_t) { return true; }
+inline void pwmSetDuty01(float) {}
+inline void pwmStop() {}
+
 class PWMModule {
 public:
     void begin() {}

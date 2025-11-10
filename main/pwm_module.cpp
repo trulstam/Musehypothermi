@@ -55,10 +55,10 @@ bool pwmBegin(uint32_t targetHz) {
     R_GPT0->GTCR_b.CST = 0;
     R_GPT0->GTCR = 0x0000;
     // Configure automatic counter clear on GTPR compare so the period register
-    // defines the PWM cycle length. CCLR resides in bits [6:4] of GTCR; value 0b001
+    // defines the PWM cycle length. CCLR resides in bits [6:4] of GTCR; value 0b100
     // selects "clear on GTPR compare" without starting the counter (CST remains 0).
-    R_GPT0->GTCR = (R_GPT0->GTCR & static_cast<uint16_t>(~0x0070u)) |
-                   static_cast<uint16_t>(0x0010u);
+    R_GPT0->GTCR = (R_GPT0->GTCR & static_cast<uint32_t>(~0x0070u)) |
+                   static_cast<uint32_t>(0x0040u);
     R_GPT0->GTUDDTYC = 0x0000;      // Count up
 
     // 2) Pin-mux for P313 -> GPT0A (pin 6)
@@ -107,6 +107,7 @@ void pwmStop() {
 
 void pwmDebugDump() {
     Serial.println("=== GPT0 DEBUG ===");
+    Serial.print("GTCR=0x");     Serial.println(static_cast<uint32_t>(R_GPT0->GTCR), HEX);
     Serial.print("GTCR.CST=");   Serial.println(R_GPT0->GTCR_b.CST);
     Serial.print("GTPR=");       Serial.println(static_cast<uint32_t>(R_GPT0->GTPR));
     Serial.print("GTCNT=");      Serial.println(static_cast<uint32_t>(R_GPT0->GTCNT));

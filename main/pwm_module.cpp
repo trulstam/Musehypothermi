@@ -65,8 +65,7 @@ uint32_t pwmCalcPeriodCounts(uint32_t targetHz) {
 } // namespace pwm_internal
 
 bool pwmBegin(uint32_t targetHz) {
-    bool withinRange = (targetHz >= pwm_internal::kMinTargetHz) &&
-                       (targetHz <= pwm_internal::kMaxTargetHz);
+    bool withinRange = (targetHz >= pwm_internal::kMinTargetHz) && (targetHz <= pwm_internal::GPT_CLK_HZ);
     uint32_t period_counts = pwm_internal::pwmCalcPeriodCounts(targetHz);
 
     // Slå på klokke til GPT0-modulen.
@@ -76,9 +75,7 @@ bool pwmBegin(uint32_t targetHz) {
     R_GPT0->GTCR_b.CST = 0;
     R_GPT0->GTCR = 0x0000;
     R_GPT0->GTUDDTYC = 0x0000; // Teller oppover.
-    uint16_t gtiorValue =
-            (static_cast<uint16_t>(kGtioaActiveHighPwm) << 8) | kGtiobDisabled;
-    R_GPT0->GTIOR = gtiorValue;
+wm_module.cpp
 
     // Konfigurer pinne 6 til periferi-funksjonen GPT0A.
     pwm_internal::pwmPinMux_P313_GPT0A();

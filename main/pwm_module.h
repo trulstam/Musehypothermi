@@ -6,6 +6,7 @@
 // Lavnivå-API for høyfrekvent PWM på Arduino UNO R4 (Renesas RA4M1, GPT0).
 // Frekvens og duty styres direkte via GPT0-registrene uten bruk av Arduino-
 // bibliotekenes analogWrite().
+// Gyldige frekvenser er 1 Hz – 24 MHz (GTPR ≥ 1).
 bool pwmBegin(uint32_t targetHz); // Returnerer false dersom parameter er ugyldig
 void pwmSetDuty01(float duty01);  // Setter duty i området 0.0–1.0
 void pwmStop();                   // Stopper GPT0 og setter duty til 0

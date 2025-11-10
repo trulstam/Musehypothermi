@@ -4,8 +4,30 @@
 namespace pwm_internal {
 constexpr int kMaxDuty = 2399;
 constexpr uint32_t kMinTargetHz = 1u;
-constexpr uint32_t kMaxPeriodCounts = 0xFFFFFFFFu;
 constexpr uint32_t GPT_CLK_HZ = 48000000u;
+constexpr uint32_t kMaxTargetHz = GPT_CLK_HZ / 2u; // Med GTPR ≥ 1 gir dette maksimal praktisk frekvens.
+constexpr uint32_t kMaxPeriodCounts = 0xFFFFFFFFu;
+
+// GTIOR består av to 8-bits felt (GTIOCA i de øverste 8 bitene og GTIOCB i
+// de nederste 8). Feltoppsettet er (MSB→LSB):
+//   [7:6] OADF  – hvordan utgangen reagerer på compare-match (00=hold, 01=set,
+//                  10=clear, 11=toggle)
+//   [5]   OADTY – setter nivået ved periodens slutt (1=set, 0=clear)
+//   [4]   OADFLT– standardnivå når timeren stoppes
+//   [3]   OAHLD – hold (ikke brukt)
+//   [2]   OAD   – output disable
+//   [1]   OAE   – output enable
+//   [0]   OASF  – nivå når timeren stoppes
+constexpr uint8_t kGtioaClearOnMatch = 0x80;     // OADF=10 → clear ved match
+constexpr uint8_t kGtioaSetOnPeriodEnd = 0x20;   // OADTY=1 → set ved overflow
+constexpr uint8_t kGtioaDefaultLow = 0x00;       // OADFLT=0 → lav når stoppet
+constexpr uint8_t kGtioaOutputEnable = 0x02;     // OAE=1
+constexpr uint8_t kGtioaStopLevelLow = 0x00;     // OASF=0
+constexpr uint8_t kGtioaActiveHighPwm =
+        kGtioaClearOnMatch | kGtioaSetOnPeriodEnd | kGtioaDefaultLow |
+        kGtioaOutputEnable | kGtioaStopLevelLow;
+
+constexpr uint8_t kGtiobDisabled = 0x00;         // Kanal B er ikke i bruk.
 
 void pwmPinMux_P313_GPT0A() {
     // Lås opp PFS-register for å kunne endre pinnefunksjonen.
@@ -23,6 +45,8 @@ void pwmPinMux_P313_GPT0A() {
 uint32_t pwmCalcPeriodCounts(uint32_t targetHz) {
     if (targetHz < kMinTargetHz) {
         targetHz = kMinTargetHz;
+    } else if (targetHz > kMaxTargetHz) {
+        targetHz = kMaxTargetHz;
     }
 
     uint32_t period = GPT_CLK_HZ / targetHz;
@@ -51,7 +75,7 @@ bool pwmBegin(uint32_t targetHz) {
     R_GPT0->GTCR_b.CST = 0;
     R_GPT0->GTCR = 0x0000;
     R_GPT0->GTUDDTYC = 0x0000; // Teller oppover.
-    R_GPT0->GTIOR = 0x0303;    // PWM-modus på GTIOCA.
+wm_module.cpp
 
     // Konfigurer pinne 6 til periferi-funksjonen GPT0A.
     pwm_internal::pwmPinMux_P313_GPT0A();

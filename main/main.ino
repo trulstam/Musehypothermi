@@ -11,7 +11,34 @@
 // Sett til true for å bruke den innebygde simulatoren under utvikling.
 // Standard er live-modus for å unngå at simulasjonsdata når PID ved testing.
 const bool USE_SIMULATION = false;
-constexpr bool kEnablePwmScopeTest = true;
+constexpr bool kEnablePwmScopeTest = false;
+
+namespace {
+void handlePwmScopeTest() {
+    if (!kEnablePwmScopeTest) {
+        return;
+    }
+
+    static bool initialized = false;
+    static bool highDutyPhase = false;
+    static unsigned long lastToggleMs = 0;
+
+    if (!initialized) {
+        pwmDebugDump();
+        pwmSetDuty01(0.25f);
+        lastToggleMs = millis();
+        initialized = true;
+        return;
+    }
+
+    unsigned long now = millis();
+    if (now - lastToggleMs >= 1000UL) {
+        lastToggleMs = now;
+        highDutyPhase = !highDutyPhase;
+        pwmSetDuty01(highDutyPhase ? 0.75f : 0.25f);
+    }
+}
+}  // namespace
 
 // === Eksterne moduler ===
 AsymmetricPIDModule pid;
@@ -55,14 +82,8 @@ void setup() {
 
 // === LOOP ===
 void loop() {
-    if (kEnablePwmScopeTest) {
-        pwmSetDuty01(0.25f);
-        delay(1000);
-        pwmSetDuty01(0.75f);
-        delay(1000);
-        return;
-    }
+    handlePwmScopeTest();
 
-    runTasks();       // Oppdater sensorer, PID, profil, failsafe
-    comm.process();   // Les og behandle innkommende kommandoer fra GUI
+    runTasks();      // Oppdater sensorer, PID, profil, failsafe
+    comm.process();  // Les og behandle innkommende kommandoer fra GUI
 }

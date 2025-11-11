@@ -10,13 +10,13 @@ constexpr uint32_t kMaxPeriodCounts = 0xFFFFFFFFu;
 
 volatile uint32_t g_lastPeriodCounts = kDefaultPeriodCounts;
 
-void pwmPinMux_P313_GPT0A() {
+void pwmPinMux_P106_GPT0B() {
     // Lås opp PFS-register for å kunne endre pinnefunksjonen.
     R_PMISC->PWPR_b.B0WI = 0;
     R_PMISC->PWPR_b.PFSWE = 1;
 
-    // Map Arduino pinne 6 (port 3, pinne 13) til GPT0 GTIOCA.
-    R_PFS->PORT[3].PIN[13].PmnPFS = 0x11;
+    // Map Arduino pinne 6 (port 1, pinne 6) til GPT0 GTIOCB.
+    R_PFS->PORT[1].PIN[6].PmnPFS = 0x12;
 
     // Lås PFS-registeret igjen.
     R_PMISC->PWPR_b.PFSWE = 0;
@@ -61,16 +61,17 @@ bool pwmBegin(uint32_t targetHz) {
                    static_cast<uint32_t>(0x0040u);
     R_GPT0->GTUDDTYC = 0x0000;      // Count up
 
-    // 2) Pin-mux for P313 -> GPT0A (pin 6)
-    pwm_internal::pwmPinMux_P313_GPT0A();
+    // 2) Pin-mux for P106 -> GPT0B (pin 6)
+    pwm_internal::pwmPinMux_P106_GPT0B();
 
-    // 3) Sett GTIOR for "set ved periodestart, clear ved match" på A-kanalen
-    R_GPT0->GTIOR = 0xA500;
+    // 3) Sett GTIOR for "set ved periodestart, clear ved match" på B-kanalen
+    //    (lavere byte = 0xA5). A-kanalen holdes deaktivert.
+    R_GPT0->GTIOR = 0x00A5;
 
     // 4) Periode og duty = 0%
     R_GPT0->GTPR = period_counts;   // (period-1)
     R_GPT0->GTCNT = 0;
-    R_GPT0->GTCCR[0] = 0;           // start med 0% duty (lav hele perioden)
+    R_GPT0->GTCCR[1] = 0;           // start med 0% duty (lav hele perioden)
     pwm_internal::g_lastPeriodCounts = period_counts;
 
     // 5) Start teller
@@ -97,11 +98,11 @@ void pwmSetDuty01(float duty01) {
         cc = 0u;
     }
 
-    R_GPT0->GTCCR[0] = cc;
+    R_GPT0->GTCCR[1] = cc;
 }
 
 void pwmStop() {
-    R_GPT0->GTCCR[0] = 0;
+    R_GPT0->GTCCR[1] = 0;
     R_GPT0->GTCR_b.CST = 0;
 }
 
@@ -112,14 +113,15 @@ void pwmDebugDump() {
     Serial.print("GTPR=");       Serial.println(static_cast<uint32_t>(R_GPT0->GTPR));
     Serial.print("GTCNT=");      Serial.println(static_cast<uint32_t>(R_GPT0->GTCNT));
     Serial.print("GTCCR[0]=");   Serial.println(static_cast<uint32_t>(R_GPT0->GTCCR[0]));
+    Serial.print("GTCCR[1]=");   Serial.println(static_cast<uint32_t>(R_GPT0->GTCCR[1]));
     Serial.print("GTIOR=0x");    Serial.println(static_cast<uint32_t>(R_GPT0->GTIOR), HEX);
 
     R_PMISC->PWPR_b.B0WI = 0;
     R_PMISC->PWPR_b.PFSWE = 1;
-    uint32_t pfs = R_PFS->PORT[3].PIN[13].PmnPFS;
+    uint32_t pfs = R_PFS->PORT[1].PIN[6].PmnPFS;
     R_PMISC->PWPR_b.PFSWE = 0;
     R_PMISC->PWPR_b.B0WI = 1;
-    Serial.print("P313 PmnPFS=0x"); Serial.println(pfs, HEX);
+    Serial.print("P106 PmnPFS=0x"); Serial.println(pfs, HEX);
 }
 
 PWMModule::PWMModule() {}

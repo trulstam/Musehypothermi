@@ -8,6 +8,8 @@ constexpr uint32_t GPT_CLK_HZ = 48000000u;
 constexpr uint32_t kMaxTargetHz = GPT_CLK_HZ / 2u; // Med GTPR ≥ 1 gir dette maksimal praktisk frekvens.
 constexpr uint32_t kMaxPeriodCounts = 0xFFFFFFFFu;
 
+constexpr uint8_t kPolarityMode = 0; // 0=Set@start,Clear@match; 1=Clear@start,Set@match
+
 volatile uint32_t g_lastPeriodCounts = kDefaultPeriodCounts;
 
 void pwmPinMux_P106_GPT0B() {
@@ -64,9 +66,12 @@ bool pwmBegin(uint32_t targetHz) {
     // 2) Pin-mux for P106 -> GPT0B (pin 6)
     pwm_internal::pwmPinMux_P106_GPT0B();
 
-    // 3) Sett GTIOR for "set ved periodestart, clear ved match" på B-kanalen
-    //    (lavere byte = 0xA5). A-kanalen holdes deaktivert.
-    R_GPT0->GTIOR = 0x00A5;
+    // 3) Sett GTIOR lavbyte for B-kanalen basert på valgt polaritet.
+    if (pwm_internal::kPolarityMode == 0) {
+        R_GPT0->GTIOR = (R_GPT0->GTIOR & 0xFF00u) | 0x00A5u;
+    } else {
+        R_GPT0->GTIOR = (R_GPT0->GTIOR & 0xFF00u) | 0x005Au;
+    }
 
     // 4) Periode og duty = 0%
     R_GPT0->GTPR = period_counts;   // (period-1)
@@ -106,6 +111,33 @@ void pwmStop() {
     R_GPT0->GTCR_b.CST = 0;
 }
 
+static inline void pwmSetCounts(uint32_t cc) {
+    R_GPT0->GTCCR[1] = cc;
+}
+
+void pwmSelfTest() {
+    uint32_t period = static_cast<uint32_t>(R_GPT0->GTPR) + 1u;
+    auto setPct = [&](float p) {
+        if (p < 0.0f) {
+            p = 0.0f;
+        } else if (p > 1.0f) {
+            p = 1.0f;
+        }
+        double scaled = static_cast<double>(p) * static_cast<double>(period);
+        uint32_t cc = static_cast<uint32_t>(scaled);
+        if (cc > 0u) {
+            cc -= 1u;
+        }
+        pwmSetCounts(cc);
+        delay(300);
+    };
+
+    setPct(0.25f);
+    setPct(0.50f);
+    setPct(0.75f);
+    setPct(0.00f);
+}
+
 void pwmDebugDump() {
     Serial.println("=== GPT0 DEBUG ===");
     Serial.print("GTCR=0x");     Serial.println(static_cast<uint32_t>(R_GPT0->GTCR), HEX);
@@ -129,6 +161,7 @@ PWMModule::PWMModule() {}
 void PWMModule::begin() {
     pwmBegin(20000u); // Standard 20 kHz PWM.
     pwmDebugDump();
+    pwmSelfTest(); // TEMPORARY: remove after validation
 }
 
 void PWMModule::setDutyCycle(int duty) {

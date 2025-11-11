@@ -6,10 +6,41 @@
 #include "pressure_module.h"
 #include "eeprom_manager.h"
 #include "system_config.h"
+#include "pwm_module.h"
 
 // Sett til true for å bruke den innebygde simulatoren under utvikling.
 // Standard er live-modus for å unngå at simulasjonsdata når PID ved testing.
 const bool USE_SIMULATION = false;
+// Sett til true for å aktivere den manuelle scope-testen (25 % / 75 % duty-sveip).
+// Standard er false slik at den vanlige hovedsløyfen kjører uhindret.
+constexpr bool kEnablePwmScopeTest = false;
+
+namespace {
+void handlePwmScopeTest() {
+    if (!kEnablePwmScopeTest) {
+        return;
+    }
+
+    static bool initialized = false;
+    static bool highDutyPhase = false;
+    static unsigned long lastToggleMs = 0;
+
+    if (!initialized) {
+        pwmDebugDump();
+        pwmSetDuty01(0.25f);
+        lastToggleMs = millis();
+        initialized = true;
+        return;
+    }
+
+    unsigned long now = millis();
+    if (now - lastToggleMs >= 1000UL) {
+        lastToggleMs = now;
+        highDutyPhase = !highDutyPhase;
+        pwmSetDuty01(highDutyPhase ? 0.75f : 0.25f);
+    }
+}
+}  // namespace
 
 // === Eksterne moduler ===
 AsymmetricPIDModule pid;
@@ -49,6 +80,8 @@ void setup() {
 
 // === LOOP ===
 void loop() {
-    runTasks();       // Oppdater sensorer, PID, profil, failsafe
-    comm.process();   // Les og behandle innkommende kommandoer fra GUI
+    handlePwmScopeTest();
+
+    runTasks();      // Oppdater sensorer, PID, profil, failsafe
+    comm.process();  // Les og behandle innkommende kommandoer fra GUI
 }

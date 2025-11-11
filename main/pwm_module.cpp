@@ -10,6 +10,9 @@ constexpr uint32_t kMaxPeriodCounts = 0xFFFFFFFFu;
 
 constexpr uint8_t kPolarityMode = 0; // 0=Set@start,Clear@match; 1=Clear@start,Set@match
 
+constexpr uint16_t kGTIORB_SetAtOverflowClearOnCompare = 0x00A1u;  // idle low, active-high PWM
+constexpr uint16_t kGTIORB_ClearAtOverflowSetOnCompare = 0x005Bu;   // idle low, active-low PWM
+
 volatile uint32_t g_lastPeriodCounts = kDefaultPeriodCounts;
 
 void pwmPinMux_P106_GPT0B() {
@@ -68,9 +71,11 @@ bool pwmBegin(uint32_t targetHz) {
 
     // 3) Sett GTIOR lavbyte for B-kanalen basert på valgt polaritet.
     if (pwm_internal::kPolarityMode == 0) {
-        R_GPT0->GTIOR = (R_GPT0->GTIOR & 0xFF00u) | 0x00A5u;
+        R_GPT0->GTIOR = (R_GPT0->GTIOR & 0xFF00u) |
+                        pwm_internal::kGTIORB_SetAtOverflowClearOnCompare;
     } else {
-        R_GPT0->GTIOR = (R_GPT0->GTIOR & 0xFF00u) | 0x005Au;
+        R_GPT0->GTIOR = (R_GPT0->GTIOR & 0xFF00u) |
+                        pwm_internal::kGTIORB_ClearAtOverflowSetOnCompare;
     }
 
     // 4) Periode og duty = 0%

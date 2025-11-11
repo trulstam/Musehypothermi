@@ -4,8 +4,10 @@
 #include <stdint.h>
 
 // Lavnivå-API for høyfrekvent PWM på Arduino UNO R4 (Renesas RA4M1, GPT0B →
-// Arduino D6). Frekvens og duty styres direkte via GPT0-registrene uten bruk av
-// Arduino-bibliotekenes analogWrite().
+// Arduino D6). Implementasjonen bygger nå på Arduino-kjernens Renesas PWM-
+// driver (pwm.h / PwmOut) i stedet for direkte registermanipulasjon, men
+// grensesnittet er uendret slik at PID- og GUI-lag kan fortsette å bruke
+// modulen transparent.
 // Gyldige frekvenser er 1 Hz – 24 MHz (GTPR ≥ 1).
 bool pwmBegin(uint32_t targetHz); // Returnerer false dersom parameter er ugyldig
 void pwmSetDuty01(float duty01);  // Setter duty i området 0.0–1.0

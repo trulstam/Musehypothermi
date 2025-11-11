@@ -10,10 +10,39 @@ constexpr uint32_t kMaxPeriodCounts = 0xFFFFFFFFu;
 
 constexpr uint8_t kPolarityMode = 0; // 0=Set@start,Clear@match; 1=Clear@start,Set@match
 
-constexpr uint16_t kGTIORB_SetAtOverflowClearOnCompare = 0x00A1u;  // idle low, active-high PWM
-constexpr uint16_t kGTIORB_ClearAtOverflowSetOnCompare = 0x005Bu;   // idle low, active-low PWM
+constexpr uint16_t kGTIORB_SetAtOverflowClearOnCompare = 0x00A5u;  // active-high PWM profile
+constexpr uint16_t kGTIORB_ClearAtOverflowSetOnCompare = 0x005Au;  // active-low PWM profile
+constexpr uint16_t kGTIORB_OutputIdleLowMask = 0xFFDFu;
 
 volatile uint32_t g_lastPeriodCounts = kDefaultPeriodCounts;
+volatile bool g_outputEnabled = false;
+
+uint16_t pwmSelectPolarityPattern() {
+    return (kPolarityMode == 0)
+               ? kGTIORB_SetAtOverflowClearOnCompare
+               : kGTIORB_ClearAtOverflowSetOnCompare;
+}
+
+uint16_t pwmSelectDisabledPattern() {
+    uint16_t base = pwmSelectPolarityPattern();
+    base &= kGTIORB_OutputIdleLowMask; // Force idle low when disabled.
+    base &= static_cast<uint16_t>(0xFFFEu);
+    return base;
+}
+
+void pwmApplyGtiobPattern(uint16_t pattern) {
+    R_GPT0->GTIOR = (R_GPT0->GTIOR & 0xFF00u) | pattern;
+}
+
+void pwmDisableOutput() {
+    pwmApplyGtiobPattern(pwmSelectDisabledPattern());
+    g_outputEnabled = false;
+}
+
+void pwmEnableOutput() {
+    pwmApplyGtiobPattern(pwmSelectPolarityPattern());
+    g_outputEnabled = true;
+}
 
 void pwmPinMux_P106_GPT0B() {
     // Lås opp PFS-register for å kunne endre pinnefunksjonen.
@@ -69,14 +98,9 @@ bool pwmBegin(uint32_t targetHz) {
     // 2) Pin-mux for P106 -> GPT0B (pin 6)
     pwm_internal::pwmPinMux_P106_GPT0B();
 
-    // 3) Sett GTIOR lavbyte for B-kanalen basert på valgt polaritet.
-    if (pwm_internal::kPolarityMode == 0) {
-        R_GPT0->GTIOR = (R_GPT0->GTIOR & 0xFF00u) |
-                        pwm_internal::kGTIORB_SetAtOverflowClearOnCompare;
-    } else {
-        R_GPT0->GTIOR = (R_GPT0->GTIOR & 0xFF00u) |
-                        pwm_internal::kGTIORB_ClearAtOverflowSetOnCompare;
-    }
+    // 3) Sett GTIOR lavbyte for B-kanalen basert på valgt polaritet og hold
+    // utgangen deaktivert (lav) inntil vi faktisk ber om duty > 0.
+    pwm_internal::pwmDisableOutput();
 
     // 4) Periode og duty = 0%
     R_GPT0->GTPR = period_counts;   // (period-1)
@@ -103,7 +127,14 @@ void pwmSetDuty01(float duty01) {
         // Hold compare på 1 for å sikre at "clear on compare" skjer tidlig i perioden
         // og dermed gir en lav utgang for 0 % duty.
         R_GPT0->GTCCR[1] = 1u;
+        if (pwm_internal::g_outputEnabled) {
+            pwm_internal::pwmDisableOutput();
+        }
         return;
+    }
+
+    if (!pwm_internal::g_outputEnabled) {
+        pwm_internal::pwmEnableOutput();
     }
 
     uint32_t cc = static_cast<uint32_t>(static_cast<double>(duty01) *
@@ -121,6 +152,9 @@ void pwmSetDuty01(float duty01) {
 
 void pwmStop() {
     R_GPT0->GTCCR[1] = 1u;
+    if (pwm_internal::g_outputEnabled) {
+        pwm_internal::pwmDisableOutput();
+    }
     R_GPT0->GTCR_b.CST = 0;
 }
 
@@ -144,6 +178,9 @@ void pwmSelfTest() {
             cc -= 1u;
         }
         pwmSetCounts(cc);
+        if (pwm_internal::g_outputEnabled == false) {
+            pwm_internal::pwmEnableOutput();
+        }
         delay(300);
     };
 
@@ -151,6 +188,7 @@ void pwmSelfTest() {
     setPct(0.50f);
     setPct(0.75f);
     setPct(0.00f);
+    pwmSetDuty01(0.0f); // Sikre at vi avslutter i deaktivert, lav tilstand.
 }
 
 void pwmDebugDump() {
@@ -162,6 +200,7 @@ void pwmDebugDump() {
     Serial.print("GTCCR[0]=");   Serial.println(static_cast<uint32_t>(R_GPT0->GTCCR[0]));
     Serial.print("GTCCR[1]=");   Serial.println(static_cast<uint32_t>(R_GPT0->GTCCR[1]));
     Serial.print("GTIOR=0x");    Serial.println(static_cast<uint32_t>(R_GPT0->GTIOR), HEX);
+    Serial.print("GTIOB enabled="); Serial.println(pwm_internal::g_outputEnabled ? 1 : 0);
 
     R_PMISC->PWPR_b.B0WI = 0;
     R_PMISC->PWPR_b.PFSWE = 1;

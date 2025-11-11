@@ -76,7 +76,7 @@ bool pwmBegin(uint32_t targetHz) {
     // 4) Periode og duty = 0%
     R_GPT0->GTPR = period_counts;   // (period-1)
     R_GPT0->GTCNT = 0;
-    R_GPT0->GTCCR[1] = 0;           // start med 0% duty (lav hele perioden)
+    R_GPT0->GTCCR[1] = 1;           // bruk 1-takt compare for effektivt 0 % duty
     pwm_internal::g_lastPeriodCounts = period_counts;
 
     // 5) Start teller
@@ -93,6 +93,14 @@ void pwmSetDuty01(float duty01) {
     }
 
     uint32_t period = static_cast<uint32_t>(R_GPT0->GTPR) + 1u;
+
+    if (duty01 <= 1e-6f) {
+        // Hold compare på 1 for å sikre at "clear on compare" skjer tidlig i perioden
+        // og dermed gir en lav utgang for 0 % duty.
+        R_GPT0->GTCCR[1] = 1u;
+        return;
+    }
+
     uint32_t cc = static_cast<uint32_t>(static_cast<double>(duty01) *
                                         static_cast<double>(period));
     if (cc > 0u) {
@@ -107,7 +115,7 @@ void pwmSetDuty01(float duty01) {
 }
 
 void pwmStop() {
-    R_GPT0->GTCCR[1] = 0;
+    R_GPT0->GTCCR[1] = 1u;
     R_GPT0->GTCR_b.CST = 0;
 }
 
@@ -125,7 +133,9 @@ void pwmSelfTest() {
         }
         double scaled = static_cast<double>(p) * static_cast<double>(period);
         uint32_t cc = static_cast<uint32_t>(scaled);
-        if (cc > 0u) {
+        if (cc == 0u) {
+            cc = 1u;
+        } else {
             cc -= 1u;
         }
         pwmSetCounts(cc);

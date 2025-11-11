@@ -44,6 +44,11 @@ void pwmEnableOutput() {
     g_outputEnabled = true;
 }
 
+static inline void predrive_D6_low_gpio() {
+    pinMode(6, OUTPUT);
+    digitalWrite(6, LOW);
+}
+
 void pwmPinMux_P106_GPT0B() {
     // Lås opp PFS-register for å kunne endre pinnefunksjonen.
     R_PMISC->PWPR_b.B0WI = 0;
@@ -95,11 +100,12 @@ bool pwmBegin(uint32_t targetHz) {
                    static_cast<uint32_t>(0x0040u);
     R_GPT0->GTUDDTYC = 0x0000;      // Count up
 
-    // 2) Pin-mux for P106 -> GPT0B (pin 6)
-    pwm_internal::pwmPinMux_P106_GPT0B();
+    // 2) Hold pinnen lav som GPIO før vi gir kontroll til periferi.
+    pwm_internal::predrive_D6_low_gpio();
 
-    // 3) Sett GTIOR lavbyte for B-kanalen basert på valgt polaritet og hold
-    // utgangen deaktivert (lav) inntil vi faktisk ber om duty > 0.
+    // 3) Konfigurer GTIOR for valgt polaritet og deaktiver utgangen logisk
+    // før vi starter telleren.
+    pwm_internal::pwmApplyGtiobPattern(pwm_internal::pwmSelectPolarityPattern());
     pwm_internal::pwmDisableOutput();
 
     // 4) Periode og duty = 0%
@@ -110,6 +116,9 @@ bool pwmBegin(uint32_t targetHz) {
 
     // 5) Start teller
     R_GPT0->GTCR_b.CST = 1;
+
+    // 6) Overlat pinnen til GPT0B nå som timeren allerede går i lav tilstand.
+    pwm_internal::pwmPinMux_P106_GPT0B();
 
     return withinRange;
 }

@@ -4,6 +4,8 @@
 
 inline bool pwmBegin(uint32_t) { return true; }
 inline void pwmSetDuty01(float) {}
+inline void pwmSelfTest() {}
+inline void pwmDebugDump() {}
 inline void pwmStop() {}
 
 class PWMModule {

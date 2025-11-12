@@ -88,6 +88,10 @@ public:
     }
     float getPersistedHeatingOutputLimit() const { return persistedHeatingLimit; }
     float getPersistedCoolingOutputLimit() const { return persistedCoolingLimit; }
+    float getBaseDutyPercent() const { return baseDutyPercent; }
+    void  setBaseDutyPercent(float v, bool persist = true);
+    void  setMinDutyPercent(float v);
+    void  enableSigmaDelta(bool en);
 
     // Compatibility setters
     void setTargetTemp(float value) { Setpoint = value; }
@@ -150,6 +154,7 @@ private:
     // Output smoothing
     double outputSmoothingFactor;
     double lastOutput;
+    double lastCommandedOutput;
     
     // EEPROM management
     EEPROMManager* eeprom;
@@ -160,12 +165,21 @@ private:
     bool startupClampActive;
     bool startupClampNotified;
     unsigned long startupClampEndMillis;
+
+    // Bias/base duty configuration
+    float baseDutyPercent;
+    float minDutyPercent;
+    bool sigmaDeltaEnabled;
+    float sigmaDeltaAccumulator;
+    float biasAdaptGain;
+    float biasHoldBand;
+    unsigned long lastBiasUpdateMs;
     
     // Safety methods
     bool checkSafetyLimits(double currentTemp, double targetTemp);
     void applySafetyConstraints();
     void applyRateLimiting();
-    void applyOutputSmoothing();
+    double applyOutputSmoothing(double input);
     void publishFilterTelemetry(const char* stage, double rawValue, double finalValue);
     void resetOutputState();
 
@@ -248,6 +262,7 @@ private:
         AutotuneDataset heating;
         AutotuneDataset cooling;
         AutotuneRecommendation recommendation;
+        bool holdBiasCaptured;
     };
 
     AutotuneSession autotuneSession;

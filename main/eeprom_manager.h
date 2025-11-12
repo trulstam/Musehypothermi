@@ -53,6 +53,9 @@ public:
     void saveSafetySettings(const SafetySettings &settings);
     void loadSafetySettings(SafetySettings &settings) const;
 
+    void saveBaseDutyPercent(float basePercent);
+    void loadBaseDutyPercent(float &basePercent) const;
+
     // Inline convenience wrappers operating on the composite safety blob
     inline void saveCoolingRateLimit(float rate);
     inline void loadCoolingRateLimit(float &rate);
@@ -86,6 +89,7 @@ private:
     static const int addrCoolingRateLimit = addrCoolingKd + sizeof(float);
     static const int addrDeadband = addrCoolingRateLimit + sizeof(float);
     static const int addrSafetyMargin = addrDeadband + sizeof(float);
+    static const int addrBaseDutyPercent = addrSafetyMargin + sizeof(float);
 
     static const uint32_t MAGIC_NUMBER;
 

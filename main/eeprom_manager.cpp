@@ -114,6 +114,14 @@ void EEPROMManager::loadSafetySettings(SafetySettings &settings) const {
     EEPROM.get(addrSafetyMargin, settings.safetyMargin);
 }
 
+void EEPROMManager::saveBaseDutyPercent(float basePercent) {
+    EEPROM.put(addrBaseDutyPercent, basePercent);
+}
+
+void EEPROMManager::loadBaseDutyPercent(float &basePercent) const {
+    EEPROM.get(addrBaseDutyPercent, basePercent);
+}
+
 void EEPROMManager::saveDebugLevel(int debugLevel) {
     EEPROM.put(addrDebugLevel, debugLevel);
 }
@@ -142,6 +150,7 @@ bool EEPROMManager::factoryReset() {
         kDefaultSafetyMargin,
     };
     saveSafetySettings(safety);
+    saveBaseDutyPercent(0.0f);
 
     saveDebugLevel(kDefaultDebugLevel);
     saveFailsafeTimeout(kDefaultFailsafeTimeout);

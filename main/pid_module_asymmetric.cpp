@@ -113,11 +113,14 @@ AsymmetricPIDModule::AsymmetricPIDModule()
       autotuneStatusString("idle"), debugEnabled(false),
       maxCoolingRate(kDefaultCoolingRate), lastUpdateTime(0),
       lastTemperature(0.0), temperatureRate(0.0),
-      outputSmoothingFactor(kOutputSmoothingFactor), lastOutput(0.0),
+      outputSmoothingFactor(kOutputSmoothingFactor), lastOutput(0.0), lastCommandedOutput(0.0),
       eeprom(nullptr),
       persistedHeatingLimit(kDefaultMaxOutputPercent),
       persistedCoolingLimit(kDefaultMaxOutputPercent),
-      startupClampActive(false), startupClampNotified(false), startupClampEndMillis(0) {
+      startupClampActive(false), startupClampNotified(false), startupClampEndMillis(0),
+      baseDutyPercent(0.0f), minDutyPercent(10.0f), sigmaDeltaEnabled(false),
+      sigmaDeltaAccumulator(0.0f), biasAdaptGain(0.02f), biasHoldBand(0.2f),
+      lastBiasUpdateMs(0) {
 
     // Initialize default parameters
     currentParams.kp_cooling = kDefaultCoolingKp;
@@ -142,6 +145,9 @@ AsymmetricPIDModule::AsymmetricPIDModule()
 void AsymmetricPIDModule::begin(EEPROMManager &eepromManager) {
     eeprom = &eepromManager;
     loadAsymmetricParams();
+
+    minDutyPercent = 10.0f;
+    sigmaDeltaAccumulator = 0.0f;
 
     outputSmoothingFactor = kOutputSmoothingFactor;
     lastOutput = 0.0;
@@ -225,20 +231,54 @@ void AsymmetricPIDModule::update(double /*currentTemp*/) {
     publishFilterTelemetry("before_safety_constraints", rawPIDOutput, rawPIDOutput);
     applySafetyConstraints();
     publishFilterTelemetry("after_safety_constraints", rawPIDOutput, rawPIDOutput);
-    publishFilterTelemetry("before_rate_limit", rawPIDOutput, rawPIDOutput);
-    applyRateLimiting();
-    publishFilterTelemetry("after_rate_limit", rawPIDOutput, rawPIDOutput);
-    publishFilterTelemetry("before_output_smoothing", rawPIDOutput, rawPIDOutput);
-    applyOutputSmoothing();
-    publishFilterTelemetry("after_output_smoothing", rawPIDOutput, finalOutput);
 
-    double magnitude = fabs(finalOutput);
-    int pwmValue = constrain(static_cast<int>(magnitude * MAX_PWM / 100.0), 0, MAX_PWM);
+    float modeSign = coolingMode ? -1.0f : 1.0f;
+    double baseTerm = static_cast<double>(baseDutyPercent) * modeSign;
+    double correctionInput = rawPIDOutput - baseTerm;
+    publishFilterTelemetry("before_output_smoothing", correctionInput, correctionInput);
+    double smoothedCorrection = applyOutputSmoothing(correctionInput);
+    publishFilterTelemetry("after_output_smoothing", correctionInput, smoothedCorrection);
+    publishFilterTelemetry("before_rate_limit", smoothedCorrection, smoothedCorrection);
+    double limitedCorrection = applyRateLimiting(smoothedCorrection, baseTerm);
+    publishFilterTelemetry("after_rate_limit", smoothedCorrection, limitedCorrection);
 
-    if (finalOutput > 0.0) {
+    double correctionOutput = limitedCorrection;
+    float commandedPercent = baseDutyPercent * modeSign + static_cast<float>(correctionOutput);
+
+    commandedPercent = constrain(commandedPercent,
+                                 currentParams.cooling_limit,
+                                 currentParams.heating_limit);
+
+    float magnitude = fabsf(commandedPercent);
+    bool underMin = (magnitude > 0.0f && magnitude < minDutyPercent);
+
+    if (sigmaDeltaEnabled && underMin) {
+        sigmaDeltaAccumulator += magnitude;
+        if (sigmaDeltaAccumulator >= minDutyPercent) {
+            sigmaDeltaAccumulator -= minDutyPercent;
+            magnitude = minDutyPercent;
+        } else {
+            magnitude = 0.0f;
+        }
+        commandedPercent = (commandedPercent >= 0.0f) ? magnitude : -magnitude;
+        underMin = (magnitude == 0.0f);
+    }
+
+    if (!sigmaDeltaEnabled && underMin) {
+        commandedPercent = 0.0f;
+        magnitude = 0.0f;
+    }
+
+    if (!underMin) {
+        sigmaDeltaAccumulator = 0.0f;
+    } else {
+        sigmaDeltaAccumulator = constrain(sigmaDeltaAccumulator, 0.0f, minDutyPercent);
+    }
+
+    if (commandedPercent > 0.0f) {
         digitalWrite(kHeatingDirectionPin, LOW);
         digitalWrite(kCoolingDirectionPin, HIGH);
-    } else if (finalOutput < 0.0) {
+    } else if (commandedPercent < 0.0f) {
         digitalWrite(kHeatingDirectionPin, HIGH);
         digitalWrite(kCoolingDirectionPin, LOW);
     } else {
@@ -246,8 +286,33 @@ void AsymmetricPIDModule::update(double /*currentTemp*/) {
         digitalWrite(kCoolingDirectionPin, LOW);
     }
 
+    float appliedMag = fabsf(commandedPercent);
+    int pwmValue = constrain(static_cast<int>(appliedMag * MAX_PWM / 100.0f), 0, MAX_PWM);
     pwm.setDutyCycle(pwmValue);
-    currentPwmOutput = static_cast<int>(finalOutput);
+
+    finalOutput = commandedPercent;
+    currentPwmOutput = static_cast<int>(commandedPercent);
+
+    float err = static_cast<float>(Setpoint - Input);
+    unsigned long nowMs = now;
+    if (fabsf(err) <= biasHoldBand) {
+        if (lastBiasUpdateMs == 0) {
+            lastBiasUpdateMs = nowMs;
+        }
+        float dt = static_cast<float>(nowMs - lastBiasUpdateMs) / 1000.0f;
+        if (dt > 0.0f) {
+            if (coolingMode) {
+                float adjustment = biasAdaptGain * dt * modeSign * static_cast<float>(correctionOutput);
+                baseDutyPercent += adjustment;
+                baseDutyPercent = constrain(baseDutyPercent, 0.0f, persistedCoolingLimit);
+            }
+            lastBiasUpdateMs = nowMs;
+        }
+    } else {
+        lastBiasUpdateMs = nowMs;
+    }
+
+    lastCommandedOutput = finalOutput;
 }
 
 void AsymmetricPIDModule::updatePIDMode(double error) {
@@ -264,7 +329,7 @@ void AsymmetricPIDModule::updatePIDMode(double error) {
 void AsymmetricPIDModule::switchToCoolingPID() {
     coolingMode = true;
     heatingPID.SetMode(MANUAL);
-    resetOutputState();
+    sigmaDeltaAccumulator = 0.0f;
     coolingPID.SetTunings(currentParams.kp_cooling,
                           currentParams.ki_cooling,
                           currentParams.kd_cooling);
@@ -276,7 +341,7 @@ void AsymmetricPIDModule::switchToCoolingPID() {
 void AsymmetricPIDModule::switchToHeatingPID() {
     coolingMode = false;
     coolingPID.SetMode(MANUAL);
-    resetOutputState();
+    sigmaDeltaAccumulator = 0.0f;
     heatingPID.SetTunings(currentParams.kp_heating,
                           currentParams.ki_heating,
                           currentParams.kd_heating);
@@ -309,30 +374,35 @@ void AsymmetricPIDModule::applySafetyConstraints() {
     }
 }
 
-void AsymmetricPIDModule::applyRateLimiting() {
+double AsymmetricPIDModule::applyRateLimiting(double correctionInput, double baseTerm) {
     const double maxDelta = static_cast<double>(maxCoolingRate) * 20.0;
-    double delta = rawPIDOutput - lastOutput;
+    double candidateCommand = baseTerm + correctionInput;
+    double delta = candidateCommand - lastCommandedOutput;
     if (delta > maxDelta) {
-        rawPIDOutput = lastOutput + maxDelta;
+        candidateCommand = lastCommandedOutput + maxDelta;
     } else if (delta < -maxDelta) {
-        rawPIDOutput = lastOutput - maxDelta;
+        candidateCommand = lastCommandedOutput - maxDelta;
     }
+
+    return candidateCommand - baseTerm;
 }
 
-void AsymmetricPIDModule::applyOutputSmoothing() {
+double AsymmetricPIDModule::applyOutputSmoothing(double input) {
     // Smooth output changes to prevent sudden jumps. Allow the filter to be
     // effectively disabled when the factor is zero so the PID output reaches
     // the actuator without additional attenuation.
+    double smoothed;
     if (outputSmoothingFactor <= 0.0) {
-        finalOutput = rawPIDOutput;
+        smoothed = input;
     } else if (outputSmoothingFactor >= 1.0) {
-        finalOutput = lastOutput;
+        smoothed = lastOutput;
     } else {
-        finalOutput = (outputSmoothingFactor * lastOutput) +
-                      ((1.0 - outputSmoothingFactor) * rawPIDOutput);
+        smoothed = (outputSmoothingFactor * lastOutput) +
+                   ((1.0 - outputSmoothingFactor) * input);
     }
 
-    lastOutput = finalOutput;
+    lastOutput = smoothed;
+    return smoothed;
 }
 
 void AsymmetricPIDModule::publishFilterTelemetry(const char* stage, double rawValue, double finalValue) {
@@ -366,8 +436,10 @@ void AsymmetricPIDModule::resetOutputState() {
     coolingOutput = 0.0;
     heatingOutput = 0.0;
     lastOutput = 0.0;
+    lastCommandedOutput = 0.0;
     pwm.setDutyCycle(0);
     currentPwmOutput = 0;
+    sigmaDeltaAccumulator = 0.0f;
 }
 
 // --- Compatibility-style getters (preserve existing API) ---
@@ -461,6 +533,8 @@ void AsymmetricPIDModule::setOutputLimits(float coolingLimit, float heatingLimit
     coolingPID.SetOutputLimits(currentParams.cooling_limit, 0.0);
     heatingPID.SetOutputLimits(0.0, currentParams.heating_limit);
 
+    baseDutyPercent = constrain(baseDutyPercent, 0.0f, persistedCoolingLimit);
+
     if (persist) {
         saveAsymmetricParams();
     }
@@ -552,6 +626,26 @@ void AsymmetricPIDModule::setSafetyParams(float deadband, float safetyMargin, bo
     }
 }
 
+void AsymmetricPIDModule::setBaseDutyPercent(float v, bool persist) {
+    baseDutyPercent = constrain(v, 0.0f, 100.0f);
+    baseDutyPercent = constrain(baseDutyPercent, 0.0f, persistedCoolingLimit);
+    if (persist) {
+        saveAsymmetricParams();
+    }
+    comm.sendEvent(String("⚖️ baseDuty set to ") + String(baseDutyPercent, 1) + "%");
+}
+
+void AsymmetricPIDModule::setMinDutyPercent(float v) {
+    minDutyPercent = constrain(v, 0.0f, 30.0f);
+    comm.sendEvent(String("⏱️ minDuty set to ") + String(minDutyPercent, 1) + "%");
+}
+
+void AsymmetricPIDModule::enableSigmaDelta(bool en) {
+    sigmaDeltaEnabled = en;
+    sigmaDeltaAccumulator = 0.0f;
+    comm.sendEvent(en ? "🎚️ Sigma-delta enabled" : "🎚️ Sigma-delta disabled");
+}
+
 void AsymmetricPIDModule::resetAutotuneSession() {
     autotuneSession.phase = AutotunePhase::kIdle;
     autotuneSession.sessionStart = 0;
@@ -566,6 +660,7 @@ void AsymmetricPIDModule::resetAutotuneSession() {
     autotuneSession.heatingCommandPercent = 0.0f;
     autotuneSession.coolingCommandPercent = 0.0f;
     autotuneSession.maxDurationMs = autotuneConfig.maxDurationMs;
+    autotuneSession.holdBiasCaptured = false;
 
     autotuneSession.heating.count = 0;
     autotuneSession.heating.startMillis = 0;
@@ -615,6 +710,8 @@ void AsymmetricPIDModule::applyAutotuneOutput(float percent) {
     rawPIDOutput = percent;
     finalOutput = percent;
     lastOutput = percent;
+    lastCommandedOutput = percent;
+    sigmaDeltaAccumulator = 0.0f;
 
     if (percent > 0.0f) {
         digitalWrite(kHeatingDirectionPin, LOW);
@@ -903,6 +1000,10 @@ void AsymmetricPIDModule::finalizeAutotune() {
 
     autotuneSession.phase = rec.valid ? AutotunePhase::kComplete : AutotunePhase::kFailed;
 
+    if ((rec.valid || rec.heatingValid || rec.coolingValid) && autotuneSession.holdBiasCaptured) {
+        setBaseDutyPercent(fabsf(autotuneSession.holdOutputPercent), true);
+    }
+
     sendAutotuneResults(rec, autotuneSession.heating, autotuneSession.cooling);
 }
 
@@ -1034,6 +1135,7 @@ void AsymmetricPIDModule::runAsymmetricAutotune() {
                         return;
                     }
 
+                    autotuneSession.holdBiasCaptured = true;
                     autotuneSession.heating.stepPercent = actualStep;
                     autotuneSession.heatingCommandPercent = commanded;
                     autotuneSession.heating.startMillis = now;
@@ -1217,6 +1319,7 @@ void AsymmetricPIDModule::saveAsymmetricParams() {
     eeprom->saveSafetySettings(safety);
 
     eeprom->saveTargetTemp(Setpoint);
+    eeprom->saveBaseDutyPercent(baseDutyPercent);
 }
 
 void AsymmetricPIDModule::loadAsymmetricParams() {
@@ -1234,6 +1337,7 @@ void AsymmetricPIDModule::loadAsymmetricParams() {
     float storedRate = kDefaultCoolingRate;
     float storedDeadband = kDefaultDeadband;
     float storedMargin = kDefaultSafetyMargin;
+    float storedBaseDuty = 0.0f;
 
     if (eeprom) {
         eeprom->loadHeatingPIDParams(heatingKp, heatingKi, heatingKd);
@@ -1303,6 +1407,16 @@ void AsymmetricPIDModule::loadAsymmetricParams() {
             restoredDefaults = true;
             comm.sendEvent("⚠️ EEPROM safety margin invalid – restored to default");
         }
+
+        float loadedBaseDuty = 0.0f;
+        eeprom->loadBaseDutyPercent(loadedBaseDuty);
+        if (isInvalidValue(loadedBaseDuty) || loadedBaseDuty < 0.0f || loadedBaseDuty > 100.0f) {
+            loadedBaseDuty = 0.0f;
+            eeprom->saveBaseDutyPercent(loadedBaseDuty);
+            restoredDefaults = true;
+            comm.sendEvent("⚠️ EEPROM base duty invalid – restored to 0%");
+        }
+        storedBaseDuty = loadedBaseDuty;
     }
 
     currentParams.kp_heating = heatingKp;
@@ -1335,8 +1449,13 @@ void AsymmetricPIDModule::loadAsymmetricParams() {
     heatingPID.SetOutputLimits(0.0, currentParams.heating_limit);
 
     lastOutput = 0.0;
+    lastCommandedOutput = 0.0;
     finalOutput = 0.0;
     rawPIDOutput = 0.0;
+
+    baseDutyPercent = constrain(storedBaseDuty, 0.0f, persistedCoolingLimit);
+    sigmaDeltaAccumulator = 0.0f;
+    lastBiasUpdateMs = 0;
 
     if (restoredDefaults) {
         Serial.println(F("[PID] Restored asymmetric defaults due to invalid EEPROM data"));

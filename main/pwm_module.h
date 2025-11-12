@@ -18,7 +18,7 @@ void pwmStop();                   // Stopper GPT0 og setter duty til 0
 class PWMModule {
 public:
     PWMModule();
-    void begin();                // Initierer GPT0 med standard 20 kHz PWM
+    void begin();                // Initierer GPT0 med standard 1 kHz PWM (midlertidig)
     void setDutyCycle(int duty); // 0–2399 (maps til 0.0–1.0 duty)
     void stopPWM();              // Setter duty til 0 og stopper generatoren
 };

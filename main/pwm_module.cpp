@@ -10,8 +10,8 @@ constexpr uint32_t kMaxTargetHz = kGptClockHz / 2u; // tilsvarer GTPR ≥ 1
 constexpr float kDutyZeroEpsilon = 1e-6f;
 
 PwmOut g_pwmChannel(PIN_D6);
-uint32_t g_lastTargetHz = 20000u;
-uint32_t g_lastPeriodCounts = (kGptClockHz / 20000u) - 1u; // 2399 ved 20 kHz
+uint32_t g_lastTargetHz = 1000u;
+uint32_t g_lastPeriodCounts = (kGptClockHz / 1000u) - 1u; // 47999 ved 1 kHz
 float g_lastDuty01 = 0.0f;
 bool g_initialized = false;
 
@@ -43,6 +43,16 @@ void pwmApplyDuty(float duty01) {
     g_pwmChannel.pulse_perc(duty01 * 100.0f);
     g_lastDuty01 = duty01;
 }
+
+void pwmForceLowOutput() {
+    // Sikre at GPT0 fortsatt er aktivert før vi rører registerne direkte.
+    R_MSTP->MSTPCRD_b.MSTPD5 = 0;
+    // RA4M1: GTCCR[1] er compare-registeret for GPT0B. Verdi 1 sørger for at
+    // compare-hendelsen skjer tidlig i perioden slik at utgangen holdes lav.
+    R_GPT0->GTCCR[1] = 1;
+    // Restart telleren slik at endringen tas i bruk umiddelbart.
+    R_GPT0->GTCR_b.CST = 1;
+}
 } // namespace pwm_internal
 
 bool pwmBegin(uint32_t targetHz) {
@@ -58,9 +68,7 @@ bool pwmBegin(uint32_t targetHz) {
     pwm_internal::g_pwmChannel.begin(actualHz, 0.0f);
 
     // --- Fix for stuck HIGH at 0% duty (GPT0B set@overflow, clear@compare) ---
-    R_MSTP->MSTPCRD_b.MSTPD5 = 0;  // ensure GPT0 clock enabled
-    R_GPT0->GTCCR[1] = 1;          // compare=1 instead of 0 => clears output early
-    R_GPT0->GTCR_b.CST = 1;        // (re)start counter to apply change
+    pwm_internal::pwmForceLowOutput();
     // -------------------------------------------------------------------------
 
     pwm_internal::g_lastTargetHz = static_cast<uint32_t>(actualHz + 0.5f);
@@ -84,6 +92,7 @@ void pwmSetDuty01(float duty01) {
 
     if (duty01 <= pwm_internal::kDutyZeroEpsilon) {
         pwm_internal::pwmApplyDuty(0.0f);
+        pwm_internal::pwmForceLowOutput();
         return;
     }
 
@@ -96,6 +105,7 @@ void pwmStop() {
     }
 
     pwm_internal::pwmApplyDuty(0.0f);
+    pwm_internal::pwmForceLowOutput();
 }
 
 void pwmSelfTest() {
@@ -131,7 +141,7 @@ void pwmDebugDump() {
 PWMModule::PWMModule() {}
 
 void PWMModule::begin() {
-    pwmBegin(20000u);
+    pwmBegin(1000u);
     pwmDebugDump();
     pwmSelfTest(); // TEMPORARY: remove after validation
 }
@@ -142,14 +152,15 @@ void PWMModule::setDutyCycle(int duty) {
         return;
     }
 
-    uint32_t maxDuty = pwm_internal::g_lastPeriodCounts;
-    if (duty >= static_cast<int>(maxDuty)) {
+    constexpr int kLegacyMaxDuty = 2399;
+
+    if (duty >= kLegacyMaxDuty) {
         pwmSetDuty01(1.0f);
         return;
     }
 
     double duty01 = static_cast<double>(duty) /
-                    static_cast<double>(maxDuty);
+                    static_cast<double>(kLegacyMaxDuty);
     pwmSetDuty01(static_cast<float>(duty01));
 }
 

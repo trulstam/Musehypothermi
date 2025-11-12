@@ -1,46 +1,19 @@
 #include "pwm_module.h"
-#include "Arduino.h"
+
+#include <Arduino.h>
+#include <pwm.h>
 
 namespace pwm_internal {
-constexpr int kMaxDuty = 2399;
+constexpr uint32_t kGptClockHz = 48000000u;
 constexpr uint32_t kMinTargetHz = 1u;
-constexpr uint32_t GPT_CLK_HZ = 48000000u;
-constexpr uint32_t kMaxTargetHz = GPT_CLK_HZ / 2u; // Med GTPR ≥ 1 gir dette maksimal praktisk frekvens.
-constexpr uint32_t kMaxPeriodCounts = 0xFFFFFFFFu;
+constexpr uint32_t kMaxTargetHz = kGptClockHz / 2u; // tilsvarer GTPR ≥ 1
+constexpr float kDutyZeroEpsilon = 1e-6f;
 
-// GTIOR består av to 8-bits felt (GTIOCA i de øverste 8 bitene og GTIOCB i
-// de nederste 8). Feltoppsettet er (MSB→LSB):
-//   [7:6] OADF  – hvordan utgangen reagerer på compare-match (00=hold, 01=set,
-//                  10=clear, 11=toggle)
-//   [5]   OADTY – setter nivået ved periodens slutt (1=set, 0=clear)
-//   [4]   OADFLT– standardnivå når timeren stoppes
-//   [3]   OAHLD – hold (ikke brukt)
-//   [2]   OAD   – output disable
-//   [1]   OAE   – output enable
-//   [0]   OASF  – nivå når timeren stoppes
-constexpr uint8_t kGtioaClearOnMatch = 0x80;     // OADF=10 → clear ved match
-constexpr uint8_t kGtioaSetOnPeriodEnd = 0x20;   // OADTY=1 → set ved overflow
-constexpr uint8_t kGtioaDefaultLow = 0x00;       // OADFLT=0 → lav når stoppet
-constexpr uint8_t kGtioaOutputEnable = 0x02;     // OAE=1
-constexpr uint8_t kGtioaStopLevelLow = 0x00;     // OASF=0
-constexpr uint8_t kGtioaActiveHighPwm =
-        kGtioaClearOnMatch | kGtioaSetOnPeriodEnd | kGtioaDefaultLow |
-        kGtioaOutputEnable | kGtioaStopLevelLow;
-
-constexpr uint8_t kGtiobDisabled = 0x00;         // Kanal B er ikke i bruk.
-
-void pwmPinMux_P313_GPT0A() {
-    // Lås opp PFS-register for å kunne endre pinnefunksjonen.
-    R_PMISC->PWPR_b.B0WI = 0;
-    R_PMISC->PWPR_b.PFSWE = 1;
-
-    // Map Arduino pinne 6 (port 3, pinne 13) til GPT0 GTIOCA.
-    R_PFS->PORT[3].PIN[13].PmnPFS = 0x11;
-
-    // Lås PFS-registeret igjen.
-    R_PMISC->PWPR_b.PFSWE = 0;
-    R_PMISC->PWPR_b.B0WI = 1;
-}
+PwmOut g_pwmChannel(PIN_D6);
+uint32_t g_lastTargetHz = 1000u;
+uint32_t g_lastPeriodCounts = (kGptClockHz / 1000u) - 1u; // 47999 ved 1 kHz
+float g_lastDuty01 = 0.0f;
+bool g_initialized = false;
 
 uint32_t pwmCalcPeriodCounts(uint32_t targetHz) {
     if (targetHz < kMinTargetHz) {
@@ -49,78 +22,128 @@ uint32_t pwmCalcPeriodCounts(uint32_t targetHz) {
         targetHz = kMaxTargetHz;
     }
 
-    uint32_t period = GPT_CLK_HZ / targetHz;
+    uint32_t period = kGptClockHz / targetHz;
     if (period > 0u) {
         period -= 1u;
     }
 
     if (period < 1u) {
         period = 1u;
-    } else if (period > kMaxPeriodCounts) {
-        period = kMaxPeriodCounts;
     }
 
     return period;
+}
+
+float pwmCountsToHz(uint32_t periodCounts) {
+    return static_cast<float>(kGptClockHz) /
+           static_cast<float>(periodCounts + 1u);
+}
+
+void pwmApplyDuty(float duty01) {
+    g_pwmChannel.pulse_perc(duty01 * 100.0f);
+    g_lastDuty01 = duty01;
+}
+
+void pwmForceLowOutput() {
+    // Sikre at GPT0 fortsatt er aktivert før vi rører registerne direkte.
+    R_MSTP->MSTPCRD_b.MSTPD5 = 0;
+    // RA4M1: GTCCR[1] er compare-registeret for GPT0B. Verdi 1 sørger for at
+    // compare-hendelsen skjer tidlig i perioden slik at utgangen holdes lav.
+    R_GPT0->GTCCR[1] = 1;
+    // Restart telleren slik at endringen tas i bruk umiddelbart.
+    R_GPT0->GTCR_b.CST = 1;
 }
 } // namespace pwm_internal
 
 bool pwmBegin(uint32_t targetHz) {
     bool withinRange = (targetHz >= pwm_internal::kMinTargetHz) &&
                        (targetHz <= pwm_internal::kMaxTargetHz);
-    uint32_t period_counts = pwm_internal::pwmCalcPeriodCounts(targetHz);
 
-    // Slå på klokke til GPT0-modulen.
-    R_MSTP->MSTPCRD_b.MSTPD5 = 0;
+    uint32_t periodCounts = pwm_internal::pwmCalcPeriodCounts(targetHz);
+    float actualHz = pwm_internal::pwmCountsToHz(periodCounts);
 
-    // Stopp teller før konfigurering og sett grunnleggende moduser.
-    R_GPT0->GTCR_b.CST = 0;
-    R_GPT0->GTCR = 0x0000;
-    R_GPT0->GTUDDTYC = 0x0000; // Teller oppover.
-    uint16_t gtiorValue = (static_cast<uint16_t>(pwm_internal::kGtioaActiveHighPwm)
-                           << 8) |
-                          pwm_internal::kGtiobDisabled;
-    R_GPT0->GTIOR = gtiorValue;
+    pinMode(PIN_D6, OUTPUT);
+    digitalWrite(PIN_D6, LOW);
 
-    // Konfigurer pinne 6 til periferi-funksjonen GPT0A.
-    pwm_internal::pwmPinMux_P313_GPT0A();
+    pwm_internal::g_pwmChannel.begin(actualHz, 0.0f);
 
-    // Sett periode og start med 0 % duty.
-    R_GPT0->GTPR = period_counts;
-    R_GPT0->GTCNT = 0;         // Nullstill tellerverdien.
-    R_GPT0->GTCCR[0] = 0;
+    // --- Fix for stuck HIGH at 0% duty (GPT0B set@overflow, clear@compare) ---
+    pwm_internal::pwmForceLowOutput();
+    // -------------------------------------------------------------------------
 
-    // Start GPT0-telleren.
-    R_GPT0->GTCR_b.CST = 1;
+    pwm_internal::g_lastTargetHz = static_cast<uint32_t>(actualHz + 0.5f);
+    pwm_internal::g_lastPeriodCounts = periodCounts;
+    pwm_internal::g_lastDuty01 = 0.0f;
+    pwm_internal::g_initialized = true;
 
     return withinRange;
 }
 
 void pwmSetDuty01(float duty01) {
+    if (!pwm_internal::g_initialized) {
+        return;
+    }
+
     if (duty01 < 0.0f) {
         duty01 = 0.0f;
     } else if (duty01 > 1.0f) {
         duty01 = 1.0f;
     }
 
-    uint32_t period = R_GPT0->GTPR;
-    double scaled = static_cast<double>(duty01) * static_cast<double>(period);
-    uint32_t cc = static_cast<uint32_t>(scaled);
-    if (cc > period) {
-        cc = period;
+    if (duty01 <= pwm_internal::kDutyZeroEpsilon) {
+        pwm_internal::pwmApplyDuty(0.0f);
+        pwm_internal::pwmForceLowOutput();
+        return;
     }
 
-    R_GPT0->GTCCR[0] = cc;
+    pwm_internal::pwmApplyDuty(duty01);
 }
 
 void pwmStop() {
-    R_GPT0->GTCCR[0] = 0;
-    R_GPT0->GTCR_b.CST = 0;
+    if (!pwm_internal::g_initialized) {
+        return;
+    }
+
+    pwm_internal::pwmApplyDuty(0.0f);
+    pwm_internal::pwmForceLowOutput();
+}
+
+void pwmSelfTest() {
+    if (!pwm_internal::g_initialized) {
+        return;
+    }
+
+    constexpr float kSteps[] = {0.25f, 0.50f, 0.75f, 0.00f};
+    for (float duty : kSteps) {
+        pwmSetDuty01(duty);
+        delay(300);
+    }
+}
+
+void pwmDebugDump() {
+    Serial.println("=== PWM DEBUG ===");
+    Serial.print("Target Hz (rounded)=");
+    Serial.println(pwm_internal::g_lastTargetHz);
+    Serial.print("Actual Hz=");
+    Serial.println(pwm_internal::pwmCountsToHz(pwm_internal::g_lastPeriodCounts), 2);
+    Serial.print("Period counts=");
+    Serial.println(pwm_internal::g_lastPeriodCounts);
+    Serial.print("Duty 0-1=");
+    Serial.println(pwm_internal::g_lastDuty01, 6);
+    Serial.print("Duty %=");
+    Serial.println(pwm_internal::g_lastDuty01 * 100.0f, 2);
+    Serial.print("Initialized=");
+    Serial.println(pwm_internal::g_initialized ? 1 : 0);
+    Serial.print("PIN_D6 state=");
+    Serial.println(digitalRead(PIN_D6));
 }
 
 PWMModule::PWMModule() {}
 
 void PWMModule::begin() {
-    pwmBegin(20000u); // Standard 20 kHz PWM.
+    pwmBegin(1000u);
+    pwmDebugDump();
+    pwmSelfTest(); // TEMPORARY: remove after validation
 }
 
 void PWMModule::setDutyCycle(int duty) {
@@ -129,16 +152,19 @@ void PWMModule::setDutyCycle(int duty) {
         return;
     }
 
-    if (duty >= pwm_internal::kMaxDuty) {
+    constexpr int kLegacyMaxDuty = 2399;
+
+    if (duty >= kLegacyMaxDuty) {
         pwmSetDuty01(1.0f);
         return;
     }
 
     double duty01 = static_cast<double>(duty) /
-                    static_cast<double>(pwm_internal::kMaxDuty);
+                    static_cast<double>(kLegacyMaxDuty);
     pwmSetDuty01(static_cast<float>(duty01));
 }
 
 void PWMModule::stopPWM() {
     pwmStop();
 }
+

@@ -57,13 +57,16 @@ bool pwmBegin(uint32_t targetHz) {
 
     pwm_internal::g_pwmChannel.begin(actualHz, 0.0f);
 
+    // --- Fix for stuck HIGH at 0% duty (GPT0B set@overflow, clear@compare) ---
+    R_MSTP->MSTPCRD_b.MSTPD5 = 0;  // ensure GPT0 clock enabled
+    R_GPT0->GTCCR[1] = 1;          // compare=1 instead of 0 => clears output early
+    R_GPT0->GTCR_b.CST = 1;        // (re)start counter to apply change
+    // -------------------------------------------------------------------------
+
     pwm_internal::g_lastTargetHz = static_cast<uint32_t>(actualHz + 0.5f);
     pwm_internal::g_lastPeriodCounts = periodCounts;
     pwm_internal::g_lastDuty01 = 0.0f;
     pwm_internal::g_initialized = true;
-
-    // 6) Overlat pinnen til GPT0B nå som timeren allerede går i lav tilstand.
-    pwm_internal::pwmPinMux_P106_GPT0B();
 
     return withinRange;
 }
@@ -123,58 +126,6 @@ void pwmDebugDump() {
     Serial.println(pwm_internal::g_initialized ? 1 : 0);
     Serial.print("PIN_D6 state=");
     Serial.println(digitalRead(PIN_D6));
-}
-
-static inline void pwmSetCounts(uint32_t cc) {
-    R_GPT0->GTCCR[1] = cc;
-}
-
-void pwmSelfTest() {
-    uint32_t period = static_cast<uint32_t>(R_GPT0->GTPR) + 1u;
-    auto setPct = [&](float p) {
-        if (p < 0.0f) {
-            p = 0.0f;
-        } else if (p > 1.0f) {
-            p = 1.0f;
-        }
-        double scaled = static_cast<double>(p) * static_cast<double>(period);
-        uint32_t cc = static_cast<uint32_t>(scaled);
-        if (cc == 0u) {
-            cc = 1u;
-        } else {
-            cc -= 1u;
-        }
-        pwmSetCounts(cc);
-        if (pwm_internal::g_outputEnabled == false) {
-            pwm_internal::pwmEnableOutput();
-        }
-        delay(300);
-    };
-
-    setPct(0.25f);
-    setPct(0.50f);
-    setPct(0.75f);
-    setPct(0.00f);
-    pwmSetDuty01(0.0f); // Sikre at vi avslutter i deaktivert, lav tilstand.
-}
-
-void pwmDebugDump() {
-    Serial.println("=== GPT0 DEBUG ===");
-    Serial.print("GTCR=0x");     Serial.println(static_cast<uint32_t>(R_GPT0->GTCR), HEX);
-    Serial.print("GTCR.CST=");   Serial.println(R_GPT0->GTCR_b.CST);
-    Serial.print("GTPR=");       Serial.println(static_cast<uint32_t>(R_GPT0->GTPR));
-    Serial.print("GTCNT=");      Serial.println(static_cast<uint32_t>(R_GPT0->GTCNT));
-    Serial.print("GTCCR[0]=");   Serial.println(static_cast<uint32_t>(R_GPT0->GTCCR[0]));
-    Serial.print("GTCCR[1]=");   Serial.println(static_cast<uint32_t>(R_GPT0->GTCCR[1]));
-    Serial.print("GTIOR=0x");    Serial.println(static_cast<uint32_t>(R_GPT0->GTIOR), HEX);
-    Serial.print("GTIOB enabled="); Serial.println(pwm_internal::g_outputEnabled ? 1 : 0);
-
-    R_PMISC->PWPR_b.B0WI = 0;
-    R_PMISC->PWPR_b.PFSWE = 1;
-    uint32_t pfs = R_PFS->PORT[1].PIN[6].PmnPFS;
-    R_PMISC->PWPR_b.PFSWE = 0;
-    R_PMISC->PWPR_b.B0WI = 1;
-    Serial.print("P106 PmnPFS=0x"); Serial.println(pfs, HEX);
 }
 
 PWMModule::PWMModule() {}

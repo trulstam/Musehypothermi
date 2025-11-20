@@ -6,9 +6,11 @@ import time
 
 from PySide6.QtCore import QObject, Signal
 
+
 class SerialManager(QObject):
     data_received = Signal(dict)
-    rx_line = Signal(str)
+    raw_line_received = Signal(str)
+    failsafe_triggered = Signal()
     tx_line = Signal(str)
 
     def __init__(self, port=None, baud=115200, heartbeat_interval=2, failsafe_timeout=5):
@@ -122,7 +124,7 @@ class SerialManager(QObject):
             try:
                 line = self.ser.readline().decode().strip()
                 try:
-                    self.rx_line.emit(line)
+                    self.raw_line_received.emit(line)
                 except Exception:
                     pass
                 print(f"⬇️ Received: {line}")
@@ -158,6 +160,10 @@ class SerialManager(QObject):
     def trigger_failsafe(self):
         self.failsafe_triggered = True
         print("🚨 Failsafe triggered! No data received in timeout period.")
+        try:
+            self.failsafe_triggered.emit()
+        except Exception:
+            pass
         self._queue_payload(
             {
                 "event": "Failsafe triggered (PC watchdog timeout)",

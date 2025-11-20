@@ -3,7 +3,14 @@ import os
 import json
 from datetime import datetime
 
+# All auto-generated timestamps use this canonical format.
 TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M:%S"
+
+
+def _now_ts():
+    """Return the current timestamp using TIMESTAMP_FORMAT."""
+
+    return datetime.now().strftime(TIMESTAMP_FORMAT)
 
 class EventLogger:
     def __init__(self, filename_prefix="events", metadata=None):
@@ -37,7 +44,7 @@ class EventLogger:
 
     def log_event(self, event):
         """Log an event with timestamp."""
-        now = datetime.now().strftime(TIMESTAMP_FORMAT)
+        now = _now_ts()
         try:
             self.csv_writer.writerow([now, event])
             self.csv_file.flush()
@@ -62,7 +69,7 @@ class EventLogger:
             print(f"❌ Failed to flush JSON log: {e}")
             try:
                 if self.csv_writer:
-                    self.csv_writer.writerow([datetime.now().strftime(TIMESTAMP_FORMAT), f"[JSON flush error] {e}"])
+                    self.csv_writer.writerow([_now_ts(), f"[JSON flush error] {e}"])
                     self.csv_file.flush()
             except:
                 pass

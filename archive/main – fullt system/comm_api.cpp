@@ -296,6 +296,13 @@ void CommAPI::sendStatus() {
 
     doc["autotune_active"]  = pid.isAutotuneActive();
     doc["autotune_status"]  = pid.getAutotuneStatus();
+    doc["autotune_phase"]   = pid.getAutotunePhase();
+    doc["autotune_progress"] = pid.getAutotuneProgress();
+
+    doc["pid_kp"] = pid.getKp();
+    doc["pid_ki"] = pid.getKi();
+    doc["pid_kd"] = pid.getKd();
+    doc["pid_max_output"] = pid.getMaxOutputPercent();
 
     serializeJson(doc, *serial);
     serial->println();

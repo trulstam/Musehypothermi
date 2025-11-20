@@ -831,7 +831,7 @@ class MainWindow(QMainWindow):
             self.autotune_in_progress = True
             self.autotuneButton.setVisible(False)
             self.abortAutotuneButton.setVisible(True)
-            self.autotuneStatusLabel.setText("Starting...")
+            self.autotuneStatusLabel.setText("Running…")
             self.log("🔄 Autotune starting...")
 
     def abort_autotune(self):
@@ -1143,19 +1143,42 @@ class MainWindow(QMainWindow):
 
             # Update autotune status
             if "autotune_active" in data:
-                is_active = data["autotune_active"]
+                was_active = getattr(self, "autotune_in_progress", False)
+                is_active = bool(data["autotune_active"])
                 self.autotune_in_progress = is_active
-                
+
                 if is_active:
                     self.autotuneButton.setVisible(False)
                     self.abortAutotuneButton.setVisible(True)
-                    status = data.get("autotune_status", "running")
-                    self.autotuneStatusLabel.setText(f"Active: {status}")
+                    progress = data.get("autotune_progress")
+                    phase = data.get("autotune_phase", "running")
+                    label = "Running…"
+                    if progress is not None:
+                        label += f" ({int(progress)}%)"
+                    label += f" [{phase}]"
+                    self.autotuneStatusLabel.setText(label)
                 else:
                     self.autotuneButton.setVisible(True)
                     self.abortAutotuneButton.setVisible(False)
-                    status = data.get("autotune_status", "idle")
-                    self.autotuneStatusLabel.setText(status.title())
+
+                    status = str(data.get("autotune_status", "idle"))
+
+                    if was_active:
+                        if status.lower() == "aborted":
+                            self.autotuneStatusLabel.setText("Aborted")
+                        else:
+                            self.autotuneStatusLabel.setText("Completed")
+                            self.event_logger.log_event("AUTOTUNE_COMPLETED")
+                            self.log("✅ Autotune completed", "success")
+
+                            if all(key in data for key in ["pid_kp", "pid_ki", "pid_kd"]):
+                                kp, ki, kd = data["pid_kp"], data["pid_ki"], data["pid_kd"]
+                                self.kpInput.setText(f"{kp:.3f}")
+                                self.kiInput.setText(f"{ki:.3f}")
+                                self.kdInput.setText(f"{kd:.3f}")
+                                self.pidParamsLabel.setText(f"Kp: {kp:.3f}, Ki: {ki:.3f}, Kd: {kd:.3f}")
+                    else:
+                        self.autotuneStatusLabel.setText(status.title())
 
             # Update profile status
             if "profile_active" in data:

@@ -4,6 +4,7 @@
 import csv
 import json
 import os
+from typing import Dict, List
 
 # Grenser for validering (justeres om nødvendig)
 TEMP_MIN = -10
@@ -11,127 +12,181 @@ TEMP_MAX = 50
 RAMP_MIN = 0
 TIME_MIN = 0
 
+
 class ProfileLoader:
     def __init__(self, event_logger=None):
-        self.profile = []
+        self.profile: List[Dict] = []
         self.event_logger = event_logger
 
-    def load_profile_csv(self, filepath):
-        """Load temperature profile from a CSV file."""
-        self.profile.clear()
+    def load_profile(self, filepath: str) -> List[Dict]:
+        """
+        Load and validate a profile file (CSV or JSON).
 
-        try:
-            with open(filepath, "r") as file:
-                reader = csv.reader(file)
-                for idx, row in enumerate(reader):
-                    if not row or row[0].strip().startswith("#"):
-                        continue  # Hopp over kommentarer eller tomme linjer
+        Returns a list of normalized profile steps with ``time_min`` and ``temp_c``
+        fields. Optional keys include ``ramp_min`` and ``plate_target`` when
+        derived from controller-ready step definitions.
+        """
 
-                    if len(row) < 3:
-                        print(f"⚠️ Skipping line {idx + 1}: Insufficient columns.")
-                        continue
+        if not os.path.isfile(filepath):
+            raise FileNotFoundError(f"Profile file does not exist: {filepath}")
 
-                    try:
-                        time_min = float(row[0].strip())
-                        temp_c = float(row[1].strip())
-                        ramp_min = float(row[2].strip())
+        extension = os.path.splitext(filepath)[1].lower()
+        if extension == ".csv":
+            profile_data = self._load_profile_csv(filepath)
+        elif extension == ".json":
+            profile_data = self._load_profile_json(filepath)
+        else:
+            raise ValueError("Unsupported profile format. Use CSV or JSON.")
 
-                        self._validate_entry(idx, time_min, temp_c, ramp_min)
+        self.profile = profile_data
 
-                        self.profile.append({
-                            "time_min": time_min,
-                            "temp_c": temp_c,
-                            "ramp_min": ramp_min
-                        })
+        if self.event_logger:
+            filename = os.path.basename(filepath)
+            self.event_logger.log_event(
+                f"PROFILE_LOADED file={filename} steps={len(self.profile)}"
+            )
 
-                    except ValueError as ve:
-                        print(f"⚠️ Validation error at line {idx + 1}: {ve}")
+        return self.profile
 
-            msg = f"✅ CSV profile loaded: {filepath}"
-            print(msg)
-            if self.event_logger:
-                self.event_logger.log_event(msg)
-            return True
+    def _load_profile_csv(self, filepath: str) -> List[Dict]:
+        """Load and normalize a temperature profile from a CSV file."""
+        profile_data: List[Dict] = []
 
-        except Exception as e:
-            err = f"❌ Failed to load CSV profile '{filepath}': {e}"
-            print(err)
-            if self.event_logger:
-                self.event_logger.log_event(err)
-            return False
+        with open(filepath, "r", encoding="utf-8") as file:
+            reader = csv.reader(file)
+            for idx, row in enumerate(reader):
+                if not row or row[0].strip().startswith("#"):
+                    continue  # Hopp over kommentarer eller tomme linjer
 
-    def load_profile_json(self, filepath):
-        """Load temperature profile from a JSON file."""
-        self.profile.clear()
+                if len(row) < 2:
+                    raise ValueError(f"Line {idx + 1} must include time and temperature")
 
-        try:
-            with open(filepath, "r") as file:
-                data = json.load(file)
+                time_min = float(row[0].strip())
+                temp_c = float(row[1].strip())
+                ramp_min = float(row[2].strip()) if len(row) > 2 else 0.0
 
-                if not isinstance(data, list):
-                    raise ValueError("Profile JSON must contain a list of steps")
+                self._validate_entry(idx, time_min, temp_c, ramp_min)
 
-                for idx, entry in enumerate(data):
-                    if not isinstance(entry, dict):
-                        raise ValueError(f"Entry {idx + 1} must be an object")
+                profile_data.append(
+                    {
+                        "time_min": time_min,
+                        "temp_c": temp_c,
+                        "ramp_min": ramp_min,
+                    }
+                )
 
-                    try:
-                        if {"time_min", "temp_c"}.intersection(entry.keys()):
-                            time_min = float(entry.get("time_min"))
-                            temp_c = float(entry.get("temp_c"))
-                            ramp_min = float(entry.get("ramp_min", 0))
+        if not profile_data:
+            raise ValueError("CSV file did not contain any profile rows")
 
-                            self._validate_entry(idx, time_min, temp_c, ramp_min)
+        return profile_data
 
-                            self.profile.append({
-                                "time_min": time_min,
-                                "temp_c": temp_c,
-                                "ramp_min": ramp_min
-                            })
-                        else:
-                            plate_start = float(entry.get("plate_start_temp"))
-                            plate_end = float(entry.get("plate_end_temp"))
-                            ramp_time_ms = float(entry.get("ramp_time_ms", 0))
-                            total_time_ms = float(entry.get("total_step_time_ms"))
-                            rectal_target = entry.get("rectal_override_target", -1000)
-                            rectal_target = (
-                                float(rectal_target)
-                                if rectal_target is not None
-                                else -1000.0
-                            )
+    def _load_profile_json(self, filepath: str) -> List[Dict]:
+        """Load and normalize a temperature profile from a JSON file."""
+        with open(filepath, "r", encoding="utf-8") as file:
+            data = json.load(file)
 
-                            self._validate_step_entry(
-                                idx,
-                                plate_start,
-                                plate_end,
-                                ramp_time_ms,
-                                total_time_ms,
-                                rectal_target,
-                            )
+        if not isinstance(data, list):
+            raise ValueError("Profile JSON must contain a list of steps")
 
-                            self.profile.append({
-                                "plate_start_temp": plate_start,
-                                "plate_end_temp": plate_end,
-                                "ramp_time_ms": ramp_time_ms,
-                                "total_step_time_ms": total_time_ms,
-                                "rectal_override_target": rectal_target,
-                            })
+        if not data:
+            raise ValueError("JSON profile is empty")
 
-                    except (TypeError, ValueError) as ve:
-                        raise ValueError(f"Invalid value in entry {idx + 1}: {ve}") from ve
+        # Detect controller-ready structure (plate_* fields) and convert to
+        # timeline points. Otherwise, accept time-based entries directly.
+        controller_keys = {"plate_start_temp", "plate_end_temp", "total_step_time_ms"}
+        profile_data: List[Dict] = []
 
-            msg = f"✅ JSON profile loaded: {filepath}"
-            print(msg)
-            if self.event_logger:
-                self.event_logger.log_event(msg)
-            return True
+        if controller_keys.issubset(data[0].keys() if isinstance(data[0], dict) else {}):
+            profile_data = self._convert_controller_steps_to_points(data)
+        else:
+            for idx, entry in enumerate(data):
+                if not isinstance(entry, dict):
+                    raise ValueError(f"Entry {idx + 1} must be an object")
 
-        except Exception as e:
-            err = f"❌ Failed to load JSON profile '{filepath}': {e}"
-            print(err)
-            if self.event_logger:
-                self.event_logger.log_event(err)
-            return False
+                if "time_min" not in entry or "temp_c" not in entry:
+                    raise ValueError(
+                        f"Entry {idx + 1} must include 'time_min' and 'temp_c'"
+                    )
+
+                time_min = float(entry.get("time_min"))
+                temp_c = float(entry.get("temp_c"))
+                ramp_min = float(entry.get("ramp_min", 0))
+
+                self._validate_entry(idx, time_min, temp_c, ramp_min)
+
+                point = {
+                    "time_min": time_min,
+                    "temp_c": temp_c,
+                }
+
+                if ramp_min:
+                    point["ramp_min"] = ramp_min
+
+                if "plate_target" in entry:
+                    point["plate_target"] = float(entry["plate_target"])
+
+                profile_data.append(point)
+
+        return profile_data
+
+    def _convert_controller_steps_to_points(self, steps: List[Dict]) -> List[Dict]:
+        """
+        Convert controller-ready steps to normalized profile points.
+
+        The resulting timeline starts at t=0 with the first ``plate_start_temp``
+        and adds an entry at the end of each step using ``plate_end_temp``.
+        """
+
+        profile_data: List[Dict] = []
+        cumulative_time_min = 0.0
+
+        for idx, entry in enumerate(steps):
+            if not isinstance(entry, dict):
+                raise ValueError(f"Entry {idx + 1} must be an object")
+
+            plate_start = float(entry.get("plate_start_temp"))
+            plate_end = float(entry.get("plate_end_temp"))
+            ramp_time_ms = float(entry.get("ramp_time_ms", 0))
+            total_time_ms = float(entry.get("total_step_time_ms"))
+            rectal_target = entry.get("rectal_override_target", -1000)
+            rectal_target = float(rectal_target) if rectal_target is not None else -1000.0
+
+            self._validate_step_entry(
+                idx,
+                plate_start,
+                plate_end,
+                ramp_time_ms,
+                total_time_ms,
+                rectal_target,
+            )
+
+            if not profile_data:
+                # First point uses the starting plate temperature.
+                self._validate_entry(idx, cumulative_time_min, plate_start, 0)
+                profile_data.append(
+                    {
+                        "time_min": cumulative_time_min,
+                        "temp_c": plate_start,
+                        "ramp_min": 0.0,
+                    }
+                )
+
+            total_time_min = total_time_ms / 60000.0
+            ramp_min = ramp_time_ms / 60000.0
+            cumulative_time_min += total_time_min
+
+            self._validate_entry(idx, cumulative_time_min, plate_end, ramp_min)
+
+            profile_data.append(
+                {
+                    "time_min": cumulative_time_min,
+                    "temp_c": plate_end,
+                    "ramp_min": ramp_min,
+                    "plate_target": plate_end,
+                }
+            )
+
+        return profile_data
 
     def export_profile_csv(self, filepath, metadata=None):
         """Export current profile to CSV."""

@@ -21,6 +21,8 @@ public:
     void sendEvent(const String &eventMessage);
     void saveAllToEEPROM();                    // Kalles ved "save_eeprom"
 
+    void sendFailsafeStatus();                 // Eksplisitt failsafe-status
+
 private:
     void handleCommand(const String &jsonString);
     void parseProfile(JsonArray arr);

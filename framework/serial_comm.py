@@ -26,7 +26,7 @@ class SerialManager(QObject):
         self.keep_running = False
         self.last_heartbeat_time = time.time()
         self.last_data_time = time.time()
-        self.failsafe_triggered = False
+        self.failsafe_triggered_flag = False
         self.latest_data = None
         self._on_data_received = None
 
@@ -63,7 +63,7 @@ class SerialManager(QObject):
         # Reset watchdog timers so we don't immediately trigger failsafe
         self.last_heartbeat_time = time.time()
         self.last_data_time = self.last_heartbeat_time
-        self.failsafe_triggered = False
+        self.failsafe_triggered_flag = False
         self.latest_data = None
 
         self.read_thread = threading.Thread(target=self.read_serial_loop, daemon=True)
@@ -110,6 +110,8 @@ class SerialManager(QObject):
 
     def sendCMD(self, action, state):
         cmd = {"CMD": {"action": action, "state": state}}
+        if action == "failsafe" and state == "clear":
+            self.failsafe_triggered_flag = False
         self.send(json.dumps(cmd))
 
     def sendSET(self, variable, value):
@@ -146,7 +148,7 @@ class SerialManager(QObject):
                     print(f"⚠️ JSON decode error: {e} → Line: {line}")
 
             if (time.time() - self.last_data_time > self.failsafe_timeout and
-                not self.failsafe_triggered):
+                not self.failsafe_triggered_flag):
                 self.trigger_failsafe()
 
             time.sleep(0.05)
@@ -158,7 +160,7 @@ class SerialManager(QObject):
             time.sleep(self.heartbeat_interval)
 
     def trigger_failsafe(self):
-        self.failsafe_triggered = True
+        self.failsafe_triggered_flag = True
         print("🚨 Failsafe triggered! No data received in timeout period.")
         try:
             self.failsafe_triggered.emit()
@@ -186,5 +188,5 @@ class SerialManager(QObject):
             return
         self.last_data_time = time.time()
         if reset_failsafe:
-            self.failsafe_triggered = False
+            self.failsafe_triggered_flag = False
         self.data_received.emit(dict(payload))

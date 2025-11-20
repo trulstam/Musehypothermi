@@ -113,7 +113,23 @@ void CommAPI::handleCommand(const String &jsonString) {
                 sendResponse("Unknown profile state");
             }
 
+        } else if (action == "failsafe") {
+            if (state == "clear") {
+                if (isFailsafeActive()) {
+                    clearFailsafe();
+                    sendResponse("Failsafe cleared");
+                    sendEvent("\u2705 Failsafe manually cleared via GUI");
+                } else {
+                    sendResponse("Failsafe not active");
+                }
+            } else if (state == "status") {
+                sendFailsafeStatus();
+            } else {
+                sendResponse("Unknown failsafe command");
+            }
+
         } else if (action == "failsafe_clear") {
+            // Legacy compatibility
             if (isFailsafeActive()) {
                 clearFailsafe();
                 sendResponse("Failsafe cleared");
@@ -407,6 +423,14 @@ void CommAPI::sendData() {
     doc["pid_cooling_kd"] = pid.getCoolingKd();
     doc["equilibrium_temp"] = pid.getEquilibriumTemp();
     doc["equilibrium_valid"] = pid.isEquilibriumValid();
+    serializeJson(doc, *serial);
+    serial->println();
+}
+
+void CommAPI::sendFailsafeStatus() {
+    StaticJsonDocument<256> doc;
+    doc["failsafe_active"] = isFailsafeActive();
+    doc["failsafe_reason"] = getFailsafeReason();
     serializeJson(doc, *serial);
     serial->println();
 }

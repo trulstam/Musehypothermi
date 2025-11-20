@@ -98,13 +98,17 @@ void CommAPI::handleCommand(const String &jsonString) {
                 sendResponse("Profile started");
                 sendEvent("Profile started");
             } else if (state == "pause") {
-                profileManager.pause(); sendResponse("Profile paused");
+                profileManager.pause();
+                sendResponse("Profile paused");
+                sendEvent("Profile paused");
             } else if (state == "resume") {
-                profileManager.resume(); sendResponse("Profile resumed");
+                profileManager.resume();
+                sendResponse("Profile resumed");
+                sendEvent("Profile resumed");
             } else if (state == "stop") {
                 profileManager.stop();
                 sendResponse("Profile stopped");
-                sendEvent("Profile completed");
+                sendEvent("Profile stopped");
             } else {
                 sendResponse("Unknown profile state");
             }

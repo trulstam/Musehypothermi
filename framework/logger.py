@@ -6,7 +6,14 @@ import os
 import json
 from datetime import datetime
 
+# All auto-generated timestamps use this canonical format.
 TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M:%S"
+
+
+def _now_ts():
+    """Return the current timestamp using TIMESTAMP_FORMAT."""
+
+    return datetime.now().strftime(TIMESTAMP_FORMAT)
 
 class Logger:
     def __init__(self, filename_prefix="experiment", metadata=None):
@@ -40,7 +47,7 @@ class Logger:
         print(f"✅ JSON logging to {self.filename_json}")
 
     def log_data(self, data):
-        timestamp = data.get("timestamp", datetime.now().strftime(TIMESTAMP_FORMAT))
+        timestamp = data.get("timestamp", _now_ts())
 
         row = [
             timestamp,
@@ -67,7 +74,7 @@ class Logger:
         print(f"📥 Logged data at {timestamp}")
 
     def log_comment(self, comment):
-        now = datetime.now().strftime(TIMESTAMP_FORMAT)
+        now = _now_ts()
         row = [now, "", "", "", "", comment]
 
         self.csv_writer.writerow(row)
@@ -81,7 +88,7 @@ class Logger:
         print(f"💬 Logged comment: {comment}")
 
     def log_event(self, event):
-        now = datetime.now().strftime(TIMESTAMP_FORMAT)
+        now = _now_ts()
         message = f"EVENT: {event}"
 
         self.csv_writer.writerow([now, "", "", "", "", message])

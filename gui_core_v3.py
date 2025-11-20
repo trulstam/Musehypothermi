@@ -2155,6 +2155,8 @@ class MainWindow(QMainWindow):
         self.pid_mode: Optional[str] = None
         self.pid_running: bool = False
         self.last_status_data: Dict[str, Any] = {}
+        self.serial_monitor_lines: List[str] = []
+        self.serial_monitor_max_lines = 500
 
         print("✅ Data structures initialized")
 
@@ -2176,6 +2178,7 @@ class MainWindow(QMainWindow):
             self.create_monitoring_tab()
             self.create_autotune_tab()
             self.create_profile_tab()
+            self.create_serial_monitor_tab()
             
             # ============================================================================
             print("✅ UI initialized")
@@ -2711,12 +2714,50 @@ class MainWindow(QMainWindow):
         self.tab_widget.addTab(profile_widget, "📄 Profile")
         self._update_profile_button_states()
 
+    def create_serial_monitor_tab(self):
+        """Create serial monitor tab to display raw TX/RX lines."""
+
+        monitor_widget = QWidget()
+        monitor_layout = QVBoxLayout()
+        monitor_widget.setLayout(monitor_layout)
+
+        controls_layout = QHBoxLayout()
+        self.serialMonitorClearButton = QPushButton("🧹 Clear")
+        self.serialMonitorClearButton.clicked.connect(self.clear_serial_monitor)
+        self.serialMonitorAutoScroll = QCheckBox("📜 Auto-scroll")
+        self.serialMonitorAutoScroll.setChecked(True)
+        controls_layout.addWidget(self.serialMonitorClearButton)
+        controls_layout.addWidget(self.serialMonitorAutoScroll)
+        controls_layout.addStretch()
+
+        self.serialMonitorLog = QTextEdit()
+        self.serialMonitorLog.setReadOnly(True)
+        self.serialMonitorLog.setFont(QFont("Courier New", 9))
+        self.serialMonitorLog.setStyleSheet(
+            """
+            QTextEdit {
+                background-color: #0b132b;
+                color: #f8f9fa;
+                border: 1px solid #1c2541;
+                border-radius: 6px;
+                padding: 8px;
+            }
+        """
+        )
+
+        monitor_layout.addLayout(controls_layout)
+        monitor_layout.addWidget(self.serialMonitorLog)
+
+        self.tab_widget.addTab(monitor_widget, "🛰️ Serial Monitor")
+
     def init_managers(self):
         """Initialize managers"""
         try:
             # Serial manager
             self.serial_manager = SerialManager()
             self.serial_manager.on_data_received = self.process_incoming_data
+            self.serial_manager.rx_line.connect(lambda line: self.on_serial_line("RX", line))
+            self.serial_manager.tx_line.connect(lambda line: self.on_serial_line("TX", line))
             print("✅ SerialManager initialized")
 
             # Event logger
@@ -2802,6 +2843,39 @@ class MainWindow(QMainWindow):
                 
         except Exception as e:
             self.log(f"❌ Data processing error: {e}", "error")
+
+    def on_serial_line(self, direction: str, line: str):
+        """Append raw TX/RX serial lines to the Serial Monitor tab."""
+
+        try:
+            if not hasattr(self, "serialMonitorLog"):
+                return
+
+            timestamp = time.strftime("%H:%M:%S")
+            color = "#0d6efd" if direction.upper() == "TX" else "#198754"
+            formatted = (
+                f'<span style="color: {color}; font-weight: bold;">'
+                f"[{timestamp}] {direction.upper()}</span> {line}"
+            )
+
+            self.serial_monitor_lines.append(formatted)
+            if len(self.serial_monitor_lines) > self.serial_monitor_max_lines:
+                self.serial_monitor_lines = self.serial_monitor_lines[-self.serial_monitor_max_lines :]
+
+            self.serialMonitorLog.setHtml("<br>".join(self.serial_monitor_lines))
+            if self.serialMonitorAutoScroll.isChecked():
+                scrollbar = self.serialMonitorLog.verticalScrollBar()
+                scrollbar.setValue(scrollbar.maximum())
+
+        except Exception as e:
+            print(f"Serial monitor error: {e}")
+
+    def clear_serial_monitor(self):
+        """Clear Serial Monitor history and display."""
+
+        self.serial_monitor_lines.clear()
+        if hasattr(self, "serialMonitorLog"):
+            self.serialMonitorLog.clear()
 
     def update_live_displays(self, data: Dict[str, Any]):
         """Update live data displays"""

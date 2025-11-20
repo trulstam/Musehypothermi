@@ -8,6 +8,8 @@ from PySide6.QtCore import QObject, Signal
 
 class SerialManager(QObject):
     data_received = Signal(dict)
+    rx_line = Signal(str)
+    tx_line = Signal(str)
 
     def __init__(self, port=None, baud=115200, heartbeat_interval=2, failsafe_timeout=5):
         super().__init__()
@@ -96,6 +98,10 @@ class SerialManager(QObject):
         try:
             json_cmd = message + "\n"
             self.ser.write(json_cmd.encode())
+            try:
+                self.tx_line.emit(json_cmd.strip())
+            except Exception:
+                pass
             print(f"➡️ Sent: {json_cmd.strip()}")
         except Exception as e:
             print(f"⚠️ Failed to send: {e}")
@@ -115,6 +121,10 @@ class SerialManager(QObject):
         if self.ser.in_waiting:
             try:
                 line = self.ser.readline().decode().strip()
+                try:
+                    self.rx_line.emit(line)
+                except Exception:
+                    pass
                 print(f"⬇️ Received: {line}")
                 self.last_data_time = time.time()
                 return line

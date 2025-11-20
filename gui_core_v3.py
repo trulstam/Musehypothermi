@@ -2142,6 +2142,7 @@ class MainWindow(QMainWindow):
         self.last_cooling_limit = 35.0
         self.last_equilibrium_temp: Optional[float] = None
         self.last_equilibrium_valid: bool = False
+        self.pc_failsafe_dialog_shown = False
         self.profile_data = []
         self.profile_steps = []
         self.profile_ready = False
@@ -2757,9 +2758,12 @@ class MainWindow(QMainWindow):
         try:
             # Serial manager
             self.serial_manager = SerialManager()
-            self.serial_manager.on_data_received = self.process_incoming_data
-            self.serial_manager.rx_line.connect(lambda line: self.on_serial_line("RX", line))
+            self.serial_manager.data_received.connect(self.process_incoming_data)
+            self.serial_manager.raw_line_received.connect(
+                lambda line: self.on_serial_line("RX", line)
+            )
             self.serial_manager.tx_line.connect(lambda line: self.on_serial_line("TX", line))
+            self.serial_manager.failsafe_triggered.connect(self.on_pc_failsafe_triggered)
             print("✅ SerialManager initialized")
 
             # Event logger
@@ -2932,6 +2936,30 @@ class MainWindow(QMainWindow):
         if hasattr(self, "serialMonitorLog"):
             self.serialMonitorLog.clear()
 
+    def on_pc_failsafe_triggered(self):
+        """Handle PC-side failsafe activation in the GUI thread."""
+
+        try:
+            self.failsafeIndicator.setText("🔴 FAILSAFE: pc_watchdog")
+            self.failsafeIndicator.setStyleSheet("color: #dc3545; font-weight: bold;")
+
+            if hasattr(self, "emergencyStateValue"):
+                self.emergencyStateValue.setText("🚨 pc_watchdog")
+                self.emergencyStateValue.setStyleSheet(
+                    "font-weight: bold; color: #dc3545;"
+                )
+
+            if not self.pc_failsafe_dialog_shown:
+                QMessageBox.warning(
+                    self,
+                    "Failsafe triggered",
+                    "PC watchdog timeout detected. System moved to failsafe.",
+                )
+                self.pc_failsafe_dialog_shown = True
+
+        except Exception as e:
+            print(f"Failsafe handler error: {e}")
+
     def update_live_displays(self, data: Dict[str, Any]):
         """Update live data displays"""
         try:
@@ -3022,6 +3050,7 @@ class MainWindow(QMainWindow):
                     if hasattr(self, "emergencyStateValue"):
                         self.emergencyStateValue.setText("✅ Clear")
                         self.emergencyStateValue.setStyleSheet("font-weight: bold; color: #28a745;")
+                    self.pc_failsafe_dialog_shown = False
 
             mode_value = None
             if "pid_mode" in data:

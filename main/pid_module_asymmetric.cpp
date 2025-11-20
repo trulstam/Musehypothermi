@@ -30,6 +30,9 @@ constexpr float kDefaultSafetyMargin = 2.0f;
 constexpr float kDefaultCoolingRate = 2.0f;
 constexpr double kOutputSmoothingFactor = 0.8;
 constexpr unsigned long kSampleTimeMs = 100;
+constexpr double kDefaultEquilibriumEpsilon = 0.02;
+constexpr unsigned long kDefaultEquilibriumStableMs = 60000;
+constexpr double kDefaultFeedforwardGain = 15.0;
 
 constexpr float kHeatingKpMin = 0.05f;
 constexpr float kHeatingKpMax = 40.0f;
@@ -296,7 +299,10 @@ AsymmetricPIDModule::AsymmetricPIDModule()
       maxCoolingRate(kDefaultCoolingRate), lastUpdateTime(0),
       lastTemperature(0.0), temperatureRate(0.0),
       outputSmoothingFactor(kOutputSmoothingFactor), lastOutput(0.0),
-      eeprom(nullptr) {
+      eeprom(nullptr), equilibriumTemp(0.0), equilibriumValid(false),
+      equilibriumTimestamp(0), equilibriumEpsilon(kDefaultEquilibriumEpsilon),
+      equilibriumMinStableMs(kDefaultEquilibriumStableMs), lastEquilibriumCheckTemp(0.0),
+      lastEquilibriumCheckMillis(0), kff(kDefaultFeedforwardGain) {
 
     // Initialize default parameters
     currentParams.kp_cooling = kDefaultCoolingKp;
@@ -368,6 +374,10 @@ void AsymmetricPIDModule::update(double /*currentTemp*/) {
     lastUpdateTime = now;
     lastTemperature = Input;
 
+    if (!autotuneActive) {
+        updateEquilibriumEstimate();
+    }
+
     if (temperatureRate < -maxCoolingRate) {
         setEmergencyStop(true);
         comm.sendEvent("🚨 Cooling rate exceeded safety limit");
@@ -388,6 +398,8 @@ void AsymmetricPIDModule::update(double /*currentTemp*/) {
         heatingPID.Compute();
         rawPIDOutput = heatingOutput;
     }
+
+    rawPIDOutput += computeFeedforward();
 
     applySafetyConstraints();
     applyRateLimiting();
@@ -500,6 +512,66 @@ void AsymmetricPIDModule::resetOutputState() {
     lastOutput = 0.0;
     pwm.setDutyCycle(0);
     currentPwmOutput = 0;
+}
+
+void AsymmetricPIDModule::updateEquilibriumEstimate() {
+    int pwmMax = MAX_PWM * (getMaxOutputPercent() / 100.0f);
+    if (fabs(finalOutput) > 0.05 * pwmMax) {
+        lastEquilibriumCheckMillis = 0;
+        return;
+    }
+
+    unsigned long now = millis();
+    if (lastEquilibriumCheckMillis == 0) {
+        lastEquilibriumCheckMillis = now;
+        lastEquilibriumCheckTemp = Input;
+        equilibriumTimestamp = now;
+        return;
+    }
+
+    double deltaT = Input - lastEquilibriumCheckTemp;
+    double deltaTime = static_cast<double>(now - lastEquilibriumCheckMillis) / 1000.0;
+    if (deltaTime <= 0.0) {
+        return;
+    }
+
+    double slope = deltaT / deltaTime;
+    bool stable = fabs(slope) < equilibriumEpsilon;
+
+    lastEquilibriumCheckTemp = Input;
+    lastEquilibriumCheckMillis = now;
+
+    if (!stable) {
+        equilibriumTimestamp = now;
+        return;
+    }
+
+    if (equilibriumTimestamp == 0) {
+        equilibriumTimestamp = now;
+    }
+
+    if (now - equilibriumTimestamp >= equilibriumMinStableMs) {
+        equilibriumTemp = Input;
+        equilibriumValid = true;
+    }
+}
+
+double AsymmetricPIDModule::computeFeedforward() {
+    if (!equilibriumValid) {
+        return 0.0;
+    }
+
+    double delta = Setpoint - equilibriumTemp;
+    double ff = kff * delta;
+
+    double limit = std::max(fabs(static_cast<double>(currentParams.heating_limit)),
+                            fabs(static_cast<double>(currentParams.cooling_limit)));
+    if (limit <= 0.0) {
+        return 0.0;
+    }
+
+    ff = constrain(ff, -limit, limit);
+    return ff;
 }
 
 // --- Compatibility-style getters (preserve existing API) ---

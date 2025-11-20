@@ -78,6 +78,8 @@ public:
     float getCoolingOutputLimit() const {
         return currentParams.cooling_limit < 0 ? -currentParams.cooling_limit : currentParams.cooling_limit;
     }
+    float getEquilibriumTemp() const { return static_cast<float>(equilibriumTemp); }
+    bool isEquilibriumValid() const { return equilibriumValid; }
 
     // Compatibility setters
     void setTargetTemp(float value) { Setpoint = value; }
@@ -149,6 +151,8 @@ private:
     void applyRateLimiting();
     void applyOutputSmoothing();
     void resetOutputState();
+    void updateEquilibriumEstimate();
+    double computeFeedforward();
 
     // PID switching logic
     void updatePIDMode(double error);
@@ -198,6 +202,16 @@ private:
     bool autotuneCoolingEnabled;
     unsigned long phaseStartMillis;
     AutotuneMode autotuneMode;
+
+    // Equilibrium tracking
+    double equilibriumTemp;
+    bool equilibriumValid;
+    unsigned long equilibriumTimestamp;
+    double equilibriumEpsilon;
+    unsigned long equilibriumMinStableMs;
+    double lastEquilibriumCheckTemp;
+    unsigned long lastEquilibriumCheckMillis;
+    double kff;
 
     void resetAutotuneState();
     void applyManualOutputPercent(float percent);

@@ -35,6 +35,7 @@ from matplotlib.figure import Figure
 from framework.serial_comm import SerialManager
 from framework.event_logger import EventLogger
 from framework.profile_loader import ProfileLoader
+from framework.logger import Logger
 
 # ============================================================================
 # 1. ADD THIS NEW CLASS BEFORE THE MatplotlibGraphWidget CLASS
@@ -2132,6 +2133,7 @@ class MainWindow(QMainWindow):
         }
 
         self.connection_established = False
+        self.data_logger: Optional[Logger] = None
         self.start_time = None
         self.max_graph_points = 200
         self.data_update_count = 0
@@ -2782,11 +2784,47 @@ class MainWindow(QMainWindow):
             self.refresh_ports()
             
             print("✅ All managers initialized")
-            
+
         except Exception as e:
             print(f"❌ Manager initialization error: {e}")
 
     # ====== CORE FUNCTIONALITY ======
+
+    def _start_data_logger(self):
+        """Start a new data logger for experiment runs."""
+        if not self.connection_established:
+            return
+
+        try:
+            if self.data_logger is not None:
+                try:
+                    self.data_logger.close()
+                except Exception:
+                    pass
+
+            self.data_logger = Logger("gui_experiment")
+            self.log("📝 Data logger started", "info")
+        except Exception as exc:
+            self.data_logger = None
+            self.log(f"❌ Could not start data logger: {exc}", "error")
+
+    def _stop_data_logger(self):
+        """Close and clear the active data logger."""
+        if self.data_logger is None:
+            return
+
+        try:
+            self.data_logger.close()
+            self.log("🛑 Data logger stopped", "info")
+        except Exception as exc:
+            self.log(f"⚠️ Error while stopping data logger: {exc}", "warning")
+        finally:
+            self.data_logger = None
+
+    @staticmethod
+    def _has_sensor_payload(data: Dict[str, Any]) -> bool:
+        sensor_keys = {"cooling_plate_temp", "anal_probe_temp", "pid_output", "breath_freq_bpm"}
+        return any(key in data for key in sensor_keys)
 
     def send_and_log_cmd(self, action: str, state: str) -> bool:
         """Send command with error handling"""
@@ -2794,12 +2832,18 @@ class MainWindow(QMainWindow):
             if not self.connection_established:
                 self.log("❌ Not connected", "error")
                 return False
-                
+
             self.serial_manager.sendCMD(action, state)
             self.event_logger.log_event(f"CMD: {action} → {state}")
             self.log(f"📡 Sent: {action} = {state}", "command")
+
+            if action == "pid" and state == "start":
+                self._start_data_logger()
+            elif action == "pid" and state == "stop":
+                self._stop_data_logger()
+
             return True
-            
+
         except Exception as e:
             self.log(f"❌ Command error: {e}", "error")
             return False
@@ -2811,7 +2855,14 @@ class MainWindow(QMainWindow):
 
         try:
             self.data_update_count += 1
-            
+
+            has_sensor_data = self._has_sensor_payload(data)
+            if has_sensor_data and self.connection_established:
+                if self.data_logger is None:
+                    self._start_data_logger()
+                if self.data_logger is not None:
+                    self.data_logger.log_data(data)
+
             # Update live displays
             self.update_live_displays(data)
             
@@ -3904,6 +3955,7 @@ class MainWindow(QMainWindow):
             if self.serial_manager.is_connected():
                 # Disconnect
                 self.serial_manager.disconnect()
+                self._stop_data_logger()
                 self.connectButton.setText("Connect")
                 self.connectionStatusLabel.setText("❌ Disconnected")
                 self.connectionStatusLabel.setStyleSheet("color: red; font-weight: bold;")
@@ -4030,7 +4082,9 @@ class MainWindow(QMainWindow):
             # Disconnect serial
             if self.serial_manager.is_connected():
                 self.serial_manager.disconnect()
-            
+
+            self._stop_data_logger()
+
             # Close loggers
             try:
                 self.event_logger.close()

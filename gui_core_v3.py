@@ -2802,7 +2802,11 @@ class MainWindow(QMainWindow):
                 except Exception:
                     pass
 
-            self.data_logger = Logger("gui_experiment")
+            metadata = {
+                "port": getattr(self.serial_manager, "port", "unknown"),
+                "session_start": time.strftime("%Y-%m-%d %H:%M:%S"),
+            }
+            self.data_logger = Logger("gui_experiment", metadata=metadata)
             self.log("📝 Data logger started", "info")
         except Exception as exc:
             self.data_logger = None

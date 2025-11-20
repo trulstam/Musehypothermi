@@ -406,6 +406,8 @@ void CommAPI::sendData() {
     doc["pid_cooling_kp"] = pid.getCoolingKp();
     doc["pid_cooling_ki"] = pid.getCoolingKi();
     doc["pid_cooling_kd"] = pid.getCoolingKd();
+    doc["equilibrium_temp"] = pid.getEquilibriumTemp();
+    doc["equilibrium_valid"] = pid.isEquilibriumValid();
     serializeJson(doc, *serial);
     serial->println();
 }
@@ -429,6 +431,8 @@ void CommAPI::sendStatus() {
     doc["emergency_stop"] = pid.isEmergencyStop();
     doc["temperature_rate"] = pid.getTemperatureRate();
     doc["asymmetric_autotune_active"] = pid.isAutotuneActive();
+    doc["equilibrium_temp"] = pid.getEquilibriumTemp();
+    doc["equilibrium_valid"] = pid.isEquilibriumValid();
     doc["pid_max_output"] = pid.getMaxOutputPercent();
     doc["pid_heating_limit"] = pid.getHeatingOutputLimit();
     doc["pid_cooling_limit"] = pid.getCoolingOutputLimit();

@@ -2138,6 +2138,8 @@ class MainWindow(QMainWindow):
         self.graph_update_count = 0
         self.last_heating_limit = 35.0
         self.last_cooling_limit = 35.0
+        self.last_equilibrium_temp: Optional[float] = None
+        self.last_equilibrium_valid: bool = False
         self.profile_data = []
         self.profile_steps = []
         self.profile_ready = False
@@ -2265,6 +2267,10 @@ class MainWindow(QMainWindow):
         self.pidStatusIndicator = QLabel("⚫ PID Off")
         self.pidStatusIndicator.setStyleSheet("color: gray; font-weight: bold;")
         status_row.addWidget(self.pidStatusIndicator)
+
+        self.equilibriumLabel = QLabel("Equilibrium: --")
+        self.equilibriumLabel.setStyleSheet("color: #555; font-weight: bold;")
+        status_row.addWidget(self.equilibriumLabel)
         
         status_row.addStretch()
         
@@ -2904,6 +2910,23 @@ class MainWindow(QMainWindow):
                 else:
                     self.pidStatusIndicator.setText("⚫ PID Off")
                     self.pidStatusIndicator.setStyleSheet("color: #6c757d; font-weight: bold;")
+
+            if "equilibrium_valid" in data:
+                valid = bool(data.get("equilibrium_valid", False))
+                if valid and "equilibrium_temp" in data:
+                    temp = float(data["equilibrium_temp"])
+                    self.equilibriumLabel.setText(f"Equilibrium: {temp:.2f}°C")
+                    self.equilibriumLabel.setStyleSheet("color: #1e7e34; font-weight: bold;")
+                    if (not self.last_equilibrium_valid) or (
+                        self.last_equilibrium_temp is None or abs(self.last_equilibrium_temp - temp) > 0.05
+                    ):
+                        self.log(f"♒︎ Nytt equilibrium estimert: {temp:.2f}°C", "info")
+                    self.last_equilibrium_temp = temp
+                    self.last_equilibrium_valid = True
+                else:
+                    self.equilibriumLabel.setText("Equilibrium: (måles)")
+                    self.equilibriumLabel.setStyleSheet("color: #b07d11; font-weight: bold;")
+                    self.last_equilibrium_valid = False
 
             profile_state_updated = False
             if "profile_active" in data:

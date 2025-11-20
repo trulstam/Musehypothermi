@@ -305,7 +305,7 @@ void CommAPI::handleCommand(const String &jsonString) {
             eeprom.saveFailsafeTimeout(value);
             sendResponse("Failsafe timeout updated");
 
-        } else if (variable == "profile") {
+        } else if (variable == "profile_data") {
             JsonVariant value = set["value"];
             if (!value.is<JsonArray>()) {
                 sendResponse("Invalid profile payload");
@@ -327,14 +327,15 @@ void CommAPI::parseProfile(JsonArray arr) {
         return;
     }
 
-    if (profileLen > 10) {
+    if (profileLen > ProfileManager::MAX_STEPS) {
         sendResponse("Profile too long");
-        return;
     }
 
-    ProfileManager::ProfileStep steps[10];
+    ProfileManager::ProfileStep steps[ProfileManager::MAX_STEPS];
+    size_t loadedSteps = 0;
+    uint32_t lastTime = 0;
 
-    for (size_t i = 0; i < profileLen; i++) {
+    for (size_t i = 0; i < profileLen && loadedSteps < ProfileManager::MAX_STEPS; i++) {
         JsonVariant stepVariant = arr[i];
         if (!stepVariant.is<JsonObject>()) {
             sendResponse("Profile step malformed");
@@ -343,42 +344,31 @@ void CommAPI::parseProfile(JsonArray arr) {
 
         JsonObject step = stepVariant.as<JsonObject>();
 
-        if (!step.containsKey("plate_start_temp") ||
-            !step.containsKey("plate_end_temp") ||
-            !step.containsKey("total_step_time_ms")) {
+        if (!step.containsKey("t") || (!step.containsKey("temp") && !step.containsKey("plate_target"))) {
             sendResponse("Profile step missing fields");
             return;
         }
 
-        float startTemp = step["plate_start_temp"];
-        float endTemp = step["plate_end_temp"];
-        uint32_t rampTime = step.containsKey("ramp_time_ms") ? step["ramp_time_ms"].as<uint32_t>() : 0;
-        float rectalOverride = step.containsKey("rectal_override_target") ? step["rectal_override_target"].as<float>() : -1000.0f;
-        uint32_t totalStepTime = step["total_step_time_ms"].as<uint32_t>();
+        float targetTemp = step.containsKey("temp") ? step["temp"].as<float>() : step["plate_target"].as<float>();
+        uint32_t timeMs = static_cast<uint32_t>(step["t"].as<float>() * 1000.0f);
 
-        if (totalStepTime == 0) {
-            sendResponse("Profile step duration invalid");
+        if (timeMs < lastTime) {
+            sendResponse("Profile time not ascending");
             return;
         }
 
-        if (rampTime > totalStepTime) {
-            rampTime = totalStepTime;
-        }
-
-        if (startTemp < -50.0f || startTemp > 80.0f ||
-            endTemp < -50.0f || endTemp > 80.0f) {
-            sendResponse("Profile temperature out of range");
-            return;
-        }
-
-        steps[i].plate_start_temp = startTemp;
-        steps[i].plate_end_temp = endTemp;
-        steps[i].ramp_time_ms = rampTime;
-        steps[i].rectal_override_target = rectalOverride;
-        steps[i].total_step_time_ms = totalStepTime;
+        steps[loadedSteps].time_ms = timeMs;
+        steps[loadedSteps].plate_target = targetTemp;
+        lastTime = timeMs;
+        loadedSteps++;
     }
 
-    profileManager.loadProfile(steps, static_cast<uint8_t>(profileLen));
+    if (loadedSteps == 0) {
+        sendResponse("No valid profile steps");
+        return;
+    }
+
+    profileManager.loadProfile(steps, static_cast<uint8_t>(loadedSteps));
     sendResponse("Profile loaded");
 }
 
@@ -432,7 +422,7 @@ void CommAPI::sendStatus() {
     doc["plate_target_active"] = pid.getActivePlateTarget();
     doc["profile_active"] = profileManager.isActive();
     doc["profile_paused"] = profileManager.isPaused();
-    doc["profile_step"] = profileManager.getCurrentStep();
+    doc["profile_step_index"] = profileManager.getCurrentStep();
     doc["profile_remaining_time"] = profileManager.getRemainingTime();
     doc["autotune_active"] = pid.isAutotuneActive();
     doc["autotune_status"] = pid.getAutotuneStatus();

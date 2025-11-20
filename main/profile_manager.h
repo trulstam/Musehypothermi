@@ -6,19 +6,18 @@
 class ProfileManager {
   public:
     struct ProfileStep {
-      float plate_start_temp;
-      float plate_end_temp;
-      uint32_t ramp_time_ms;
-      float rectal_override_target;
-      uint32_t total_step_time_ms;
+      uint32_t time_ms;      // Absolute time from profile start
+      float plate_target;    // Target plate temperature at this timestamp
     };
+
+    static const uint8_t MAX_STEPS = 10;
 
     ProfileManager();
 
     void begin();
     void update();
 
-    void loadProfile(ProfileStep* steps, uint8_t length);
+    void loadProfile(const ProfileStep* steps, uint8_t length);
 
     void start();
     void pause();
@@ -32,7 +31,6 @@ class ProfileManager {
     uint32_t getRemainingTime();
 
   private:
-    static const uint8_t MAX_STEPS = 10;
     ProfileStep profile[MAX_STEPS];
     uint8_t profileLength;
 
@@ -40,14 +38,12 @@ class ProfileManager {
     bool paused;
 
     uint8_t currentStep;
-    uint32_t stepStartTime;
-    uint32_t pausedTime;
+    uint32_t profileStartTimeMs;
+    uint32_t pauseStartTimeMs;
+    uint32_t totalPausedMs;
 
-    float currentTarget;
-
-    void updateRamp();
-    void checkStepComplete();
-    void applyRectalOverride();
+    void advanceStep(uint8_t newStep);
+    void applyCurrentTarget();
 };
 
 // 👉🏻 Ekstern deklarasjon av instansen for bruk i andre filer

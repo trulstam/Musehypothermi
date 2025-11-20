@@ -2872,6 +2872,18 @@ class MainWindow(QMainWindow):
                 self.log("❌ Not connected", "error")
                 return False
 
+            if action == "profile" and state == "start":
+                if not self.profile_steps:
+                    self.log("⚠️ Load and send a profile before starting.", "warning")
+                    return False
+                try:
+                    self.serial_manager.sendSET("profile_data", self.profile_steps)
+                    self.profile_upload_pending = True
+                    self._update_profile_button_states()
+                except Exception as exc:
+                    self.log(f"❌ Failed to send profile: {exc}", "error")
+                    return False
+
             self.serial_manager.sendCMD(action, state)
             self.event_logger.log_event(f"CMD: {action} → {state}")
             self.log(f"📡 Sent: {action} = {state}", "command")
@@ -3172,9 +3184,14 @@ class MainWindow(QMainWindow):
                             status_text = "Profile: paused"
 
                         step_info = ""
-                        if "profile_step" in data:
+                        if "profile_step_index" in data or "profile_step" in data:
                             try:
-                                step_num = int(data.get("profile_step", 0))
+                                step_num = int(
+                                    data.get(
+                                        "profile_step_index",
+                                        data.get("profile_step", 0)
+                                    )
+                                )
                                 step_info = f" | Step {step_num}"
                             except (TypeError, ValueError):
                                 step_info = ""
@@ -3778,29 +3795,50 @@ class MainWindow(QMainWindow):
             self.graph_widget.update_graphs(self.graph_data)
 
     def _convert_profile_points_to_steps(self, profile_points: List[Dict[str, Any]]):
-        """Normalize loader output into controller-ready profile steps."""
+        """Normalize loader output into controller-ready profile timeline."""
 
         if not profile_points:
             raise ValueError("Loaded profile is empty")
 
-        first_entry = profile_points[0]
-        step_keys = {"plate_start_temp", "plate_end_temp", "total_step_time_ms"}
+        def _validate_and_append(steps: List[Dict[str, Any]], t_value: float, target: float, index: int):
+            if t_value < 0:
+                raise ValueError(f"Time cannot be negative at position {index}")
 
+            if steps and t_value <= steps[-1]["t"]:
+                raise ValueError(
+                    f"Time must be ascending. Entry {index} has t={t_value} which is not greater than previous t={steps[-1]['t']}"
+                )
+
+            steps.append({"t": t_value, "temp": target})
+
+        # Case 1: Already in controller timeline format
+        first_entry = profile_points[0]
+        if "t" in first_entry and ("temp" in first_entry or "plate_target" in first_entry):
+            steps: List[Dict[str, Any]] = []
+            for idx, entry in enumerate(profile_points, start=1):
+                try:
+                    t_value = float(entry["t"])
+                    target = float(entry.get("temp", entry.get("plate_target")))
+                except (TypeError, ValueError, KeyError) as exc:
+                    raise ValueError(f"Invalid timeline entry at position {idx}: {exc}") from exc
+
+                _validate_and_append(steps, t_value, target, idx)
+
+            if len(steps) > 10:
+                raise ValueError("Profile may contain at most 10 steps")
+
+            return steps
+
+        step_keys = {"plate_start_temp", "plate_end_temp", "total_step_time_ms"}
         if step_keys.issubset(first_entry.keys()):
             steps: List[Dict[str, Any]] = []
+            cumulative_sec = 0.0
 
             for index, entry in enumerate(profile_points, start=1):
                 try:
                     start_temp = float(entry["plate_start_temp"])
                     end_temp = float(entry["plate_end_temp"])
                     total_time_ms = int(float(entry["total_step_time_ms"]))
-                    ramp_time_ms = int(float(entry.get("ramp_time_ms", 0)))
-                    rectal_target = entry.get("rectal_override_target", -1000.0)
-                    rectal_target = (
-                        float(rectal_target)
-                        if rectal_target is not None
-                        else -1000.0
-                    )
                 except (KeyError, TypeError, ValueError) as exc:
                     raise ValueError(
                         f"Invalid step entry at position {index}: {exc}"
@@ -3811,33 +3849,16 @@ class MainWindow(QMainWindow):
                         f"total_step_time_ms must be positive at step {index}"
                     )
 
-                if ramp_time_ms < 0:
-                    raise ValueError(
-                        f"ramp_time_ms cannot be negative at step {index}"
-                    )
+                if not steps:
+                    _validate_and_append(steps, 0.0, start_temp, index)
 
-                if ramp_time_ms > total_time_ms:
-                    raise ValueError(
-                        f"ramp_time_ms cannot exceed total_step_time_ms at step {index}"
-                    )
-
-                steps.append(
-                    {
-                        "plate_start_temp": start_temp,
-                        "plate_end_temp": end_temp,
-                        "ramp_time_ms": ramp_time_ms,
-                        "rectal_override_target": rectal_target,
-                        "total_step_time_ms": total_time_ms,
-                    }
-                )
+                cumulative_sec += total_time_ms / 1000.0
+                _validate_and_append(steps, cumulative_sec, end_temp, index)
 
             if len(steps) > 10:
                 raise ValueError("Profile may contain at most 10 steps")
 
             return steps
-
-        if len(profile_points) < 2:
-            raise ValueError("Profile must contain at least two time points")
 
         try:
             ordered_points = sorted(
@@ -3849,36 +3870,14 @@ class MainWindow(QMainWindow):
 
         steps: List[Dict[str, Any]] = []
 
-        for index in range(1, len(ordered_points)):
-            previous = ordered_points[index - 1]
-            current = ordered_points[index]
-
+        for index, entry in enumerate(ordered_points, start=1):
             try:
-                previous_temp = float(previous["temp_c"])
-                current_temp = float(current["temp_c"])
-                previous_time = float(previous["time_min"])
-                current_time = float(current["time_min"])
-                ramp_minutes = float(current.get("ramp_min", 0.0))
+                target_temp = float(entry.get("plate_target", entry["temp_c"]))
+                t_value = float(entry["time_min"]) * 60.0
             except (KeyError, TypeError, ValueError) as exc:
-                raise ValueError(f"Invalid profile entry at position {index + 1}") from exc
+                raise ValueError(f"Invalid profile entry at position {index}") from exc
 
-            duration_minutes = current_time - previous_time
-            if duration_minutes <= 0:
-                raise ValueError(
-                    f"Profile time at step {index + 1} must be greater than previous step"
-                )
-
-            total_step_time_ms = int(duration_minutes * 60000)
-            ramp_minutes = max(0.0, min(ramp_minutes, duration_minutes))
-            ramp_time_ms = int(ramp_minutes * 60000)
-
-            steps.append({
-                "plate_start_temp": previous_temp,
-                "plate_end_temp": current_temp,
-                "ramp_time_ms": ramp_time_ms,
-                "rectal_override_target": -1000.0,
-                "total_step_time_ms": total_step_time_ms,
-            })
+            _validate_and_append(steps, t_value, target_temp, index)
 
         if len(steps) > 10:
             raise ValueError("Profile may contain at most 10 steps")
@@ -3981,7 +3980,7 @@ class MainWindow(QMainWindow):
 
             if self.connection_established:
                 try:
-                    self.serial_manager.sendSET("profile", self.profile_steps)
+                    self.serial_manager.sendSET("profile_data", self.profile_steps)
                 except Exception as exc:
                     self.log(f"❌ Failed to upload profile: {exc}", "error")
                     QMessageBox.warning(
@@ -4065,7 +4064,7 @@ class MainWindow(QMainWindow):
 
                     if self.profile_steps:
                         try:
-                            self.serial_manager.sendSET("profile", self.profile_steps)
+                            self.serial_manager.sendSET("profile_data", self.profile_steps)
                         except Exception as exc:
                             self.log(f"⚠️ Failed to upload stored profile on connect: {exc}", "warning")
                             self._update_profile_button_states()

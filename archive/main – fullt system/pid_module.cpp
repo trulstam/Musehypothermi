@@ -1,10 +1,14 @@
 #include "pid_module.h"
+#include "sensor_module.h"
 #include "Arduino.h"
+#include <ArduinoJson.h>
+
+extern SensorModule sensors;
 
 PIDModule::PIDModule()
   : pid(&Input, &Output, &Setpoint, 2.0, 0.5, 1.0, DIRECT),
     kp(2.0), ki(0.5), kd(1.0), maxOutputPercent(20.0),
-    active(false), autotuneActive(false), autotuneStatus("idle"),
+    active(false), autotuneActive(false), autotuneStatus("idle"), autotunePhase("idle"), autotuneProgress(0),
     Input(0), Output(0), Setpoint(37.0),
     profileLength(0), currentProfileStep(0), profileStartMillis(0), profileActive(false),
     debugEnabled(false) {}
@@ -76,37 +80,119 @@ bool PIDModule::isActive() {
 // === Autotune ===
 void PIDModule::startAutotune() {
     stop();
-    autotuneActive = true;
-    autotuneStatus = "running";
-
     backupKp = kp;
     backupKi = ki;
     backupKd = kd;
 
     autotuneStartMillis = millis();
+    autotuneLastToggleMillis = autotuneStartMillis;
+    autotuneDurationMs = 120000;           // 2 minutes test window
+    autotuneToggleIntervalMs = 5000;       // toggle direction every 5 seconds
+    autotuneProgress = 0;
+    autotunePhase = "heating_step";
     autotuneCycles = 0;
 
-    Serial.println("✅ Autotune started");
+    autotuneBaseline = sensors.getCoolingPlateTemp();
+
+    // Use up to 30 % of the configured max output to excite the system safely
+    float pwmMax = MAX_PWM * (maxOutputPercent / 100.0f);
+    autotuneStepOutput = constrain(pwmMax * 0.3f, 80.0f, pwmMax);
+    autotuneHighOutput = true;
+    autotuneMaxTemp = autotuneBaseline;
+    autotuneMinTemp = autotuneBaseline;
+
+    setPeltierOutput(autotuneStepOutput);
+
+    autotuneActive = true;
+    autotuneStatus = "running";
+
+    Serial.print("✅ Autotune started. Baseline=");
+    Serial.print(autotuneBaseline, 2);
+    Serial.print("°C, step PWM=");
+    Serial.println(autotuneStepOutput, 0);
 }
 
 void PIDModule::runAutotune() {
     if (!autotuneActive) return;
 
-    unsigned long elapsed = millis() - autotuneStartMillis;
+    unsigned long now = millis();
+    unsigned long elapsed = now - autotuneStartMillis;
 
-    if (elapsed > 10000) {
-        calculateZieglerNicholsParams();
+    // Track temperature extremes
+    float currentTemp = sensors.getCoolingPlateTemp();
+    autotuneMaxTemp = max(autotuneMaxTemp, currentTemp);
+    autotuneMinTemp = min(autotuneMinTemp, currentTemp);
+
+    // Update progress
+    autotuneProgress = (int)min(100UL, (elapsed * 100UL) / autotuneDurationMs);
+
+    // Toggle output to create oscillation around the baseline
+    if (now - autotuneLastToggleMillis >= autotuneToggleIntervalMs) {
+        autotuneHighOutput = !autotuneHighOutput;
+        autotunePhase = autotuneHighOutput ? "heating_step" : "cooling_step";
+        float commanded = autotuneHighOutput ? autotuneStepOutput : -autotuneStepOutput;
+        setPeltierOutput(commanded);
+        autotuneLastToggleMillis = now;
+        autotuneCycles++;
+
+        if (debugEnabled) {
+            Serial.print("[Autotune] Toggle → ");
+            Serial.print(commanded);
+            Serial.print(" (cycle ");
+            Serial.print(autotuneCycles);
+            Serial.println(")");
+        }
+    }
+
+    // Finish after the test window
+    if (elapsed >= autotuneDurationMs) {
+        // Estimate coarse PID values from observed response
+        float tempSwing = max(0.1f, autotuneMaxTemp - autotuneMinTemp);
+        float stepPercent = (autotuneStepOutput / MAX_PWM) * 100.0f;
+        float processGain = tempSwing / max(5.0f, stepPercent * 2.0f); // swing from +/- step
+        float ultimateGain = 1.0f / max(0.05f, processGain);
+        float oscillationPeriod = (float)(autotuneToggleIntervalMs * 2) / 1000.0f; // approx
+
+        float newKp = 0.6f * ultimateGain;
+        float newKi = (2.0f * newKp) / max(1.0f, oscillationPeriod);
+        float newKd = newKp * oscillationPeriod * 0.125f;
+
+        // Clamp to safe ranges
+        newKp = constrain(newKp, 0.1f, 20.0f);
+        newKi = constrain(newKi, 0.01f, 5.0f);
+        newKd = constrain(newKd, 0.0f, 10.0f);
+
+        setKp(newKp);
+        setKi(newKi);
+        setKd(newKd);
+        applyOutputLimit();
+        setPeltierOutput(0);
 
         autotuneActive = false;
         autotuneStatus = "complete";
+        autotunePhase = "done";
+        autotuneProgress = 100;
 
-        Serial.println("✅ Autotune complete. New PID values applied.");
-    } else {
-        if (debugEnabled && (elapsed % 1000 < 100)) {
-            Serial.print("Autotune running: ");
-            Serial.print(elapsed / 1000);
-            Serial.println("s");
+        if (eeprom) {
+            eeprom->savePIDParams(newKp, newKi, newKd);
         }
+
+        StaticJsonDocument<256> doc;
+        JsonObject result = doc.createNestedObject("autotune_results");
+        result["kp"] = newKp;
+        result["ki"] = newKi;
+        result["kd"] = newKd;
+        result["temp_swing"] = tempSwing;
+        result["step_percent"] = stepPercent;
+        serializeJson(doc, Serial);
+        Serial.println();
+
+        Serial.print("✅ Autotune complete. New PID applied Kp=");
+        Serial.print(newKp, 3);
+        Serial.print(", Ki=");
+        Serial.print(newKi, 3);
+        Serial.print(", Kd=");
+        Serial.println(newKd, 3);
     }
 }
 
@@ -120,6 +206,8 @@ void PIDModule::abortAutotune() {
 
     autotuneActive = false;
     autotuneStatus = "aborted";
+    autotunePhase = "aborted";
+    autotuneProgress = 0;
 
     Serial.println("⚠️ Autotune aborted. Restored previous PID values.");
 }
@@ -130,6 +218,14 @@ bool PIDModule::isAutotuneActive() {
 
 const char* PIDModule::getAutotuneStatus() {
     return autotuneStatus;
+}
+
+const char* PIDModule::getAutotunePhase() {
+    return autotunePhase;
+}
+
+int PIDModule::getAutotuneProgress() {
+    return autotuneProgress;
 }
 
 // === PID parameters ===

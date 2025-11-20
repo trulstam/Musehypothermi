@@ -32,6 +32,8 @@ public:
     void abortAutotune();
     bool isAutotuneActive();
     const char* getAutotuneStatus();
+    const char* getAutotunePhase();
+    int getAutotuneProgress();
 
     // PID param control
     void setKp(float value);
@@ -79,9 +81,19 @@ private:
     bool active;
     bool autotuneActive;
     const char* autotuneStatus;
+    const char* autotunePhase;
+    int autotuneProgress;
     float backupKp, backupKi, backupKd;
     unsigned long autotuneStartMillis;
     int autotuneCycles;
+    unsigned long autotuneLastToggleMillis;
+    unsigned long autotuneDurationMs;
+    unsigned long autotuneToggleIntervalMs;
+    bool autotuneHighOutput;
+    float autotuneBaseline;
+    float autotuneStepOutput;
+    float autotuneMaxTemp;
+    float autotuneMinTemp;
 
     bool debugEnabled;
 

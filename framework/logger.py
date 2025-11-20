@@ -6,6 +6,8 @@ import os
 import json
 from datetime import datetime
 
+TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M:%S"
+
 class Logger:
     def __init__(self, filename_prefix="experiment", metadata=None):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -38,7 +40,7 @@ class Logger:
         print(f"✅ JSON logging to {self.filename_json}")
 
     def log_data(self, data):
-        timestamp = data.get("timestamp", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+        timestamp = data.get("timestamp", datetime.now().strftime(TIMESTAMP_FORMAT))
 
         row = [
             timestamp,
@@ -65,7 +67,7 @@ class Logger:
         print(f"📥 Logged data at {timestamp}")
 
     def log_comment(self, comment):
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        now = datetime.now().strftime(TIMESTAMP_FORMAT)
         row = [now, "", "", "", "", comment]
 
         self.csv_writer.writerow(row)
@@ -79,7 +81,7 @@ class Logger:
         print(f"💬 Logged comment: {comment}")
 
     def log_event(self, event):
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        now = datetime.now().strftime(TIMESTAMP_FORMAT)
         message = f"EVENT: {event}"
 
         self.csv_writer.writerow([now, "", "", "", "", message])

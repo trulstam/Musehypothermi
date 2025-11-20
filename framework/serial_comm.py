@@ -148,7 +148,14 @@ class SerialManager(QObject):
     def trigger_failsafe(self):
         self.failsafe_triggered = True
         print("🚨 Failsafe triggered! No data received in timeout period.")
-        self._queue_payload({"response": "Failsafe triggered"})
+        self._queue_payload(
+            {
+                "event": "Failsafe triggered (PC watchdog timeout)",
+                "failsafe_active": True,
+                "failsafe_reason": "pc_watchdog",
+            },
+            reset_failsafe=False,
+        )
 
     def readData(self):
         return self.latest_data
@@ -157,10 +164,11 @@ class SerialManager(QObject):
         self.disconnect()
         print("✅ SerialManager closed.")
 
-    def _queue_payload(self, payload):
+    def _queue_payload(self, payload, *, reset_failsafe=True):
         if not isinstance(payload, dict):
             print("⚠️ Ignoring non-dict payload")
             return
         self.last_data_time = time.time()
-        self.failsafe_triggered = False
+        if reset_failsafe:
+            self.failsafe_triggered = False
         self.data_received.emit(dict(payload))

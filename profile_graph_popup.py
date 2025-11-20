@@ -11,8 +11,8 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import QTimer, Qt
 import pyqtgraph as pg
-from serial_comm import SerialManager
-from event_logger import EventLogger
+from framework.serial_comm import SerialManager
+from framework.event_logger import EventLogger
 from profile_graph_widget import ProfileGraphPopup
 
 class MainWindow(QMainWindow):

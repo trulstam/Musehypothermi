@@ -14,9 +14,9 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import QTimer, Qt, Slot, QSettings
 from PySide6.QtGui import QFont, QPalette, QColor
 import pyqtgraph as pg
-from serial_comm import SerialManager
-from event_logger import EventLogger
-from profile_loader import ProfileLoader
+from framework.serial_comm import SerialManager
+from framework.event_logger import EventLogger
+from framework.profile_loader import ProfileLoader
 
 class MainWindow(QMainWindow):
     def __init__(self):

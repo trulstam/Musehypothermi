@@ -1,10 +1,16 @@
 # Musehypothermi Python Test Suite - Final Harmonized Version
 # Module: test_suite.py
 
-from serial_comm import SerialManager
-from logger import Logger
-from profile_loader import ProfileLoader
-from event_logger import EventLogger
+if __package__ in (None, ""):
+    import os
+    import sys
+
+    sys.path.append(os.path.dirname(os.path.dirname(__file__)))
+
+from framework.serial_comm import SerialManager
+from framework.logger import Logger
+from framework.profile_loader import ProfileLoader
+from framework.event_logger import EventLogger
 import time
 import argparse
 import sys

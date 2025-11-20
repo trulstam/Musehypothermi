@@ -27,9 +27,9 @@ try:
     from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
     from matplotlib.figure import Figure
     
-    from serial_comm import SerialManager
-    from event_logger import EventLogger
-    from profile_loader import ProfileLoader
+    from framework.serial_comm import SerialManager
+    from framework.event_logger import EventLogger
+    from framework.profile_loader import ProfileLoader
     print("✅ All imports successful (using matplotlib)")
 except ImportError as e:
     print(f"❌ Import error: {e}")

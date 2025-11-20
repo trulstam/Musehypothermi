@@ -2259,9 +2259,10 @@ class MainWindow(QMainWindow):
         self.connectionStatusLabel = QLabel("❌ Disconnected")
         self.connectionStatusLabel.setStyleSheet("color: red; font-weight: bold;")
         status_row.addWidget(self.connectionStatusLabel)
-        
+
         self.failsafeIndicator = QLabel("🟢 Safe")
         self.failsafeIndicator.setStyleSheet("color: green; font-weight: bold;")
+        self.failsafeLabel = self.failsafeIndicator
         status_row.addWidget(self.failsafeIndicator)
         
         self.pidStatusIndicator = QLabel("⚫ PID Off")
@@ -2652,16 +2653,20 @@ class MainWindow(QMainWindow):
         self.resumeProfileButton.clicked.connect(lambda: self.send_and_log_cmd("profile", "resume"))
         self.resumeProfileButton.setEnabled(False)
         self.resumeProfileButton.setStyleSheet("background-color: #17a2b8; color: white; font-weight: bold;")
-        
+
         self.stopProfileButton = QPushButton("⏹️ Stop")
         self.stopProfileButton.clicked.connect(lambda: self.send_and_log_cmd("profile", "stop"))
         self.stopProfileButton.setEnabled(False)
         self.stopProfileButton.setStyleSheet("background-color: #dc3545; color: white; font-weight: bold;")
-        
+
         control_layout.addWidget(self.startProfileButton)
         control_layout.addWidget(self.pauseProfileButton)
         control_layout.addWidget(self.resumeProfileButton)
         control_layout.addWidget(self.stopProfileButton)
+        
+        self.profileStatusLabel = QLabel("Profile: idle")
+        self.profileStatusLabel.setStyleSheet("color: #6c757d; font-weight: bold;")
+        control_layout.addWidget(self.profileStatusLabel)
         control_layout.addStretch()
         
         control_group.setLayout(control_layout)
@@ -2879,9 +2884,15 @@ class MainWindow(QMainWindow):
                     reason = data.get("failsafe_reason", "Unknown")
                     self.failsafeIndicator.setText(f"🔴 FAILSAFE: {reason}")
                     self.failsafeIndicator.setStyleSheet("color: #dc3545; font-weight: bold;")
+                    if hasattr(self, "emergencyStateValue"):
+                        self.emergencyStateValue.setText(f"🚨 {reason}")
+                        self.emergencyStateValue.setStyleSheet("font-weight: bold; color: #dc3545;")
                 else:
                     self.failsafeIndicator.setText("🟢 Safe")
                     self.failsafeIndicator.setStyleSheet("color: #28a745; font-weight: bold;")
+                    if hasattr(self, "emergencyStateValue"):
+                        self.emergencyStateValue.setText("✅ Clear")
+                        self.emergencyStateValue.setStyleSheet("font-weight: bold; color: #28a745;")
 
             mode_value = None
             if "pid_mode" in data:
@@ -2910,6 +2921,19 @@ class MainWindow(QMainWindow):
                 else:
                     self.pidStatusIndicator.setText("⚫ PID Off")
                     self.pidStatusIndicator.setStyleSheet("color: #6c757d; font-weight: bold;")
+
+            if "cooling_mode" in data and hasattr(self, "regulationModeValue"):
+                mode_text = "Cooling" if data.get("cooling_mode") else "Heating"
+                self.regulationModeValue.setText(mode_text)
+                color = "#0d6efd" if data.get("cooling_mode") else "#e55353"
+                self.regulationModeValue.setStyleSheet(f"font-weight: bold; color: {color};")
+
+            if "temperature_rate" in data and hasattr(self, "temperatureRateValue"):
+                try:
+                    rate = float(data.get("temperature_rate", 0.0))
+                    self.temperatureRateValue.setText(f"{rate:.3f} °C/s")
+                except (TypeError, ValueError):
+                    self.temperatureRateValue.setText("-- °C/s")
 
             if "equilibrium_valid" in data:
                 valid = bool(data.get("equilibrium_valid", False))
@@ -2944,8 +2968,35 @@ class MainWindow(QMainWindow):
                         self._mark_profile_paused()
                     else:
                         self._mark_profile_resumed()
+                    if hasattr(self, "profileStatusLabel"):
+                        status_text = "Profile: running"
+                        if self.profile_paused:
+                            status_text = "Profile: paused"
+
+                        step_info = ""
+                        if "profile_step" in data:
+                            try:
+                                step_num = int(data.get("profile_step", 0))
+                                step_info = f" | Step {step_num}"
+                            except (TypeError, ValueError):
+                                step_info = ""
+
+                        remaining_info = ""
+                        if "profile_remaining_time" in data:
+                            try:
+                                remaining_ms = float(data.get("profile_remaining_time", 0.0))
+                                remaining_sec = max(0, remaining_ms / 1000.0)
+                                remaining_info = f" | {remaining_sec:.0f}s left"
+                            except (TypeError, ValueError):
+                                remaining_info = ""
+
+                        self.profileStatusLabel.setText(status_text + step_info + remaining_info)
+                        self.profileStatusLabel.setStyleSheet("color: #0d6efd; font-weight: bold;")
                 else:
                     self._mark_profile_stopped()
+                    if hasattr(self, "profileStatusLabel"):
+                        self.profileStatusLabel.setText("Profile: idle")
+                        self.profileStatusLabel.setStyleSheet("color: #6c757d; font-weight: bold;")
                 self._update_profile_button_states()
 
         except (ValueError, KeyError) as e:

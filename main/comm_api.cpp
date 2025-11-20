@@ -94,13 +94,17 @@ void CommAPI::handleCommand(const String &jsonString) {
 
         } else if (action == "profile") {
             if (state == "start") {
-                profileManager.start(); sendResponse("Profile started");
+                profileManager.start();
+                sendResponse("Profile started");
+                sendEvent("Profile started");
             } else if (state == "pause") {
                 profileManager.pause(); sendResponse("Profile paused");
             } else if (state == "resume") {
                 profileManager.resume(); sendResponse("Profile resumed");
             } else if (state == "stop") {
-                profileManager.stop(); sendResponse("Profile stopped");
+                profileManager.stop();
+                sendResponse("Profile stopped");
+                sendEvent("Profile completed");
             } else {
                 sendResponse("Unknown profile state");
             }
@@ -116,6 +120,7 @@ void CommAPI::handleCommand(const String &jsonString) {
 
         } else if (action == "panic") {
             triggerFailsafe("gui_panic_triggered");
+            sendEvent("Failsafe triggered: gui_panic_triggered");
             sendResponse("GUI panic triggered");
 
         } else if (action == "save_eeprom") {

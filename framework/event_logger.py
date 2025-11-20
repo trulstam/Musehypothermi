@@ -3,6 +3,8 @@ import os
 import json
 from datetime import datetime
 
+TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M:%S"
+
 class EventLogger:
     def __init__(self, filename_prefix="events", metadata=None):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -35,7 +37,7 @@ class EventLogger:
 
     def log_event(self, event):
         """Log an event with timestamp."""
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        now = datetime.now().strftime(TIMESTAMP_FORMAT)
         try:
             self.csv_writer.writerow([now, event])
             self.csv_file.flush()
@@ -60,7 +62,7 @@ class EventLogger:
             print(f"❌ Failed to flush JSON log: {e}")
             try:
                 if self.csv_writer:
-                    self.csv_writer.writerow([datetime.now().strftime("%Y-%m-%d %H:%M:%S"), f"[JSON flush error] {e}"])
+                    self.csv_writer.writerow([datetime.now().strftime(TIMESTAMP_FORMAT), f"[JSON flush error] {e}"])
                     self.csv_file.flush()
             except:
                 pass

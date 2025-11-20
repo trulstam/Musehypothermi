@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (
     QDialogButtonBox, QDoubleSpinBox, QStackedWidget
 )
 from PySide6.QtCore import QTimer, Qt, Signal, QSignalBlocker
-from PySide6.QtGui import QFont, QPalette, QColor
+from PySide6.QtGui import QFont, QPalette, QColor, QTextCursor
 
 # Matplotlib imports
 import matplotlib
@@ -2158,7 +2158,8 @@ class MainWindow(QMainWindow):
         self.pid_mode: Optional[str] = None
         self.pid_running: bool = False
         self.last_status_data: Dict[str, Any] = {}
-        self.serial_monitor_lines: List[str] = []
+        self.serial_monitor_tx_lines: List[str] = []
+        self.serial_monitor_rx_lines: List[str] = []
         self.serial_monitor_max_lines = 500
 
         print("✅ Data structures initialized")
@@ -2733,23 +2734,51 @@ class MainWindow(QMainWindow):
         controls_layout.addWidget(self.serialMonitorAutoScroll)
         controls_layout.addStretch()
 
-        self.serialMonitorLog = QTextEdit()
-        self.serialMonitorLog.setReadOnly(True)
-        self.serialMonitorLog.setFont(QFont("Courier New", 9))
-        self.serialMonitorLog.setStyleSheet(
+        tx_group = QGroupBox("TX → Arduino")
+        tx_layout = QVBoxLayout()
+        self.serialMonitorTxLog = QTextEdit()
+        self.serialMonitorTxLog.setReadOnly(True)
+        self.serialMonitorTxLog.setFont(QFont("Courier New", 9))
+        self.serialMonitorTxLog.setStyleSheet(
             """
             QTextEdit {
                 background-color: #0b132b;
-                color: #f8f9fa;
+                color: #0dcaf0;
                 border: 1px solid #1c2541;
                 border-radius: 6px;
                 padding: 8px;
             }
         """
         )
+        tx_layout.addWidget(self.serialMonitorTxLog)
+        tx_group.setLayout(tx_layout)
+
+        rx_group = QGroupBox("RX ← Arduino")
+        rx_layout = QVBoxLayout()
+        self.serialMonitorRxLog = QTextEdit()
+        self.serialMonitorRxLog.setReadOnly(True)
+        self.serialMonitorRxLog.setFont(QFont("Courier New", 9))
+        self.serialMonitorRxLog.setStyleSheet(
+            """
+            QTextEdit {
+                background-color: #0b132b;
+                color: #51cf66;
+                border: 1px solid #1c2541;
+                border-radius: 6px;
+                padding: 8px;
+            }
+        """
+        )
+        rx_layout.addWidget(self.serialMonitorRxLog)
+        rx_group.setLayout(rx_layout)
+
+        splitter = QSplitter(Qt.Vertical)
+        splitter.addWidget(tx_group)
+        splitter.addWidget(rx_group)
+        splitter.setSizes([200, 200])
 
         monitor_layout.addLayout(controls_layout)
-        monitor_layout.addWidget(self.serialMonitorLog)
+        monitor_layout.addWidget(splitter)
 
         self.tab_widget.addTab(monitor_widget, "🛰️ Serial Monitor")
 
@@ -2762,7 +2791,9 @@ class MainWindow(QMainWindow):
             self.serial_manager.raw_line_received.connect(
                 lambda line: self.on_serial_line("RX", line)
             )
-            self.serial_manager.tx_line.connect(lambda line: self.on_serial_line("TX", line))
+            self.serial_manager.raw_line_sent.connect(
+                lambda line: self.on_serial_line("TX", line)
+            )
             self.serial_manager.failsafe_triggered.connect(self.on_pc_failsafe_triggered)
             print("✅ SerialManager initialized")
 
@@ -2907,24 +2938,30 @@ class MainWindow(QMainWindow):
         """Append raw TX/RX serial lines to the Serial Monitor tab."""
 
         try:
-            if not hasattr(self, "serialMonitorLog"):
+            if not (
+                hasattr(self, "serialMonitorTxLog")
+                and hasattr(self, "serialMonitorRxLog")
+            ):
                 return
 
+            direction = direction.upper()
             timestamp = time.strftime("%H:%M:%S")
-            color = "#0d6efd" if direction.upper() == "TX" else "#198754"
-            formatted = (
-                f'<span style="color: {color}; font-weight: bold;">'
-                f"[{timestamp}] {direction.upper()}</span> {line}"
-            )
+            formatted = f"[{timestamp}] {direction}: {line}"
 
-            self.serial_monitor_lines.append(formatted)
-            if len(self.serial_monitor_lines) > self.serial_monitor_max_lines:
-                self.serial_monitor_lines = self.serial_monitor_lines[-self.serial_monitor_max_lines :]
+            if direction == "TX":
+                log_list = self.serial_monitor_tx_lines
+                widget = self.serialMonitorTxLog
+            else:
+                log_list = self.serial_monitor_rx_lines
+                widget = self.serialMonitorRxLog
 
-            self.serialMonitorLog.setHtml("<br>".join(self.serial_monitor_lines))
+            log_list.append(formatted)
+            if len(log_list) > self.serial_monitor_max_lines:
+                log_list[:] = log_list[-self.serial_monitor_max_lines :]
+
+            widget.setPlainText("\n".join(log_list))
             if self.serialMonitorAutoScroll.isChecked():
-                scrollbar = self.serialMonitorLog.verticalScrollBar()
-                scrollbar.setValue(scrollbar.maximum())
+                widget.moveCursor(QTextCursor.End)
 
         except Exception as e:
             print(f"Serial monitor error: {e}")
@@ -2932,9 +2969,12 @@ class MainWindow(QMainWindow):
     def clear_serial_monitor(self):
         """Clear Serial Monitor history and display."""
 
-        self.serial_monitor_lines.clear()
-        if hasattr(self, "serialMonitorLog"):
-            self.serialMonitorLog.clear()
+        self.serial_monitor_tx_lines.clear()
+        self.serial_monitor_rx_lines.clear()
+        if hasattr(self, "serialMonitorTxLog"):
+            self.serialMonitorTxLog.clear()
+        if hasattr(self, "serialMonitorRxLog"):
+            self.serialMonitorRxLog.clear()
 
     def on_pc_failsafe_triggered(self):
         """Handle PC-side failsafe activation in the GUI thread."""

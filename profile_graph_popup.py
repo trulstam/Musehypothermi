@@ -225,6 +225,19 @@ class MainWindow(QMainWindow):
             self.pid_plot.setData(self.graph_data["time"], self.graph_data["pid_output"])
             self.breath_plot.setData(self.graph_data["time"], self.graph_data["breath_rate"])
 
+        if "autotune_status" in data or "autotune_active" in data:
+            status_raw = str(data.get("autotune_status", "")).strip().lower()
+            active = bool(data.get("autotune_active", False))
+
+            if active or status_raw == "running":
+                self.autotuneStatusLabel.setText("Pågår…")
+            elif status_raw in {"done", "complete", "finished"}:
+                self.autotuneStatusLabel.setText("Ferdig")
+            elif status_raw:
+                self.autotuneStatusLabel.setText(status_raw.title())
+            else:
+                self.autotuneStatusLabel.setText("Idle")
+
         if "event" in data:
             event_msg = data["event"]
             self.log(f"📢 EVENT: {event_msg}")

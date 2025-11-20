@@ -91,7 +91,10 @@ private:
     const char* autotuneStatus;
     float backupKp, backupKi, backupKd;
     unsigned long autotuneStartMillis;
+    unsigned long autotuneLastSampleMillis;
     int autotuneCycles;
+    float autotuneBaseline;
+    float autotuneStepOutput;
 
     bool debugEnabled;
 

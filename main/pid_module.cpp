@@ -162,14 +162,31 @@ bool PIDModule::isActive() {
 }
 
 void PIDModule::startAutotune() {
+    // Stop regulering og lagre nåværende PID-parametre slik at vi kan rulle tilbake
+    stop();
+    backupKp = kp;
+    backupKi = ki;
+    backupKd = kd;
+
     autotuneActive = true;
     autotuneStatus = "running";
     autotuneStartMillis = millis();
+    autotuneLastSampleMillis = 0;
     autotuneLogIndex = 0;
-    
-    // Bruk høyere PWM for bedre signal-til-støy ratio
-    setPeltierOutput(500);  // 500/2399 ≈ 21% PWM
-    comm.sendEvent("Autotune started: step response (21% PWM)");
+
+    autotuneBaseline = sensors.getCoolingPlateTemp();
+
+    // Bruk et moderat steg (maks 25 % av tilgjengelig PWM) for å få et tydelig,
+    // men sikkert signal for systemidentifikasjon.
+    const float maxPwm = MAX_PWM * (maxOutputPercent / 100.0f);
+    autotuneStepOutput = constrain(maxPwm * 0.25f, 100.0f, maxPwm);
+    setPeltierOutput(autotuneStepOutput);
+
+    String message = "Autotune startet: T0=";
+    message += String(autotuneBaseline, 1);
+    message += "°C, steg-pwm=";
+    message += String(autotuneStepOutput, 0);
+    comm.sendEvent(message);
 }
 
 void PIDModule::runAutotune() {
@@ -177,11 +194,10 @@ void PIDModule::runAutotune() {
 
     unsigned long now = millis();
     unsigned long elapsed = now - autotuneStartMillis;
-    
+
     // Sample every 500ms (mer stabil enn 100ms)
-    static unsigned long lastSample = 0;
-    if (now - lastSample < 500) return;
-    lastSample = now;
+    if (now - autotuneLastSampleMillis < 500) return;
+    autotuneLastSampleMillis = now;
 
     if (autotuneLogIndex < AUTOTUNE_LOG_SIZE) {
         float temp = sensors.getCoolingPlateTemp();
@@ -199,20 +215,42 @@ void PIDModule::runAutotune() {
             serializeJson(doc, Serial);
             Serial.println();
         }
-    } else {
-        // Autotune complete
-        autotuneActive = false;
-        setPeltierOutput(0);
-        autotuneStatus = "done";
-        
-        calculateAutotuneParams();
-        comm.sendEvent("Autotune complete: new PID parameters calculated");
     }
-    
+
+    // Se etter stabil temperatur over de siste målingene for å avslutte tidlig
+    int window = min(autotuneLogIndex, 15);
+    if (window >= 8) {
+        float minTemp = autotuneTemperatures[autotuneLogIndex - 1];
+        float maxTemp = minTemp;
+        for (int i = autotuneLogIndex - window; i < autotuneLogIndex; i++) {
+            minTemp = min(minTemp, autotuneTemperatures[i]);
+            maxTemp = max(maxTemp, autotuneTemperatures[i]);
+        }
+        if ((maxTemp - minTemp) < 0.05f && elapsed > 15000) {
+            autotuneActive = false;
+            setPeltierOutput(0);
+            autotuneStatus = "done";
+            calculateAutotuneParams();
+            comm.sendEvent("Autotune complete: steady-state oppnådd");
+            return;
+        }
+    }
+
     // Safety timeout (max 5 minutter)
     if (elapsed > 300000) {  // 5 min timeout
         abortAutotune();
         comm.sendEvent("Autotune aborted: timeout reached");
+        return;
+    }
+
+    // Maks antall samples nådd -> avslutt og beregn
+    if (autotuneLogIndex >= AUTOTUNE_LOG_SIZE) {
+        autotuneActive = false;
+        setPeltierOutput(0);
+        autotuneStatus = "done";
+
+        calculateAutotuneParams();
+        comm.sendEvent("Autotune complete: samplegrense nådd");
     }
 }
 
@@ -298,6 +336,12 @@ void PIDModule::calculateAutotuneParams() {
 }
 
 void PIDModule::abortAutotune() {
+    if (autotuneActive) {
+        setKp(backupKp);
+        setKi(backupKi);
+        setKd(backupKd);
+        applyOutputLimit();
+    }
     autotuneActive = false;
     autotuneStatus = "aborted";
     setPeltierOutput(0);

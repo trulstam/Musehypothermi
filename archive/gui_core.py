@@ -1425,69 +1425,75 @@ class MainWindow(QMainWindow):
             )
             
             if file_name:
-                success = False
-                if file_name.endswith('.json'):
-                    success = self.profile_loader.load_profile_json(file_name)
-                elif file_name.endswith('.csv'):
-                    success = self.profile_loader.load_profile_csv(file_name)
-                
-                if success:
-                    self.profile_data = self.profile_loader.get_profile()
-                    filename = os.path.basename(file_name)
-                    self.profileFileLabel.setText(f"Loaded: {filename}")
-                    self.profileFileLabel.setStyleSheet("color: green; font-weight: bold;")
-
-                    try:
-                        self.profile_steps = self._convert_profile_points_to_steps(self.profile_data)
-                    except ValueError as exc:
-                        self.profile_steps = []
-                        self.profile_ready = False
-                        self.profile_upload_pending = False
-                        self._update_profile_button_states()
-                        error_message = f"Profile conversion error: {exc}"
-                        self.log(f"❌ {error_message}", "error")
-                        QMessageBox.warning(self, "Profile Error", error_message)
-                        return
-
-                    if not self.profile_steps:
-                        self.profile_ready = False
-                        self.profile_upload_pending = False
-                        self._update_profile_button_states()
-                        self.log("❌ Profile did not produce any steps", "error")
-                        QMessageBox.warning(
-                            self,
-                            "Profile Error",
-                            "The loaded profile did not produce any controller steps."
-                        )
-                        return
-
+                try:
+                    self.profile_data = self.profile_loader.load_profile(file_name)
+                except Exception as exc:
+                    self.profile_data = []
+                    self.profile_steps = []
                     self.profile_ready = False
                     self.profile_upload_pending = False
                     self._update_profile_button_states()
+                    error_message = f"Failed to load profile: {exc}"
+                    self.log(f"❌ {error_message}", "error")
+                    QMessageBox.warning(self, "Load Error", error_message)
+                    return
 
-                    self.log(f"✅ Profile loaded: {filename}", "success")
-                    self.event_logger.log_event(f"Profile loaded: {file_name}")
+                filename = os.path.basename(file_name)
+                self.profileFileLabel.setText(f"Loaded: {filename}")
+                self.profileFileLabel.setStyleSheet("color: green; font-weight: bold;")
 
-                    if self.serial_manager.is_connected():
-                        self.serial_manager.sendSET("profile", self.profile_steps)
-                        self.profile_upload_pending = True
-                        self._update_profile_button_states()
-                        self.log(
-                            f"📤 Uploading {len(self.profile_steps)} profile steps to controller...",
-                            "info",
-                        )
-                        self.event_logger.log_event(
-                            f"Profile upload requested: {len(self.profile_steps)} steps"
-                        )
-                    else:
-                        self.log(
-                            "⚠️ Connect to the controller to upload the loaded profile.",
-                            "warning",
-                        )
+                try:
+                    self.profile_steps = self._convert_profile_points_to_steps(self.profile_data)
+                except ValueError as exc:
+                    self.profile_steps = []
+                    self.profile_ready = False
+                    self.profile_upload_pending = False
+                    self._update_profile_button_states()
+                    error_message = f"Profile conversion error: {exc}"
+                    self.log(f"❌ {error_message}", "error")
+                    QMessageBox.warning(self, "Profile Error", error_message)
+                    return
 
+                if not self.profile_steps:
+                    self.profile_ready = False
+                    self.profile_upload_pending = False
+                    self._update_profile_button_states()
+                    self.log("❌ Profile did not produce any steps", "error")
+                    QMessageBox.warning(
+                        self,
+                        "Profile Error",
+                        "The loaded profile did not produce any controller steps."
+                    )
+                    return
+
+                self.profile_ready = False
+                self.profile_upload_pending = False
+                self._update_profile_button_states()
+
+                self.log(
+                    f"✅ Profile loaded: {filename} ({len(self.profile_data)} points)",
+                    "success",
+                )
+                self.event_logger.log_event(
+                    f"PROFILE_LOADED file={filename} points={len(self.profile_data)}"
+                )
+
+                if self.serial_manager.is_connected():
+                    self.serial_manager.sendSET("profile", self.profile_steps)
+                    self.profile_upload_pending = True
+                    self._update_profile_button_states()
+                    self.log(
+                        f"📤 Uploading {len(self.profile_steps)} profile steps to controller...",
+                        "info",
+                    )
+                    self.event_logger.log_event(
+                        f"Profile upload requested: {len(self.profile_steps)} steps"
+                    )
                 else:
-                    self.log(f"❌ Failed to load profile: {file_name}", "error")
-                    QMessageBox.warning(self, "Load Error", "Failed to load the selected profile file.")
+                    self.log(
+                        "⚠️ Connect to the controller to upload the loaded profile.",
+                        "warning",
+                    )
 
         except Exception as e:
             self.log(f"❌ Error loading profile: {e}", "error")

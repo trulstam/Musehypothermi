@@ -43,6 +43,7 @@ void triggerFailsafe(const char* reason) {
             pid.abortAutotune();
         }
 
+        pid.applyManualOutputPercent(0.0f);
         pid.stop();
         profileManager.stop();
 

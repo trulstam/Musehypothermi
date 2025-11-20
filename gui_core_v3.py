@@ -2142,6 +2142,9 @@ class MainWindow(QMainWindow):
         self.last_cooling_limit = 35.0
         self.last_equilibrium_temp: Optional[float] = None
         self.last_equilibrium_valid: bool = False
+        self.failsafe_active: bool = False
+        self.last_failsafe_reason: str = ""
+        self.panic_active: bool = False
         self.pc_failsafe_dialog_shown = False
         self.profile_data = []
         self.profile_steps = []
@@ -2907,6 +2910,13 @@ class MainWindow(QMainWindow):
         try:
             self.data_update_count += 1
 
+            if "failsafe_active" in data:
+                self._apply_failsafe_state(
+                    bool(data.get("failsafe_active", False)),
+                    data.get("failsafe_reason", "Unknown"),
+                    log_event=True,
+                )
+
             has_sensor_data = self._has_sensor_payload(data)
             if has_sensor_data and self.connection_established:
                 if self.data_logger is None:
@@ -2945,6 +2955,39 @@ class MainWindow(QMainWindow):
                 
         except Exception as e:
             self.log(f"❌ Data processing error: {e}", "error")
+
+    def _apply_failsafe_state(self, active: bool, reason: str = "Unknown", *, log_event: bool = False):
+        """Update UI + logs when failsafe state changes."""
+
+        reason_text = reason or "Unknown"
+        previous_state = self.failsafe_active
+        self.failsafe_active = active
+        self.last_failsafe_reason = reason_text
+
+        if active:
+            self.failsafeIndicator.setText(f"🔴 FAILSAFE: {reason_text}")
+            self.failsafeIndicator.setStyleSheet("color: #dc3545; font-weight: bold;")
+            if hasattr(self, "emergencyStateValue"):
+                self.emergencyStateValue.setText(f"🚨 {reason_text}")
+                self.emergencyStateValue.setStyleSheet("font-weight: bold; color: #dc3545;")
+            if log_event and not previous_state:
+                self.event_logger.log_event(f"EVENT: FAILSAFE_TRIGGERED ({reason_text})")
+                if self.data_logger is not None:
+                    self.data_logger.log_event(f"FAILSAFE_TRIGGERED ({reason_text})")
+                self.log(f"🚨 FAILSAFE ACTIVE: {reason_text}", "error")
+        else:
+            self.failsafeIndicator.setText("🟢 Safe")
+            self.failsafeIndicator.setStyleSheet("color: #28a745; font-weight: bold;")
+            if hasattr(self, "emergencyStateValue"):
+                self.emergencyStateValue.setText("✅ Clear")
+                self.emergencyStateValue.setStyleSheet("font-weight: bold; color: #28a745;")
+            self.pc_failsafe_dialog_shown = False
+            self.panic_active = False
+            if log_event and previous_state:
+                self.event_logger.log_event("EVENT: FAILSAFE_CLEARED")
+                if self.data_logger is not None:
+                    self.data_logger.log_event("FAILSAFE_CLEARED")
+                self.log("✅ Failsafe cleared", "info")
 
     def on_serial_line(self, direction: str, line: str):
         """Append raw TX/RX serial lines to the Serial Monitor tab."""
@@ -2992,14 +3035,7 @@ class MainWindow(QMainWindow):
         """Handle PC-side failsafe activation in the GUI thread."""
 
         try:
-            self.failsafeIndicator.setText("🔴 FAILSAFE: pc_watchdog")
-            self.failsafeIndicator.setStyleSheet("color: #dc3545; font-weight: bold;")
-
-            if hasattr(self, "emergencyStateValue"):
-                self.emergencyStateValue.setText("🚨 pc_watchdog")
-                self.emergencyStateValue.setStyleSheet(
-                    "font-weight: bold; color: #dc3545;"
-                )
+            self._apply_failsafe_state(True, "pc_watchdog", log_event=True)
 
             if not self.pc_failsafe_dialog_shown:
                 QMessageBox.warning(
@@ -3087,23 +3123,6 @@ class MainWindow(QMainWindow):
     def update_status_indicators(self, data: Dict[str, Any]):
         """Update status indicators"""
         try:
-            # Failsafe
-            if "failsafe_active" in data:
-                if data["failsafe_active"]:
-                    reason = data.get("failsafe_reason", "Unknown")
-                    self.failsafeIndicator.setText(f"🔴 FAILSAFE: {reason}")
-                    self.failsafeIndicator.setStyleSheet("color: #dc3545; font-weight: bold;")
-                    if hasattr(self, "emergencyStateValue"):
-                        self.emergencyStateValue.setText(f"🚨 {reason}")
-                        self.emergencyStateValue.setStyleSheet("font-weight: bold; color: #dc3545;")
-                else:
-                    self.failsafeIndicator.setText("🟢 Safe")
-                    self.failsafeIndicator.setStyleSheet("color: #28a745; font-weight: bold;")
-                    if hasattr(self, "emergencyStateValue"):
-                        self.emergencyStateValue.setText("✅ Clear")
-                        self.emergencyStateValue.setStyleSheet("font-weight: bold; color: #28a745;")
-                    self.pc_failsafe_dialog_shown = False
-
             mode_value = None
             if "pid_mode" in data:
                 mode_value = str(data["pid_mode"])
@@ -3574,9 +3593,14 @@ class MainWindow(QMainWindow):
                 if not self.connection_established:
                     self.log("❌ Not connected", "error")
                     return
-                    
+
                 self.serial_manager.sendCMD("panic", "")
-                self.event_logger.log_event("CMD: panic triggered")
+                self.event_logger.log_event("EVENT: PANIC_TRIGGERED")
+                if self.data_logger is not None:
+                    self.data_logger.log_event("PANIC_TRIGGERED")
+                self.panic_active = True
+                self._apply_failsafe_state(True, "gui_panic_triggered", log_event=True)
+
                 self.log("🚨 PANIC TRIGGERED!", "error")
                 QMessageBox.critical(self, "PANIC", "🚨 PANIC triggered!")
                 
@@ -3589,9 +3613,14 @@ class MainWindow(QMainWindow):
             if not self.connection_established:
                 self.log("❌ Not connected", "error")
                 return
-                
-            self.serial_manager.sendCMD("failsafe_clear", "")
+
+            self.serial_manager.sendCMD("failsafe", "clear")
             self.event_logger.log_event("CMD: failsafe_clear")
+            if self.data_logger is not None:
+                self.data_logger.log_event("FAILSAFE_CLEAR_REQUESTED")
+            self.failsafe_active = False
+            self.panic_active = False
+            self.serial_manager.failsafe_triggered_flag = False
             self.log("🔧 Failsafe clear requested", "command")
             
         except Exception as e:

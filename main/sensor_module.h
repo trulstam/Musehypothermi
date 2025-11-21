@@ -4,11 +4,7 @@
 #ifndef SENSOR_MODULE_H
 #define SENSOR_MODULE_H  // <-- DETTE ER VIKTIG!
 
-#ifdef HOST_BUILD
-#include "host_sim/Arduino_host.h"
-#else
-#include <Arduino.h>  // <-- IKKE "sensor_module.h"!
-#endif
+#include "arduino_platform.h"  // <-- IKKE "sensor_module.h"!
 
 class SensorModule {
   public:

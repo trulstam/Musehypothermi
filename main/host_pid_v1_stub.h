@@ -1,6 +1,12 @@
 #pragma once
 #include <cmath>
-#include "host_sim/host_arduino_stubs.h"
+
+#ifndef SIMULATION_MODE
+#define SIMULATION_MODE 0
+#endif
+
+#if SIMULATION_MODE
+#include "../simulation/host_arduino_stubs.h"
 
 #define AUTOMATIC 1
 #define MANUAL 0
@@ -45,3 +51,4 @@ private:
     double lastError {0.0};
     double integral {0.0};
 };
+#endif

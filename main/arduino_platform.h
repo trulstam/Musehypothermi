@@ -5,7 +5,7 @@
 #endif
 
 #if SIMULATION_MODE
-#include "host_arduinojson_stub.h"
+#include "../simulation/Arduino_host.h"
 #else
-#include <ArduinoJson.h>
+#include <Arduino.h>
 #endif

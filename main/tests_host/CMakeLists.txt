@@ -3,6 +3,7 @@ project(muse_host_tests CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 add_compile_definitions(HOST_BUILD)
+add_compile_definitions(SIMULATION_MODE=1)
 
 include_directories(..)
 

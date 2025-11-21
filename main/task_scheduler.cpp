@@ -9,11 +9,7 @@
 #include "eeprom_manager.h"
 #include "comm_api.h"
 
-#ifdef HOST_BUILD
-#include "host_sim/Arduino_host.h"
-#else
-#include <Arduino.h>
-#endif
+#include "arduino_platform.h"
 
 // === Eksterne moduler ===
 extern AsymmetricPIDModule pid;  // Changed from PIDModule

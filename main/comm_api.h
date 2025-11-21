@@ -1,7 +1,11 @@
 #ifndef COMM_API_H
 #define COMM_API_H
 
+#ifdef HOST_BUILD
+#include "host_sim/Arduino_host.h"
+#else
 #include <Arduino.h>
+#endif
 #include <ArduinoJson.h>
 
 class CommAPI {

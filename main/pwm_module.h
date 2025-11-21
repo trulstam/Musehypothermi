@@ -1,6 +1,26 @@
 #ifndef PWM_MODULE_H
 #define PWM_MODULE_H
 
+#ifdef HOST_BUILD
+class PWMModule {
+public:
+    PWMModule() = default;
+    void begin() {}
+
+    void setDutyCycle(int duty) {
+        if (duty > 2399) duty = 2399;
+        if (duty < 0) duty = 0;
+        lastDutyCycle = duty;
+    }
+
+    void stopPWM() { lastDutyCycle = 0; }
+
+    int getLastDutyCycle() const { return lastDutyCycle; }
+
+private:
+    int lastDutyCycle {0};
+};
+#else
 #include <stdint.h>
 
 class PWMModule {
@@ -19,5 +39,6 @@ private:
 
     int lastDutyCycle {0};
 };
+#endif
 
 #endif

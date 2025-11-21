@@ -1,5 +1,10 @@
 #include "pwm_module.h"
-#include "Arduino.h"
+
+#ifdef HOST_BUILD
+#include "host_sim/Arduino_host.h"
+#else
+#include <Arduino.h>
+#endif
 
 PWMModule::PWMModule() {}
 

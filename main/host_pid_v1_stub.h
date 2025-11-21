@@ -1,6 +1,6 @@
 #pragma once
 #include <cmath>
-#include "host_arduino_stubs.h"
+#include "host_sim/host_arduino_stubs.h"
 
 #define AUTOMATIC 1
 #define MANUAL 0

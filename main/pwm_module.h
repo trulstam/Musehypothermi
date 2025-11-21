@@ -1,7 +1,11 @@
 #ifndef PWM_MODULE_H
 #define PWM_MODULE_H
 
-#ifdef HOST_BUILD
+#ifndef SIMULATION_MODE
+#define SIMULATION_MODE 0
+#endif
+
+#if SIMULATION_MODE
 class PWMModule {
 public:
     PWMModule() = default;

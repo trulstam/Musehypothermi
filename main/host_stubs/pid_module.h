@@ -1,5 +1,7 @@
 #pragma once
-#include "../host_sim/host_firmware_stubs.h"
+
+#if SIMULATION_MODE
+#include "../../simulation/host_firmware_stubs.h"
 
 class PIDModule {
 public:
@@ -16,3 +18,4 @@ private:
     double Setpoint {0.0};
     PID pid {&Input, &Output, &Setpoint, 2.0, 0.5, 1.0, DIRECT};
 };
+#endif

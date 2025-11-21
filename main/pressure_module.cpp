@@ -1,11 +1,7 @@
 // ===================== pressure_module.cpp =====================
 #include "pressure_module.h"
 
-#ifdef HOST_BUILD
-#include "host_sim/Arduino_host.h"
-#else
-#include <Arduino.h>
-#endif
+#include "arduino_platform.h"
 #include "sensor_module.h"
 
 extern SensorModule sensors;

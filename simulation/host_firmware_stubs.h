@@ -1,6 +1,8 @@
 #pragma once
+
+#if SIMULATION_MODE
 #include "host_arduino_stubs.h"
-#include "host_pid_v1_stub.h"
+#include "../main/host_pid_v1_stub.h"
 
 class EEPROMManager {
 public:
@@ -55,3 +57,4 @@ public:
 };
 
 static CommAPI comm;
+#endif

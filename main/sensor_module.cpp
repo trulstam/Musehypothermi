@@ -1,11 +1,7 @@
 // ===================== sensor_module.cpp =====================
 #include "sensor_module.h"
 
-#ifdef HOST_BUILD
-#include "host_sim/Arduino_host.h"
-#else
-#include <Arduino.h>
-#endif
+#include "arduino_platform.h"
 #include <math.h>
 #include "pid_module_asymmetric.h"
 

@@ -3,11 +3,7 @@
 #ifndef PRESSURE_MODULE_H
 #define PRESSURE_MODULE_H
 
-#ifdef HOST_BUILD
-#include "host_sim/Arduino_host.h"
-#else
-#include <Arduino.h>
-#endif
+#include "arduino_platform.h"
 
 class PressureModule {
   public:

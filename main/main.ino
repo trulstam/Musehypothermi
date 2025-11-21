@@ -1,3 +1,5 @@
+#define SIMULATION_MODE 0
+
 #include <Arduino.h>
 #include "comm_api.h"
 #include "task_scheduler.h"

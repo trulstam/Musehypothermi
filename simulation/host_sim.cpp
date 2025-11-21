@@ -1,10 +1,10 @@
 #include <cstdio>
 #include "host_firmware_stubs.h"
-#include "../host_stubs/pid_module.h"
-#include "../host_stubs/profile_manager.h"
-#include "../host_stubs/comm_api.h"
-#include "../host_stubs/sensor_module.h"
-#include "../host_stubs/pressure_module.h"
+#include "../main/host_stubs/pid_module.h"
+#include "../main/host_stubs/profile_manager.h"
+#include "../main/host_stubs/comm_api.h"
+#include "../main/host_stubs/sensor_module.h"
+#include "../main/host_stubs/pressure_module.h"
 
 SensorModule sensors;
 PressureModule pressure;

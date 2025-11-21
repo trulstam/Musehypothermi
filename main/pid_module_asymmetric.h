@@ -97,7 +97,7 @@ public:
     void startEquilibriumEstimation();
     void estimateEquilibrium();
     void updateEquilibriumEstimationTask();
-#ifdef HOST_BUILD
+#if SIMULATION_MODE
     void setEquilibriumStateForTest(double temp, bool valid, bool estimating);
 #endif
 

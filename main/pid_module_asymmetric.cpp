@@ -3,11 +3,7 @@
 #include "comm_api.h"
 #include "sensor_module.h"
 
-#ifdef HOST_BUILD
-#include "host_sim/Arduino_host.h"
-#else
-#include <Arduino.h>
-#endif
+#include "arduino_platform.h"
 #include <ArduinoJson.h>
 #include <PID_v1.h>
 #include <math.h>
@@ -1084,7 +1080,7 @@ void AsymmetricPIDModule::setAutotunePhase(AutotunePhase phase) {
 }
 
 void AsymmetricPIDModule::publishAutotuneProgress(unsigned long now, float temperature) {
-#ifndef HOST_BUILD
+#if !SIMULATION_MODE
     StaticJsonDocument<256> doc;
     doc["autotune_time"] = now - autotuneStartMillis;
     doc["autotune_temp"] = temperature;
@@ -1128,7 +1124,7 @@ void AsymmetricPIDModule::finalizeAutotune(bool success) {
 }
 
 bool AsymmetricPIDModule::calculateAutotuneResults() {
-#ifdef HOST_BUILD
+#if SIMULATION_MODE
     autotuneStatusString = "done";
     return true;
 #else
@@ -1582,7 +1578,7 @@ void AsymmetricPIDModule::enterPanicState() {
     ensureOutputsOff();
 }
 
-#ifdef HOST_BUILD
+#if SIMULATION_MODE
 void AsymmetricPIDModule::setEquilibriumStateForTest(double temp, bool valid, bool estimating) {
     equilibriumTemp = temp;
     equilibriumValid = valid;

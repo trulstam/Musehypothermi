@@ -1,5 +1,4 @@
 #include <cstdio>
-#include "Arduino_host.h"
 #include "host_firmware_stubs.h"
 #include "../host_stubs/pid_module.h"
 #include "../host_stubs/profile_manager.h"

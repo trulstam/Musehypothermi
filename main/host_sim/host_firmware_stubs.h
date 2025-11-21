@@ -1,5 +1,5 @@
 #pragma once
-#include "host_sim/host_arduino_stubs.h"
+#include "host_arduino_stubs.h"
 #include "host_pid_v1_stub.h"
 
 class EEPROMManager {

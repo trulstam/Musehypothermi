@@ -3,7 +3,11 @@
 #include "comm_api.h"
 #include "sensor_module.h"
 
+#ifdef HOST_BUILD
+#include "host_sim/Arduino_host.h"
+#else
 #include <Arduino.h>
+#endif
 #include <ArduinoJson.h>
 #include <PID_v1.h>
 #include <math.h>

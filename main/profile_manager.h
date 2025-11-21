@@ -1,7 +1,11 @@
 #ifndef PROFILE_MANAGER_H
 #define PROFILE_MANAGER_H
 
+#ifdef HOST_BUILD
+#include "host_sim/Arduino_host.h"
+#else
 #include <Arduino.h>
+#endif
 
 class ProfileManager {
   public:

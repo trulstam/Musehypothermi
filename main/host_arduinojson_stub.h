@@ -3,7 +3,7 @@
 #include <unordered_map>
 #include <variant>
 #include <vector>
-#include "host_arduino_stubs.h"
+#include "host_sim/host_arduino_stubs.h"
 
   class JsonObject;
   class JsonArray;

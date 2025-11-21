@@ -150,6 +150,8 @@ void runTasks() {
     if (now - lastPIDUpdate >= 100) {
         if (pid.isAutotuneActive()) {
             pid.runAsymmetricAutotune();  // Changed from runAutotune()
+        } else if (pid.isEquilibriumEstimating()) {
+            pid.updateEquilibriumEstimationTask();
         } else if (pid.isActive()) {
             pid.update(sensors.getRectalTemp());
         }

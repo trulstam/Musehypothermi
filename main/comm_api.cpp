@@ -249,6 +249,13 @@ void CommAPI::handleCommand(const String &jsonString) {
         } else if (action == "abort_asymmetric_autotune") {
             pid.abortAutotune();
             sendResponse("Asymmetric autotune aborted");
+        } else if (action == "equilibrium") {
+            if (state == "estimate") {
+                pid.startEquilibriumEstimation();
+                sendResponse("Equilibrium estimation started");
+            } else {
+                sendResponse("Unknown equilibrium command");
+            }
         } else {
             sendResponse("Unknown CMD action");
         }
@@ -328,6 +335,12 @@ void CommAPI::handleCommand(const String &jsonString) {
             } else {
                 parseProfile(value.as<JsonArray>());
             }
+
+        } else if (variable == "equilibrium_compensation") {
+            bool enable = set["value"];
+            pid.setUseEquilibriumCompensation(enable);
+            sendResponse(enable ? "Equilibrium compensation enabled" :
+                                  "Equilibrium compensation disabled");
 
         } else {
             sendResponse("Unknown SET variable");
@@ -423,6 +436,8 @@ void CommAPI::sendData() {
     doc["pid_cooling_kd"] = pid.getCoolingKd();
     doc["equilibrium_temp"] = pid.getEquilibriumTemp();
     doc["equilibrium_valid"] = pid.isEquilibriumValid();
+    doc["equilibrium_estimating"] = pid.isEquilibriumEstimating();
+    doc["equilibrium_compensation_active"] = pid.isEquilibriumCompensationEnabled();
     serializeJson(doc, *serial);
     serial->println();
 }
@@ -456,6 +471,8 @@ void CommAPI::sendStatus() {
     doc["asymmetric_autotune_active"] = pid.isAutotuneActive();
     doc["equilibrium_temp"] = pid.getEquilibriumTemp();
     doc["equilibrium_valid"] = pid.isEquilibriumValid();
+    doc["equilibrium_estimating"] = pid.isEquilibriumEstimating();
+    doc["equilibrium_compensation_active"] = pid.isEquilibriumCompensationEnabled();
     doc["pid_max_output"] = pid.getMaxOutputPercent();
     doc["pid_heating_limit"] = pid.getHeatingOutputLimit();
     doc["pid_cooling_limit"] = pid.getCoolingOutputLimit();
@@ -533,6 +550,7 @@ void CommAPI::sendConfig() {
     doc["cooling_rate_limit"] = pid.getCoolingRateLimit();
     doc["deadband"] = pid.getCurrentDeadband();
     doc["safety_margin"] = pid.getSafetyMargin();
+    doc["equilibrium_compensation_active"] = pid.isEquilibriumCompensationEnabled();
     serializeJson(doc, *serial);
     serial->println();
 }

@@ -2142,6 +2142,8 @@ class MainWindow(QMainWindow):
         self.last_cooling_limit = 35.0
         self.last_equilibrium_temp: Optional[float] = None
         self.last_equilibrium_valid: bool = False
+        self.equilibrium_estimating: bool = False
+        self.equilibrium_comp_enabled: bool = False
         self.failsafe_active: bool = False
         self.last_failsafe_reason: str = ""
         self.panic_active: bool = False
@@ -2282,8 +2284,25 @@ class MainWindow(QMainWindow):
         self.equilibriumLabel = QLabel("Equilibrium: --")
         self.equilibriumLabel.setStyleSheet("color: #555; font-weight: bold;")
         status_row.addWidget(self.equilibriumLabel)
-        
+
         status_row.addStretch()
+
+        # Equilibrium controls
+        equilibrium_row = QHBoxLayout()
+        self.equilibriumEstimateButton = QPushButton("Estimate Equilibrium")
+        self.equilibriumEstimateButton.setCursor(Qt.PointingHandCursor)
+        self.equilibriumEstimateButton.clicked.connect(self.request_equilibrium_estimate)
+        equilibrium_row.addWidget(self.equilibriumEstimateButton)
+
+        self.equilibriumStateLabel = QLabel("Equilibrium: idle")
+        self.equilibriumStateLabel.setStyleSheet("color: #6c757d; font-weight: bold;")
+        equilibrium_row.addWidget(self.equilibriumStateLabel)
+
+        self.equilibriumCompCheckbox = QCheckBox("Use equilibrium compensation")
+        self.equilibriumCompCheckbox.stateChanged.connect(self.toggle_equilibrium_compensation)
+        equilibrium_row.addWidget(self.equilibriumCompCheckbox)
+
+        equilibrium_row.addStretch()
         
         # Emergency row
         emergency_row = QHBoxLayout()
@@ -2304,9 +2323,10 @@ class MainWindow(QMainWindow):
         self.panicButton.clicked.connect(self.trigger_panic)
         emergency_row.addWidget(self.panicButton)
         emergency_row.addStretch()
-        
+
         conn_layout.addLayout(port_row)
         conn_layout.addLayout(status_row)
+        conn_layout.addLayout(equilibrium_row)
         conn_layout.addLayout(emergency_row)
         conn_group.setLayout(conn_layout)
         layout.addWidget(conn_group)
@@ -2902,6 +2922,34 @@ class MainWindow(QMainWindow):
             self.log(f"❌ Command error: {e}", "error")
             return False
 
+    def request_equilibrium_estimate(self):
+        """Trigger an explicit equilibrium measurement on the controller."""
+        if self.send_and_log_cmd("equilibrium", "estimate"):
+            self.equilibrium_estimating = True
+            self.equilibriumStateLabel.setText("Equilibrium: estimating…")
+            self.equilibriumStateLabel.setStyleSheet(
+                "color: #b07d11; font-weight: bold;"
+            )
+
+    def toggle_equilibrium_compensation(self, state):
+        """Enable/disable equilibrium compensation flag on Arduino."""
+        enable = self.equilibriumCompCheckbox.isChecked()
+        if not self.connection_established:
+            with QSignalBlocker(self.equilibriumCompCheckbox):
+                self.equilibriumCompCheckbox.setChecked(self.equilibrium_comp_enabled)
+            self.log("❌ Not connected", "error")
+            return
+
+        try:
+            self.serial_manager.sendSET("equilibrium_compensation", bool(enable))
+            self.event_logger.log_event(
+                f"SET: equilibrium_compensation → {enable}")
+            msg = "🧭 Equilibrium compensation enabled" if enable else \
+                  "🧭 Equilibrium compensation disabled"
+            self.log(msg, "info")
+        except Exception as exc:
+            self.log(f"❌ Could not update equilibrium compensation: {exc}", "error")
+
     def process_incoming_data(self, data: Dict[str, Any]):
         """Process incoming data from Arduino"""
         if not data:
@@ -3180,6 +3228,37 @@ class MainWindow(QMainWindow):
                     self.equilibriumLabel.setText("Equilibrium: (måles)")
                     self.equilibriumLabel.setStyleSheet("color: #b07d11; font-weight: bold;")
                     self.last_equilibrium_valid = False
+
+            if "equilibrium_estimating" in data:
+                self.equilibrium_estimating = bool(data.get("equilibrium_estimating", False))
+
+            if "equilibrium_compensation_active" in data and hasattr(self, "equilibriumCompCheckbox"):
+                enabled = bool(data.get("equilibrium_compensation_active", False))
+                self.equilibrium_comp_enabled = enabled
+                with QSignalBlocker(self.equilibriumCompCheckbox):
+                    self.equilibriumCompCheckbox.setChecked(enabled)
+
+            if hasattr(self, "equilibriumStateLabel"):
+                if self.equilibrium_estimating:
+                    self.equilibriumStateLabel.setText("Equilibrium: estimating…")
+                    self.equilibriumStateLabel.setStyleSheet(
+                        "color: #b07d11; font-weight: bold;"
+                    )
+                    if not self.last_equilibrium_valid:
+                        self.equilibriumLabel.setText("Equilibrium: (måles)")
+                        self.equilibriumLabel.setStyleSheet(
+                            "color: #b07d11; font-weight: bold;"
+                        )
+                elif self.last_equilibrium_valid and self.last_equilibrium_temp is not None:
+                    self.equilibriumStateLabel.setText("Equilibrium: ready")
+                    self.equilibriumStateLabel.setStyleSheet(
+                        "color: #1e7e34; font-weight: bold;"
+                    )
+                else:
+                    self.equilibriumStateLabel.setText("Equilibrium: idle")
+                    self.equilibriumStateLabel.setStyleSheet(
+                        "color: #6c757d; font-weight: bold;"
+                    )
 
             profile_state_updated = False
             if "profile_active" in data:

@@ -80,6 +80,8 @@ public:
     }
     float getEquilibriumTemp() const { return static_cast<float>(equilibriumTemp); }
     bool isEquilibriumValid() const { return equilibriumValid; }
+    bool isEquilibriumEstimating() const { return equilibriumEstimating; }
+    bool isEquilibriumCompensationEnabled() const { return useEquilibriumCompensation; }
 
     // Compatibility setters
     void setTargetTemp(float value) { Setpoint = value; }
@@ -87,6 +89,10 @@ public:
     void setKi(float value);
     void setKd(float value);
     void setMaxOutputPercent(float percent, bool persist = true);
+    void setUseEquilibriumCompensation(bool enabled) { useEquilibriumCompensation = enabled; }
+    void startEquilibriumEstimation();
+    void estimateEquilibrium();
+    void updateEquilibriumEstimationTask();
 
     // Autotune functionality
     void startAutotune();  // Standard autotune for compatibility
@@ -127,10 +133,13 @@ private:
     bool emergencyStop;
     bool autotuneActive;
     const char* autotuneStatusString;
-    
+
     // Debug
     bool debugEnabled;
-    
+
+    // Equilibrium compensation flag
+    bool useEquilibriumCompensation;
+
     // Safety features
     double maxCoolingRate;
     unsigned long lastUpdateTime;
@@ -151,7 +160,7 @@ private:
     void applyRateLimiting();
     void applyOutputSmoothing();
     void resetOutputState();
-    void updateEquilibriumEstimate();
+    void updatePassiveEquilibriumEstimate();
     double computeFeedforward();
 
     // PID switching logic
@@ -211,6 +220,16 @@ private:
     unsigned long equilibriumMinStableMs;
     double lastEquilibriumCheckTemp;
     unsigned long lastEquilibriumCheckMillis;
+    bool equilibriumEstimating;
+    unsigned long equilibriumEstimateStart;
+    unsigned long equilibriumStableStart;
+    unsigned long equilibriumLastSample;
+    double equilibriumLastSampleTemp;
+    double equilibriumAccumulatedTemp;
+    size_t equilibriumStableSamples;
+    unsigned long equilibriumMaxDurationMs;
+    unsigned long equilibriumSampleIntervalMs;
+    double equilibriumSlopeThreshold;
     double kff;
 
     void resetAutotuneState();

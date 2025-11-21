@@ -14,6 +14,7 @@ class PressureModule {
 
     void resetBreathMonitor();
     float getBreathRate();
+    void setSimulatedBreathRate(float bpm) { breathsPerMinute = bpm; }
 
   private:
     void samplePressure();

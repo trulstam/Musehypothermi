@@ -94,9 +94,12 @@ void CommAPI::handleCommand(const String &jsonString) {
 
         } else if (action == "profile") {
             if (state == "start") {
-                profileManager.start();
-                sendResponse("Profile started");
-                sendEvent("Profile started");
+                if (profileManager.start()) {
+                    sendResponse("Profile started");
+                    sendEvent("Profile started");
+                } else {
+                    sendResponse("Profile blocked");
+                }
             } else if (state == "pause") {
                 profileManager.pause();
                 sendResponse("Profile paused");
@@ -139,9 +142,14 @@ void CommAPI::handleCommand(const String &jsonString) {
             }
 
         } else if (action == "panic") {
-            triggerFailsafe("gui_panic_triggered");
-            sendEvent("Failsafe triggered: gui_panic_triggered");
+            triggerPanic("gui_panic_triggered");
+            sendEvent("Panic triggered: gui_panic_triggered");
             sendResponse("GUI panic triggered");
+
+        } else if (action == "clear_panic") {
+            clearPanic();
+            sendEvent("Panic cleared by GUI");
+            sendResponse("Panic cleared");
 
         } else if (action == "save_eeprom") {
             saveAllToEEPROM(); sendResponse("EEPROM save complete");
@@ -358,6 +366,7 @@ void CommAPI::parseProfile(JsonArray arr) {
 
     if (profileLen > ProfileManager::MAX_STEPS) {
         sendResponse("Profile too long");
+        return;
     }
 
     ProfileManager::ProfileStep steps[ProfileManager::MAX_STEPS];
@@ -397,7 +406,11 @@ void CommAPI::parseProfile(JsonArray arr) {
         return;
     }
 
-    profileManager.loadProfile(steps, static_cast<uint8_t>(loadedSteps));
+    if (!profileManager.loadProfile(steps, static_cast<uint8_t>(loadedSteps))) {
+        sendResponse("Profile rejected");
+        return;
+    }
+
     sendResponse("Profile loaded");
 }
 
@@ -421,7 +434,10 @@ void CommAPI::sendData() {
     doc["anal_probe_temp"] = sensors.getRectalTemp();
     doc["pid_output"] = pid.getOutput();
     doc["breath_freq_bpm"] = pressure.getBreathRate();
-    doc["failsafe"] = isFailsafeActive();
+    doc["failsafe_active"] = isFailsafeActive();
+    doc["failsafe_reason"] = getFailsafeReason();
+    doc["panic_active"] = isPanicActive();
+    doc["panic_reason"] = getPanicReason();
     doc["plate_target_active"] = pid.getActivePlateTarget();
     doc["cooling_mode"] = pid.isCooling();
     doc["temperature_rate"] = pid.getTemperatureRate();
@@ -446,6 +462,8 @@ void CommAPI::sendFailsafeStatus() {
     StaticJsonDocument<256> doc;
     doc["failsafe_active"] = isFailsafeActive();
     doc["failsafe_reason"] = getFailsafeReason();
+    doc["panic_active"] = isPanicActive();
+    doc["panic_reason"] = getPanicReason();
     serializeJson(doc, *serial);
     serial->println();
 }
@@ -454,6 +472,8 @@ void CommAPI::sendStatus() {
     StaticJsonDocument<512> doc;
     doc["failsafe_active"] = isFailsafeActive();
     doc["failsafe_reason"] = getFailsafeReason();
+    doc["panic_active"] = isPanicActive();
+    doc["panic_reason"] = getPanicReason();
     doc["cooling_plate_temp"] = sensors.getCoolingPlateTemp();
     doc["anal_probe_temp"] = sensors.getRectalTemp();
     doc["pid_output"] = pid.getOutput();
@@ -466,6 +486,7 @@ void CommAPI::sendStatus() {
     doc["autotune_active"] = pid.isAutotuneActive();
     doc["autotune_status"] = pid.getAutotuneStatus();
     doc["cooling_mode"] = pid.isCooling();
+    doc["pid_mode"] = pid.isCooling() ? "cooling" : "heating";
     doc["emergency_stop"] = pid.isEmergencyStop();
     doc["temperature_rate"] = pid.getTemperatureRate();
     doc["asymmetric_autotune_active"] = pid.isAutotuneActive();

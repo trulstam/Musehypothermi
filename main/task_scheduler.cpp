@@ -23,6 +23,10 @@ extern CommAPI comm;  // Brukes til sendEvent()
 static bool failsafeActive = false;
 static const char* failsafeReason = "";
 
+// === Panic status ===
+static bool panicActive = false;
+static const char* panicReason = "";
+
 // === Heartbeat monitor ===
 unsigned long lastHeartbeatMillis = 0;
 
@@ -35,17 +39,16 @@ int breathingTimeoutMs = 10000; // kan lastes fra EEPROM senere
 
 // === Trigger failsafe ===
 void triggerFailsafe(const char* reason) {
+    if (panicActive) {
+        return;
+    }
+
     if (!failsafeActive) {
         failsafeActive = true;
         failsafeReason = reason;
 
-        if (pid.isAutotuneActive()) {
-            pid.abortAutotune();
-        }
-
-        pid.applyManualOutputPercent(0.0f);
-        pid.stop();
-        profileManager.stop();
+        pid.enterFailsafeState();
+        profileManager.abortDueToSafety("failsafe");
 
         String msg = "⚠️ FAILSAFE TRIGGERED: ";
         msg += reason;
@@ -64,6 +67,37 @@ bool isFailsafeActive() {
 
 const char* getFailsafeReason() {
     return failsafeReason;
+}
+
+void triggerPanic(const char* reason) {
+    if (panicActive) {
+        return;
+    }
+
+    panicActive = true;
+    panicReason = reason ? reason : "panic_triggered";
+    clearFailsafe();
+
+    pid.enterPanicState();
+    profileManager.abortDueToSafety("panic");
+
+    String msg = "🚨 PANIC TRIGGERED: ";
+    msg += panicReason;
+    comm.sendEvent(msg);
+}
+
+void clearPanic() {
+    panicActive = false;
+    panicReason = "";
+    pid.ensureOutputsOff();
+}
+
+bool isPanicActive() {
+    return panicActive;
+}
+
+const char* getPanicReason() {
+    return panicReason;
 }
 
 // === Heartbeat received ===
@@ -125,8 +159,17 @@ void runTasks() {
         triggerFailsafe("heartbeat_timeout");
     }
 
+    // === Panic overrides everything ===
+    if (isPanicActive()) {
+        pid.enterPanicState();
+        profileManager.abortDueToSafety("panic");
+        return;
+    }
+
     // === If failsafe active, skip remaining tasks ===
     if (isFailsafeActive()) {
+        pid.enterFailsafeState();
+        profileManager.abortDueToSafety("failsafe");
         return;
     }
 

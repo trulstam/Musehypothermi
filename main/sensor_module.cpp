@@ -74,3 +74,8 @@ void SensorModule::setCoolingCalibration(double offset) {
 void SensorModule::setRectalCalibration(double offset) {
   calibrationOffsetRectal = offset;
 }
+
+void SensorModule::setSimulatedTemps(double plate, double rectal) {
+  cachedCoolingPlateTemp = plate;
+  cachedRectalTemp = rectal;
+}

@@ -42,6 +42,11 @@ public:
 inline void triggerFailsafe(const char*) {}
 inline void clearFailsafe() {}
 inline bool isFailsafeActive() { return false; }
+inline const char* getFailsafeReason() { return ""; }
+inline void triggerPanic(const char*) {}
+inline void clearPanic() {}
+inline bool isPanicActive() { return false; }
+inline const char* getPanicReason() { return ""; }
 
 class CommAPI {
 public:

@@ -356,8 +356,13 @@ void AsymmetricPIDModule::begin(EEPROMManager &eepromManager) {
 }
 
 void AsymmetricPIDModule::update(double /*currentTemp*/) {
+    if (isPanicActive()) {
+        enterPanicState();
+        return;
+    }
+
     if (emergencyStop || isFailsafeActive()) {
-        stop();
+        enterFailsafeState();
         return;
     }
 
@@ -840,6 +845,11 @@ void AsymmetricPIDModule::startAutotune() {
 void AsymmetricPIDModule::startAsymmetricAutotune(float requestedStepPercent,
                                                  const char* direction,
                                                  float requestedDelta) {
+    if (isPanicActive() || isFailsafeActive()) {
+        comm.sendEvent("⚠️ Autotune blocked: panic/failsafe active");
+        return;
+    }
+
     if (autotuneActive) {
         comm.sendEvent("⚠️ Asymmetric autotune already running");
         return;
@@ -1070,6 +1080,7 @@ void AsymmetricPIDModule::setAutotunePhase(AutotunePhase phase) {
 }
 
 void AsymmetricPIDModule::publishAutotuneProgress(unsigned long now, float temperature) {
+#ifndef HOST_BUILD
     StaticJsonDocument<256> doc;
     doc["autotune_time"] = now - autotuneStartMillis;
     doc["autotune_temp"] = temperature;
@@ -1079,6 +1090,10 @@ void AsymmetricPIDModule::publishAutotuneProgress(unsigned long now, float tempe
     doc["autotune_delta"] = temperature - autotuneBaselineTemp;
     serializeJson(doc, Serial);
     Serial.println();
+#else
+    (void)now;
+    (void)temperature;
+#endif
 }
 
 void AsymmetricPIDModule::finalizeAutotune(bool success) {
@@ -1109,6 +1124,10 @@ void AsymmetricPIDModule::finalizeAutotune(bool success) {
 }
 
 bool AsymmetricPIDModule::calculateAutotuneResults() {
+#ifdef HOST_BUILD
+    autotuneStatusString = "done";
+    return true;
+#else
     if (autotuneLogIndex < 10) {
         comm.sendEvent("Autotune aborted: insufficient samples");
         return false;
@@ -1345,6 +1364,7 @@ bool AsymmetricPIDModule::calculateAutotuneResults() {
     }
 
     return true;
+#endif
 }
 
 void AsymmetricPIDModule::abortAutotune() {
@@ -1501,6 +1521,12 @@ bool AsymmetricPIDModule::isDebugEnabled() {
 }
 
 void AsymmetricPIDModule::start() {
+    if (isPanicActive() || isFailsafeActive()) {
+        comm.sendEvent("⚠️ PID start blocked: panic/failsafe active");
+        ensureOutputsOff();
+        return;
+    }
+
     clearFailsafe();
     active = true;
     equilibriumEstimating = false;
@@ -1519,10 +1545,46 @@ void AsymmetricPIDModule::stop() {
     active = false;
     equilibriumEstimating = false;
     resetOutputState();
-    digitalWrite(8, LOW);
-    digitalWrite(7, LOW);
+    ensureOutputsOff();
     comm.sendEvent("⏹️ Asymmetric PID stopped");
 }
+
+void AsymmetricPIDModule::ensureOutputsOff() {
+    applyManualOutputPercent(0.0f);
+    pwm.stopPWM();
+    digitalWrite(8, LOW);
+    digitalWrite(7, LOW);
+}
+
+void AsymmetricPIDModule::enterFailsafeState() {
+    if (autotuneActive) {
+        abortAutotune();
+    }
+    active = false;
+    equilibriumEstimating = false;
+    coolingPID.SetMode(MANUAL);
+    heatingPID.SetMode(MANUAL);
+    resetOutputState();
+    ensureOutputsOff();
+}
+
+void AsymmetricPIDModule::enterPanicState() {
+    autotuneActive = false;
+    active = false;
+    equilibriumEstimating = false;
+    coolingPID.SetMode(MANUAL);
+    heatingPID.SetMode(MANUAL);
+    resetOutputState();
+    ensureOutputsOff();
+}
+
+#ifdef HOST_BUILD
+void AsymmetricPIDModule::setEquilibriumStateForTest(double temp, bool valid, bool estimating) {
+    equilibriumTemp = temp;
+    equilibriumValid = valid;
+    equilibriumEstimating = estimating;
+}
+#endif
 
 bool AsymmetricPIDModule::isActive() {
     return active;

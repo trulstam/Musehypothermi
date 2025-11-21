@@ -4,11 +4,16 @@
 #include "pid_module_asymmetric.h"    // Trengs for autotune abort ved failsafe
 #include "comm_api.h"      // Trengs for comm.sendEvent()
 
-// Failsafe-funksjoner
+// Failsafe/Panic-funksjoner
 void triggerFailsafe(const char* reason);
 void clearFailsafe();
 bool isFailsafeActive();
 const char* getFailsafeReason();
+
+void triggerPanic(const char* reason);
+void clearPanic();
+bool isPanicActive();
+const char* getPanicReason();
 
 // Heartbeat monitor
 void heartbeatReceived();

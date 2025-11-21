@@ -18,6 +18,7 @@ class SensorModule {
 
     void setCoolingCalibration(double offset);
     void setRectalCalibration(double offset);
+    void setSimulatedTemps(double plate, double rectal);
 
   private:
     double convertRawToTemp(int raw);

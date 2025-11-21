@@ -9,6 +9,7 @@
 
 // Forward declarations for external functions
 bool isFailsafeActive();
+bool isPanicActive();
 void clearFailsafe();
 
 // Global PWM tracker for simulation
@@ -43,6 +44,9 @@ public:
     bool isActive();
     
     // Safety controls
+    void enterFailsafeState();
+    void enterPanicState();
+    void ensureOutputsOff();
     void setEmergencyStop(bool enabled);
     void setCoolingRateLimit(float maxCoolingRatePerSecond, bool persist = true);
     
@@ -93,6 +97,9 @@ public:
     void startEquilibriumEstimation();
     void estimateEquilibrium();
     void updateEquilibriumEstimationTask();
+#ifdef HOST_BUILD
+    void setEquilibriumStateForTest(double temp, bool valid, bool estimating);
+#endif
 
     // Autotune functionality
     void startAutotune();  // Standard autotune for compatibility

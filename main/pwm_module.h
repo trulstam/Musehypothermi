@@ -10,9 +10,14 @@ public:
     void setDutyCycle(int duty); // 0–2399 (20kHz PWM)
     void stopPWM();           // Stopper teller og setter duty til 0
 
+    // Host/test visibility for latest duty command
+    int getLastDutyCycle() const { return lastDutyCycle; }
+
 private:
     void configurePin6();     // Setter opp pin 6 (P313) for GPT0
     void enableGPT0();        // Init GPT0 med 20kHz PWM
+
+    int lastDutyCycle {0};
 };
 
 #endif

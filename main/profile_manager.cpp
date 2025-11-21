@@ -2,12 +2,14 @@
 #include "pid_module_asymmetric.h"
 #include "sensor_module.h"
 #include "task_scheduler.h"
+#include "comm_api.h"
 
 // 👉🏻 Opprett den globale instansen av ProfileManager
 ProfileManager profileManager;
 
 extern AsymmetricPIDModule pid;
 extern SensorModule sensors;
+extern CommAPI comm;
 
 ProfileManager::ProfileManager()
   : profileLength(0), active(false), paused(false),
@@ -18,18 +20,26 @@ void ProfileManager::begin() {
   paused = false;
 }
 
-void ProfileManager::loadProfile(const ProfileStep* steps, uint8_t length) {
-  if (length == 0) return;
+bool ProfileManager::loadProfile(const ProfileStep* steps, uint8_t length) {
+  if (length == 0 || length > MAX_STEPS) {
+    profileLength = 0;
+    return false;
+  }
 
-  profileLength = min<uint8_t>(length, MAX_STEPS);
+  profileLength = length;
 
   for (uint8_t i = 0; i < profileLength; i++) {
     profile[i] = steps[i];
   }
+  return true;
 }
 
-void ProfileManager::start() {
-  if (profileLength == 0) return;
+bool ProfileManager::start() {
+  if (profileLength == 0) return false;
+  if (isFailsafeActive() || isPanicActive()) {
+    comm.sendEvent("⚠️ Profile start blocked: safety active");
+    return false;
+  }
   active = true;
   paused = false;
   currentStep = 0;
@@ -37,6 +47,7 @@ void ProfileManager::start() {
   totalPausedMs = 0;
   applyCurrentTarget();
   pid.start();
+  return true;
 }
 
 void ProfileManager::pause() {
@@ -48,6 +59,10 @@ void ProfileManager::pause() {
 
 void ProfileManager::resume() {
   if (!paused) return;
+  if (isFailsafeActive() || isPanicActive()) {
+    comm.sendEvent("⚠️ Profile resume blocked: safety active");
+    return;
+  }
   paused = false;
   uint32_t pauseDuration = millis() - pauseStartTimeMs;
   totalPausedMs += pauseDuration;
@@ -59,6 +74,19 @@ void ProfileManager::stop() {
   paused = false;
   currentStep = 0;
   pid.stop();
+}
+
+void ProfileManager::abortDueToSafety(const char* reason) {
+  if (!active && !paused) {
+    currentStep = 0;
+    return;
+  }
+  active = false;
+  paused = false;
+  currentStep = 0;
+  pid.ensureOutputsOff();
+  pid.setEmergencyStop(false);
+  comm.sendEvent(String("Profile aborted due to ") + (reason ? reason : "safety"));
 }
 
 bool ProfileManager::isActive() { return active; }
@@ -76,8 +104,17 @@ uint32_t ProfileManager::getRemainingTime() {
 }
 
 void ProfileManager::update() {
-  if (!active || paused || isFailsafeActive()) {
-    if (isFailsafeActive()) stop();
+  if (isPanicActive()) {
+    abortDueToSafety("panic");
+    return;
+  }
+
+  if (isFailsafeActive()) {
+    abortDueToSafety("failsafe");
+    return;
+  }
+
+  if (!active || paused) {
     return;
   }
 

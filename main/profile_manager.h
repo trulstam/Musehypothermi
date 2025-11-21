@@ -17,12 +17,13 @@ class ProfileManager {
     void begin();
     void update();
 
-    void loadProfile(const ProfileStep* steps, uint8_t length);
+    bool loadProfile(const ProfileStep* steps, uint8_t length);
 
-    void start();
+    bool start();
     void pause();
     void resume();
     void stop();
+    void abortDueToSafety(const char* reason);
 
     bool isActive();
     bool isPaused();

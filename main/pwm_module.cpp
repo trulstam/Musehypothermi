@@ -4,11 +4,16 @@
 PWMModule::PWMModule() {}
 
 void PWMModule::begin() {
+#ifndef HOST_BUILD
     configurePin6();
     enableGPT0();
+#else
+    lastDutyCycle = 0;
+#endif
 }
 
 void PWMModule::configurePin6() {
+#ifndef HOST_BUILD
     R_PMISC->PWPR_b.B0WI = 0;
     R_PMISC->PWPR_b.PFSWE = 1;
 
@@ -17,9 +22,11 @@ void PWMModule::configurePin6() {
 
     R_PMISC->PWPR_b.PFSWE = 0;
     R_PMISC->PWPR_b.B0WI = 1;
+#endif
 }
 
 void PWMModule::enableGPT0() {
+#ifndef HOST_BUILD
     R_MSTP->MSTPCRD_b.MSTPD5 = 0;  // Enable GPT0
     R_GPT0->GTCR = 0x0000;         // Stop timer
     R_GPT0->GTUDDTYC = 0x0000;     // Count up
@@ -29,15 +36,24 @@ void PWMModule::enableGPT0() {
     R_GPT0->GTCCR[0] = 0;          // Start with 0% duty
 
     R_GPT0->GTCR_b.CST = 1;        // Start counter
+#else
+    lastDutyCycle = 0;
+#endif
 }
 
 void PWMModule::setDutyCycle(int duty) {
     if (duty > 2399) duty = 2399;
     if (duty < 0) duty = 0;
+    lastDutyCycle = duty;
+#ifndef HOST_BUILD
     R_GPT0->GTCCR[0] = duty;
+#endif
 }
 
 void PWMModule::stopPWM() {
+    lastDutyCycle = 0;
+#ifndef HOST_BUILD
     R_GPT0->GTCCR[0] = 0;          // ← nullstill duty til 0
     R_GPT0->GTCR_b.CST = 0;        // ← stopp teller
+#endif
 }

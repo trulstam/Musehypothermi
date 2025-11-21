@@ -33,6 +33,10 @@ constexpr unsigned long kSampleTimeMs = 100;
 constexpr double kDefaultEquilibriumEpsilon = 0.02;
 constexpr unsigned long kDefaultEquilibriumStableMs = 60000;
 constexpr double kDefaultFeedforwardGain = 15.0;
+constexpr unsigned long kEquilibriumEstimateMinStableMs = 300000;   // 5 minutes
+constexpr unsigned long kEquilibriumEstimateMaxDurationMs = 600000; // 10 minutes
+constexpr unsigned long kEquilibriumEstimateSampleMs = 1000;
+constexpr double kEquilibriumEstimateSlopeThreshold = 0.01;         // °C/s
 
 constexpr float kHeatingKpMin = 0.05f;
 constexpr float kHeatingKpMax = 40.0f;
@@ -295,14 +299,19 @@ AsymmetricPIDModule::AsymmetricPIDModule()
       Input(0.0), Setpoint(kDefaultTargetTemp), rawPIDOutput(0.0), finalOutput(0.0),
       coolingOutput(0.0), heatingOutput(0.0),
       active(false), coolingMode(false), emergencyStop(false), autotuneActive(false),
-      autotuneStatusString("idle"), debugEnabled(false),
+      autotuneStatusString("idle"), debugEnabled(false), useEquilibriumCompensation(false),
       maxCoolingRate(kDefaultCoolingRate), lastUpdateTime(0),
       lastTemperature(0.0), temperatureRate(0.0),
       outputSmoothingFactor(kOutputSmoothingFactor), lastOutput(0.0),
       eeprom(nullptr), equilibriumTemp(0.0), equilibriumValid(false),
       equilibriumTimestamp(0), equilibriumEpsilon(kDefaultEquilibriumEpsilon),
       equilibriumMinStableMs(kDefaultEquilibriumStableMs), lastEquilibriumCheckTemp(0.0),
-      lastEquilibriumCheckMillis(0), kff(kDefaultFeedforwardGain) {
+      lastEquilibriumCheckMillis(0), equilibriumEstimating(false), equilibriumEstimateStart(0),
+      equilibriumStableStart(0), equilibriumLastSample(0), equilibriumLastSampleTemp(0.0),
+      equilibriumAccumulatedTemp(0.0), equilibriumStableSamples(0),
+      equilibriumMaxDurationMs(kEquilibriumEstimateMaxDurationMs),
+      equilibriumSampleIntervalMs(kEquilibriumEstimateSampleMs),
+      equilibriumSlopeThreshold(kEquilibriumEstimateSlopeThreshold), kff(kDefaultFeedforwardGain) {
 
     // Initialize default parameters
     currentParams.kp_cooling = kDefaultCoolingKp;
@@ -360,8 +369,14 @@ void AsymmetricPIDModule::update(double /*currentTemp*/) {
         return;
     }
 
+    if (equilibriumEstimating) {
+        updateEquilibriumEstimationTask();
+        return;
+    }
+
     if (!active) {
         resetOutputState();
+        updatePassiveEquilibriumEstimate();
         return;
     }
 
@@ -375,7 +390,7 @@ void AsymmetricPIDModule::update(double /*currentTemp*/) {
     lastTemperature = Input;
 
     if (!autotuneActive) {
-        updateEquilibriumEstimate();
+        updatePassiveEquilibriumEstimate();
     }
 
     if (temperatureRate < -maxCoolingRate) {
@@ -475,15 +490,26 @@ bool AsymmetricPIDModule::checkSafetyLimits(double currentTemp, double targetTem
 }
 
 void AsymmetricPIDModule::applySafetyConstraints() {
+    double coolingLimit = static_cast<double>(currentParams.cooling_limit);
+    double heatingLimit = static_cast<double>(currentParams.heating_limit);
+
+    if (useEquilibriumCompensation && equilibriumValid) {
+        constexpr double kEquilibriumScaleWindow = 5.0;  // °C span for full output
+        double distance = fabs(Setpoint - equilibriumTemp);
+        double scale = constrain(distance / kEquilibriumScaleWindow, 0.2, 1.0);
+        coolingLimit *= scale;
+        heatingLimit *= scale;
+    }
+
     if (coolingMode) {
         double distance = fabs(Input - Setpoint);
         if (distance < 2.0) {
             double scale = distance / 2.0;
             rawPIDOutput *= scale;
         }
-        rawPIDOutput = max(rawPIDOutput, static_cast<double>(currentParams.cooling_limit));
+        rawPIDOutput = max(rawPIDOutput, coolingLimit);
     } else {
-        rawPIDOutput = min(rawPIDOutput, static_cast<double>(currentParams.heating_limit));
+        rawPIDOutput = min(rawPIDOutput, heatingLimit);
     }
 }
 
@@ -514,7 +540,101 @@ void AsymmetricPIDModule::resetOutputState() {
     currentPwmOutput = 0;
 }
 
-void AsymmetricPIDModule::updateEquilibriumEstimate() {
+void AsymmetricPIDModule::startEquilibriumEstimation() {
+    if (autotuneActive) {
+        abortAutotune();
+    }
+
+    coolingPID.SetMode(MANUAL);
+    heatingPID.SetMode(MANUAL);
+    active = false;
+
+    equilibriumEstimating = true;
+    equilibriumEstimateStart = millis();
+    equilibriumStableStart = 0;
+    equilibriumLastSample = 0;
+    equilibriumStableSamples = 0;
+    equilibriumAccumulatedTemp = 0.0;
+    equilibriumValid = false;
+    equilibriumLastSampleTemp = sensors.getCoolingPlateTemp();
+
+    applyManualOutputPercent(0.0f);
+
+    comm.sendEvent("♒︎ Equilibrium estimation started (PWM=0)");
+}
+
+void AsymmetricPIDModule::estimateEquilibrium() { startEquilibriumEstimation(); }
+
+void AsymmetricPIDModule::updateEquilibriumEstimationTask() {
+    if (!equilibriumEstimating) {
+        return;
+    }
+
+    applyManualOutputPercent(0.0f);
+
+    unsigned long now = millis();
+    if (equilibriumEstimateStart == 0) {
+        equilibriumEstimateStart = now;
+    }
+
+    if (equilibriumLastSample != 0 &&
+        (now - equilibriumLastSample) < equilibriumSampleIntervalMs) {
+        return;
+    }
+
+    double currentTemp = sensors.getCoolingPlateTemp();
+    if (equilibriumLastSample == 0) {
+        equilibriumLastSample = now;
+        equilibriumLastSampleTemp = currentTemp;
+        return;
+    }
+
+    double deltaTemp = currentTemp - equilibriumLastSampleTemp;
+    double deltaTime = static_cast<double>(now - equilibriumLastSample) / 1000.0;
+    double slope = deltaTime > 0.0 ? deltaTemp / deltaTime : 0.0;
+
+    bool stable = fabs(slope) < equilibriumSlopeThreshold;
+    equilibriumLastSample = now;
+    equilibriumLastSampleTemp = currentTemp;
+
+    if (stable) {
+        if (equilibriumStableStart == 0) {
+            equilibriumStableStart = now;
+            equilibriumAccumulatedTemp = 0.0;
+            equilibriumStableSamples = 0;
+        }
+
+        equilibriumAccumulatedTemp += currentTemp;
+        equilibriumStableSamples++;
+
+        if (now - equilibriumStableStart >= kEquilibriumEstimateMinStableMs) {
+            equilibriumTemp = equilibriumAccumulatedTemp /
+                              std::max<size_t>(equilibriumStableSamples, 1);
+            equilibriumValid = true;
+            equilibriumEstimating = false;
+            resetOutputState();
+            comm.sendEvent("♒︎ Equilibrium estimation completed");
+            return;
+        }
+    } else {
+        equilibriumStableStart = 0;
+        equilibriumAccumulatedTemp = 0.0;
+        equilibriumStableSamples = 0;
+    }
+
+    if (now - equilibriumEstimateStart >= equilibriumMaxDurationMs) {
+        if (equilibriumStableSamples > 0) {
+            equilibriumTemp = equilibriumAccumulatedTemp /
+                              std::max<size_t>(equilibriumStableSamples, 1);
+            equilibriumValid = true;
+        }
+        equilibriumEstimating = false;
+        resetOutputState();
+        comm.sendEvent("⚠️ Equilibrium estimation ended (timeout)");
+    }
+}
+
+void AsymmetricPIDModule::updatePassiveEquilibriumEstimate() {
     int pwmMax = MAX_PWM * (getMaxOutputPercent() / 100.0f);
     if (fabs(finalOutput) > 0.05 * pwmMax) {
         lastEquilibriumCheckMillis = 0;
@@ -1383,6 +1503,7 @@ bool AsymmetricPIDModule::isDebugEnabled() {
 void AsymmetricPIDModule::start() {
     clearFailsafe();
     active = true;
+    equilibriumEstimating = false;
     resetOutputState();
     coolingPID.SetMode(AUTOMATIC);
     heatingPID.SetMode(AUTOMATIC);
@@ -1396,6 +1517,7 @@ void AsymmetricPIDModule::stop() {
     coolingPID.SetMode(MANUAL);
     heatingPID.SetMode(MANUAL);
     active = false;
+    equilibriumEstimating = false;
     resetOutputState();
     digitalWrite(8, LOW);
     digitalWrite(7, LOW);

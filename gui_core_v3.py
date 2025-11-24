@@ -2417,9 +2417,13 @@ class MainWindow(QMainWindow):
         if self.disable_breath_check:
             self.log("⚠️ Breath-stop check disabled (test mode)", "warning")
             self.event_logger.log_event("EVENT: breath_check_disabled")
+            if self.serial_manager.is_connected():
+                self.serial_manager.sendSET("breath_check_enabled", False)
         else:
             self.log("✅ Breath-stop check enabled", "info")
             self.event_logger.log_event("EVENT: breath_check_enabled")
+            if self.serial_manager.is_connected():
+                self.serial_manager.sendSET("breath_check_enabled", True)
 
     def create_live_data_panel(self):
         """Create live data display"""

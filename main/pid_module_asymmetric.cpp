@@ -40,7 +40,8 @@ constexpr double kDefaultFeedforwardGain = 15.0;
 constexpr unsigned long kEquilibriumEstimateMinStableMs = 300000;   // 5 minutes
 constexpr unsigned long kEquilibriumEstimateMaxDurationMs = 600000; // 10 minutes
 constexpr unsigned long kEquilibriumEstimateSampleMs = 1000;
-constexpr double kEquilibriumEstimateSlopeThreshold = 0.01;         // °C/s
+// Allow for the observed ±0.01–0.02°C sensor jitter when deciding stability
+constexpr double kEquilibriumEstimateSlopeThreshold = 0.02;         // °C/s
 
 constexpr float kHeatingKpMin = 0.05f;
 constexpr float kHeatingKpMax = 40.0f;

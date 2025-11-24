@@ -16,8 +16,8 @@ extern CommAPI comm;
 int currentPwmOutput = 0;
 
 namespace {
-constexpr uint8_t kDirectionPinIn3 = 4;  // H-bridge IN3 (direction)
-constexpr uint8_t kDirectionPinIn4 = 5;  // H-bridge IN4 (direction)
+constexpr uint8_t kDirectionPinIn3 = 5;  // H-bridge IN3 (direction)
+constexpr uint8_t kDirectionPinIn4 = 4;  // H-bridge IN4 (direction)
 
 constexpr float kDefaultHeatingKp = 2.0f;
 constexpr float kDefaultHeatingKi = 0.5f;

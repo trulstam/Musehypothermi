@@ -351,6 +351,12 @@ void CommAPI::handleCommand(const String &jsonString) {
             sendResponse(enable ? "Equilibrium compensation enabled" :
                                   "Equilibrium compensation disabled");
 
+        } else if (variable == "breath_check_enabled") {
+            bool enable = set["value"];
+            setBreathCheckEnabled(enable);
+            sendResponse(enable ? "Breath-stop check enabled" :
+                                  "Breath-stop check disabled");
+
         } else {
             sendResponse("Unknown SET variable");
         }
@@ -437,6 +443,7 @@ void CommAPI::sendData() {
     doc["breath_freq_bpm"] = pressure.getBreathRate();
     doc["failsafe_active"] = isFailsafeActive();
     doc["failsafe_reason"] = getFailsafeReason();
+    doc["breath_check_enabled"] = isBreathCheckEnabled();
     doc["panic_active"] = isPanicActive();
     doc["panic_reason"] = getPanicReason();
     doc["plate_target_active"] = pid.getActivePlateTarget();
@@ -463,6 +470,7 @@ void CommAPI::sendFailsafeStatus() {
     StaticJsonDocument<256> doc;
     doc["failsafe_active"] = isFailsafeActive();
     doc["failsafe_reason"] = getFailsafeReason();
+    doc["breath_check_enabled"] = isBreathCheckEnabled();
     doc["panic_active"] = isPanicActive();
     doc["panic_reason"] = getPanicReason();
     serializeJson(doc, *serial);
@@ -473,6 +481,7 @@ void CommAPI::sendStatus() {
     StaticJsonDocument<512> doc;
     doc["failsafe_active"] = isFailsafeActive();
     doc["failsafe_reason"] = getFailsafeReason();
+    doc["breath_check_enabled"] = isBreathCheckEnabled();
     doc["panic_active"] = isPanicActive();
     doc["panic_reason"] = getPanicReason();
     doc["cooling_plate_temp"] = sensors.getCoolingPlateTemp();
@@ -569,6 +578,7 @@ void CommAPI::sendConfig() {
     doc["target_temp"] = pid.getTargetTemp();
     doc["debug_level"] = pid.isDebugEnabled() ? 1 : 0;
     doc["failsafe_timeout"] = heartbeatTimeoutMs;
+    doc["breath_check_enabled"] = isBreathCheckEnabled();
     doc["cooling_rate_limit"] = pid.getCoolingRateLimit();
     doc["deadband"] = pid.getCurrentDeadband();
     doc["safety_margin"] = pid.getSafetyMargin();

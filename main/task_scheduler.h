@@ -9,6 +9,8 @@ void triggerFailsafe(const char* reason);
 void clearFailsafe();
 bool isFailsafeActive();
 const char* getFailsafeReason();
+void setBreathCheckEnabled(bool enabled);
+bool isBreathCheckEnabled();
 
 void triggerPanic(const char* reason);
 void clearPanic();

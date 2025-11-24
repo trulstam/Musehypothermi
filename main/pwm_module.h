@@ -14,10 +14,12 @@ public:
 
     // Host/test visibility for latest duty command
     int getLastDutyCycle() const { return lastDutyCycle; }
+    float getLastDutyPercent() const { return lastDutyPercent; }
 
 private:
     PwmOut _pwm;
     int lastDutyCycle {0};
+    float lastDutyPercent {0.0f};
 };
 
 #endif

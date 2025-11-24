@@ -8,25 +8,17 @@ void PWMModule::begin() {
 }
 
 void PWMModule::setDutyCycle(int duty) {
-    if (duty > 2399) {
-        duty = 2399;
-    } else if (duty < 0) {
-        duty = 0;
-    }
+    const int clampedDuty = constrain(duty, 0, 2399);
+    lastDutyCycle = clampedDuty;
 
-    lastDutyCycle = duty;
+    const float dutyPercent = (static_cast<float>(clampedDuty) * 100.0f) / 2399.0f;
+    lastDutyPercent = constrain(dutyPercent, 0.0f, 100.0f);
 
-    float dutyPercent = static_cast<float>(duty) * 100.0f / 2399.0f;
-    if (dutyPercent > 100.0f) {
-        dutyPercent = 100.0f;
-    } else if (dutyPercent < 0.0f) {
-        dutyPercent = 0.0f;
-    }
-
-    _pwm.pulse_perc(dutyPercent);
+    _pwm.pulse_perc(lastDutyPercent);
 }
 
 void PWMModule::stopPWM() {
     lastDutyCycle = 0;
+    lastDutyPercent = 0.0f;
     _pwm.pulse_perc(0.0f);
 }

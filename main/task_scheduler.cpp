@@ -40,7 +40,7 @@ int breathingTimeoutMs = 10000; // kan lastes fra EEPROM senere
 // === Panic Button ===
 // No physical panic input is wired right now; keep it disabled with -1 so
 // nothing can trigger panic from a floating pin. If you move the button to a
-// free GPIO (pin 7 is already used by the PID direction output), set the pin
+// free GPIO (pins 4 and 5 are already used by the PID direction outputs), set the pin
 // number here: it will be configured with INPUT_PULLUP in initTasks() and a
 // LOW level will trigger panic in checkPanicButton().
 static constexpr int PANIC_BUTTON_PIN = -1;
@@ -162,7 +162,7 @@ void initTasks() {
 
 // === Check panic button (deaktivert – pin ikke koblet) ===
 void checkPanicButton() {
-    // Deaktivert fordi pin 7 ikke er koblet til fysisk knapp.
+    // Deaktivert fordi ingen pin er koblet til fysisk knapp.
     // Hvis du kobler opp en knapp senere, fjern kommentaren under:
     /*
     if (digitalRead(PANIC_BUTTON_PIN) == LOW) {

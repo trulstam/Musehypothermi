@@ -353,6 +353,11 @@ void AsymmetricPIDModule::begin(EEPROMManager &eepromManager) {
 
     pwm.begin();
 
+    pinMode(7, OUTPUT);  // RETRAIT
+    pinMode(8, OUTPUT);  // RETRAIT
+    digitalWrite(7, LOW);
+    digitalWrite(8, LOW);
+
     comm.sendEvent("🔧 Asymmetric PID controller ready");
 }
 

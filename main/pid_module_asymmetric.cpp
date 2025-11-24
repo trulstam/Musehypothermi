@@ -396,8 +396,19 @@ void AsymmetricPIDModule::update(double /*currentTemp*/) {
 
     if (lastUpdateTime != 0) {
         double deltaT = static_cast<double>(now - lastUpdateTime) / 1000.0;
-        if (deltaT > 0.0) {
-            temperatureRate = (Input - lastTemperature) / deltaT;
+        if (deltaT >= 0.05) {
+            double instantaneousRate = (Input - lastTemperature) / deltaT;
+
+            // Ignore impossible spikes that can be caused by sensor noise or
+            // timer jitter. A 120 W Peltier on a small aluminium plate cannot
+            // create tens of degrees per second changes, so treat anything
+            // beyond this window as a transient outlier.
+            constexpr double kMaxPlausibleRate = 30.0;  // °C/s guardrail
+            if (fabs(instantaneousRate) < kMaxPlausibleRate) {
+                constexpr double kRateAlpha = 0.2;  // exponential smoothing
+                temperatureRate = (1.0 - kRateAlpha) * temperatureRate +
+                                  kRateAlpha * instantaneousRate;
+            }
         }
     }
     lastUpdateTime = now;

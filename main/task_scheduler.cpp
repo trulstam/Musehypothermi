@@ -38,7 +38,9 @@ int heartbeatTimeoutMs = 5000;  // default, lastes i initTasks
 int breathingTimeoutMs = 10000; // kan lastes fra EEPROM senere
 
 // === Panic Button ===
-#define PANIC_BUTTON_PIN 7
+// Pin 7 is used as a PWM direction pin in the PID module, so keep the panic
+// button disabled unless it is moved to a free GPIO.
+static constexpr int PANIC_BUTTON_PIN = -1;
 
 // === Trigger failsafe ===
 void triggerFailsafe(const char* reason) {
@@ -136,7 +138,9 @@ static unsigned long lastProfileUpdate = 0;
 
 // === Init Tasks ===
 void initTasks() {
-    pinMode(PANIC_BUTTON_PIN, INPUT_PULLUP);  // Kan fjernes hvis ikke i bruk
+    if (PANIC_BUTTON_PIN >= 0) {
+        pinMode(PANIC_BUTTON_PIN, INPUT_PULLUP);  // Kan aktiveres hvis fysisk knapp kobles
+    }
     clearFailsafe();
 
     eeprom.loadFailsafeTimeout(heartbeatTimeoutMs);

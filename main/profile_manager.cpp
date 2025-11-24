@@ -46,7 +46,10 @@ bool ProfileManager::start() {
   profileStartTimeMs = millis();
   totalPausedMs = 0;
   applyCurrentTarget();
-  pid.start();
+  if (!pid.start()) {
+    active = false;
+    return false;
+  }
   return true;
 }
 

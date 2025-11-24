@@ -9,6 +9,8 @@
 #include "eeprom_manager.h"
 #include "comm_api.h"
 
+#include <string.h>
+
 #include "arduino_platform.h"
 
 // === Eksterne moduler ===
@@ -22,6 +24,7 @@ extern CommAPI comm;  // Brukes til sendEvent()
 // === Failsafe status ===
 static bool failsafeActive = false;
 static const char* failsafeReason = "";
+static bool breathCheckEnabled = true;
 
 // === Panic status ===
 static bool panicActive = false;
@@ -67,6 +70,20 @@ bool isFailsafeActive() {
 
 const char* getFailsafeReason() {
     return failsafeReason;
+}
+
+void setBreathCheckEnabled(bool enabled) {
+    breathCheckEnabled = enabled;
+
+    if (!breathCheckEnabled && failsafeActive &&
+        strcmp(failsafeReason, "no_breathing_detected") == 0) {
+        clearFailsafe();
+        comm.sendEvent("✅ Breath-stop failsafe cleared (check disabled)");
+    }
+}
+
+bool isBreathCheckEnabled() {
+    return breathCheckEnabled;
 }
 
 void triggerPanic(const char* reason) {
@@ -184,7 +201,7 @@ void runTasks() {
         pressure.update();
         lastPressureUpdate = now;
 
-        if (pressure.getBreathRate() < 1.0) {
+        if (breathCheckEnabled && pressure.getBreathRate() < 1.0) {
             triggerFailsafe("no_breathing_detected");
         }
     }

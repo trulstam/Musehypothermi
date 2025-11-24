@@ -95,6 +95,11 @@ class AsymmetricPIDControls(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.parent = parent
+        self.emergency_event_history = (
+            parent.emergency_event_history
+            if parent and hasattr(parent, "emergency_event_history")
+            else []
+        )
         self.setup_ui()
         
     def setup_ui(self):
@@ -564,6 +569,16 @@ class AsymmetricPIDControls(QWidget):
 
         except ValueError as e:
             QMessageBox.warning(self, "Invalid Input", f"Safety margin error: {e}")
+
+    def clear_emergency_log(self):
+        """Clear emergency log via parent handler so UI stays in sync."""
+
+        if self.parent and hasattr(self.parent, "clear_emergency_log"):
+            self.parent.clear_emergency_log()
+        else:
+            self.emergency_event_history.clear()
+            if hasattr(self, "emergencyEventList"):
+                self.emergencyEventList.clear()
 
 # ============================================================================
 # Autotune wizard implementation
@@ -3123,10 +3138,15 @@ class MainWindow(QMainWindow):
             if len(self.emergency_event_history) > 50:
                 self.emergency_event_history = self.emergency_event_history[-50:]
 
-            if hasattr(self, "emergencyEventList"):
-                self.emergencyEventList.clear()
-                self.emergencyEventList.addItems(self.emergency_event_history)
-                self.emergencyEventList.scrollToBottom()
+            if (
+                hasattr(self, "asymmetric_controls")
+                and hasattr(self.asymmetric_controls, "emergencyEventList")
+            ):
+                self.asymmetric_controls.emergencyEventList.clear()
+                self.asymmetric_controls.emergencyEventList.addItems(
+                    self.emergency_event_history
+                )
+                self.asymmetric_controls.emergencyEventList.scrollToBottom()
         except Exception as exc:
             print(f"⚠️ Emergency log error: {exc}")
 
@@ -3134,8 +3154,11 @@ class MainWindow(QMainWindow):
         """Clear the in-memory and on-screen emergency event log."""
 
         self.emergency_event_history.clear()
-        if hasattr(self, "emergencyEventList"):
-            self.emergencyEventList.clear()
+        if (
+            hasattr(self, "asymmetric_controls")
+            and hasattr(self.asymmetric_controls, "emergencyEventList")
+        ):
+            self.asymmetric_controls.emergencyEventList.clear()
 
     def on_serial_line(self, direction: str, line: str):
         """Append raw TX/RX serial lines to the Serial Monitor tab."""

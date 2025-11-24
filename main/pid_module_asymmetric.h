@@ -39,7 +39,7 @@ public:
     void begin(EEPROMManager &eepromManager);
     void update(double currentTemp);
     
-    void start();
+    bool start();
     void stop();
     bool isActive();
     

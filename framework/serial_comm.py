@@ -110,8 +110,12 @@ class SerialManager(QObject):
 
     def sendCMD(self, action, state):
         cmd = {"CMD": {"action": action, "state": state}}
-        if action == "failsafe" and state == "clear":
+
+        # Any explicit failsafe clear command should reset the local watchdog flag
+        # so the UI reflects that all failsafe triggers have been cleared.
+        if (action == "failsafe" and state == "clear") or action == "failsafe_clear":
             self.failsafe_triggered_flag = False
+
         self.send(json.dumps(cmd))
 
     def sendSET(self, variable, value):

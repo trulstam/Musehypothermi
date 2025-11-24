@@ -313,6 +313,7 @@ AsymmetricPIDModule::AsymmetricPIDModule()
       lastEquilibriumCheckMillis(0), equilibriumEstimating(false), equilibriumEstimateStart(0),
       equilibriumStableStart(0), equilibriumLastSample(0), equilibriumLastSampleTemp(0.0),
       equilibriumAccumulatedTemp(0.0), equilibriumStableSamples(0),
+      equilibriumUnstableCount(0),
       equilibriumMaxDurationMs(kEquilibriumEstimateMaxDurationMs),
       equilibriumSampleIntervalMs(kEquilibriumEstimateSampleMs),
       equilibriumSlopeThreshold(kEquilibriumEstimateSlopeThreshold), kff(kDefaultFeedforwardGain) {
@@ -579,6 +580,7 @@ void AsymmetricPIDModule::startEquilibriumEstimation() {
     equilibriumStableStart = 0;
     equilibriumLastSample = 0;
     equilibriumStableSamples = 0;
+    equilibriumUnstableCount = 0;
     equilibriumAccumulatedTemp = 0.0;
     equilibriumValid = false;
     equilibriumLastSampleTemp = sensors.getCoolingPlateTemp();
@@ -623,6 +625,8 @@ void AsymmetricPIDModule::updateEquilibriumEstimationTask() {
     equilibriumLastSampleTemp = currentTemp;
 
     if (stable) {
+        equilibriumUnstableCount = 0;
+
         if (equilibriumStableStart == 0) {
             equilibriumStableStart = now;
             equilibriumAccumulatedTemp = 0.0;
@@ -642,9 +646,14 @@ void AsymmetricPIDModule::updateEquilibriumEstimationTask() {
             return;
         }
     } else {
-        equilibriumStableStart = 0;
-        equilibriumAccumulatedTemp = 0.0;
-        equilibriumStableSamples = 0;
+        constexpr size_t kMaxUnstableSamples = 3;
+        equilibriumUnstableCount++;
+        if (equilibriumUnstableCount >= kMaxUnstableSamples) {
+            equilibriumStableStart = 0;
+            equilibriumAccumulatedTemp = 0.0;
+            equilibriumStableSamples = 0;
+            equilibriumUnstableCount = 0;
+        }
     }
 
     if (now - equilibriumEstimateStart >= equilibriumMaxDurationMs) {

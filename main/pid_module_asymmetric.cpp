@@ -16,6 +16,9 @@ extern CommAPI comm;
 int currentPwmOutput = 0;
 
 namespace {
+constexpr uint8_t kDirectionPinIn3 = 4;  // H-bridge IN3 (direction)
+constexpr uint8_t kDirectionPinIn4 = 5;  // H-bridge IN4 (direction)
+
 constexpr float kDefaultHeatingKp = 2.0f;
 constexpr float kDefaultHeatingKi = 0.5f;
 constexpr float kDefaultHeatingKd = 1.0f;
@@ -353,10 +356,10 @@ void AsymmetricPIDModule::begin(EEPROMManager &eepromManager) {
 
     pwm.begin();
 
-    pinMode(7, OUTPUT);  // RETRAIT
-    pinMode(8, OUTPUT);  // RETRAIT
-    digitalWrite(7, LOW);
-    digitalWrite(8, LOW);
+    pinMode(kDirectionPinIn3, OUTPUT);
+    pinMode(kDirectionPinIn4, OUTPUT);
+    digitalWrite(kDirectionPinIn3, LOW);
+    digitalWrite(kDirectionPinIn4, LOW);
 
     comm.sendEvent("🔧 Asymmetric PID controller ready");
 }
@@ -435,14 +438,14 @@ void AsymmetricPIDModule::update(double /*currentTemp*/) {
     int pwmValue = constrain(static_cast<int>(magnitude * MAX_PWM / 100.0), 0, MAX_PWM);
 
     if (finalOutput > 0.0) {
-        digitalWrite(8, LOW);
-        digitalWrite(7, HIGH);
+        digitalWrite(kDirectionPinIn4, LOW);
+        digitalWrite(kDirectionPinIn3, HIGH);
     } else if (finalOutput < 0.0) {
-        digitalWrite(8, HIGH);
-        digitalWrite(7, LOW);
+        digitalWrite(kDirectionPinIn4, HIGH);
+        digitalWrite(kDirectionPinIn3, LOW);
     } else {
-        digitalWrite(8, LOW);
-        digitalWrite(7, LOW);
+        digitalWrite(kDirectionPinIn4, LOW);
+        digitalWrite(kDirectionPinIn3, LOW);
     }
 
     pwm.setDutyCycle(pwmValue);
@@ -806,8 +809,8 @@ void AsymmetricPIDModule::setEmergencyStop(bool enabled) {
     if (enabled) {
         active = false;
         resetOutputState();
-        digitalWrite(8, LOW);
-        digitalWrite(7, LOW);
+        digitalWrite(kDirectionPinIn4, LOW);
+        digitalWrite(kDirectionPinIn3, LOW);
         comm.sendEvent("Emergency stop engaged");
     } else {
         comm.sendEvent("Emergency stop cleared");
@@ -1064,14 +1067,14 @@ void AsymmetricPIDModule::applyManualOutputPercent(float percent) {
 
     int pwmValue = constrain(static_cast<int>(fabs(percent) * MAX_PWM / 100.0f), 0, MAX_PWM);
     if (percent > 0.0f) {
-        digitalWrite(8, LOW);
-        digitalWrite(7, HIGH);
+        digitalWrite(kDirectionPinIn4, LOW);
+        digitalWrite(kDirectionPinIn3, HIGH);
     } else if (percent < 0.0f) {
-        digitalWrite(8, HIGH);
-        digitalWrite(7, LOW);
+        digitalWrite(kDirectionPinIn4, HIGH);
+        digitalWrite(kDirectionPinIn3, LOW);
     } else {
-        digitalWrite(8, LOW);
-        digitalWrite(7, LOW);
+        digitalWrite(kDirectionPinIn4, LOW);
+        digitalWrite(kDirectionPinIn3, LOW);
     }
 
     pwm.setDutyCycle(pwmValue);
@@ -1554,8 +1557,8 @@ void AsymmetricPIDModule::stop() {
 void AsymmetricPIDModule::ensureOutputsOff() {
     applyManualOutputPercent(0.0f);
     pwm.stopPWM();
-    digitalWrite(8, LOW);
-    digitalWrite(7, LOW);
+    digitalWrite(kDirectionPinIn4, LOW);
+    digitalWrite(kDirectionPinIn3, LOW);
 }
 
 void AsymmetricPIDModule::enterFailsafeState() {

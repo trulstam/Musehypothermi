@@ -2166,6 +2166,8 @@ class MainWindow(QMainWindow):
         self.serial_monitor_tx_lines: List[str] = []
         self.serial_monitor_rx_lines: List[str] = []
         self.serial_monitor_max_lines = 500
+        self.disable_breath_check: bool = False
+        self.breath_suppression_notified: bool = False
 
         print("✅ Data structures initialized")
 
@@ -2407,6 +2409,18 @@ class MainWindow(QMainWindow):
         layout.addStretch()
         return panel
 
+    def toggle_breath_check(self, state: int):
+        """Enable/disable suppression of breath-stop failsafes."""
+        self.disable_breath_check = bool(state)
+        self.breath_suppression_notified = False
+
+        if self.disable_breath_check:
+            self.log("⚠️ Breath-stop check disabled (test mode)", "warning")
+            self.event_logger.log_event("EVENT: breath_check_disabled")
+        else:
+            self.log("✅ Breath-stop check enabled", "info")
+            self.event_logger.log_event("EVENT: breath_check_enabled")
+
     def create_live_data_panel(self):
         """Create live data display"""
         panel = QWidget()
@@ -2581,12 +2595,17 @@ class MainWindow(QMainWindow):
         self.clearFailsafeButton.clicked.connect(self.clear_failsafe)
         self.clearFailsafeButton.setStyleSheet("background-color: #fd7e14; color: white; font-weight: bold;")
 
+        self.disableBreathCheckBox = QCheckBox("Disable breath-stop check")
+        self.disableBreathCheckBox.setToolTip("Ignore 'no_breathing_detected' failsafes (for testing only)")
+        self.disableBreathCheckBox.stateChanged.connect(self.toggle_breath_check)
+
         advanced_layout.addWidget(self.refreshPidButton, 0, 0)
         advanced_layout.addWidget(self.applyBothPidButton, 0, 1)
         advanced_layout.addWidget(self.setMaxOutputButton, 1, 0)
         advanced_layout.addWidget(self.saveEEPROMButton, 1, 1)
         advanced_layout.addWidget(self.requestStatusButton, 2, 0)
         advanced_layout.addWidget(self.clearFailsafeButton, 2, 1)
+        advanced_layout.addWidget(self.disableBreathCheckBox, 3, 0, 1, 2)
 
         advanced_group.setLayout(advanced_layout)
         layout.addWidget(advanced_group)
@@ -2957,6 +2976,19 @@ class MainWindow(QMainWindow):
 
         try:
             self.data_update_count += 1
+
+            if (
+                self.disable_breath_check
+                and data.get("failsafe_reason") == "no_breathing_detected"
+            ):
+                if not self.breath_suppression_notified:
+                    self.log("⏸️ Ignoring 'no_breathing_detected' failsafe (test mode)", "warning")
+                    self.event_logger.log_event("EVENT: breath_check_suppressed")
+                    self.breath_suppression_notified = True
+                data = dict(data)
+                data["failsafe_active"] = False
+            else:
+                self.breath_suppression_notified = False
 
             if "failsafe_active" in data:
                 self._apply_failsafe_state(

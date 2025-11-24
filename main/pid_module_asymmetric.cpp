@@ -1080,7 +1080,6 @@ void AsymmetricPIDModule::setAutotunePhase(AutotunePhase phase) {
 }
 
 void AsymmetricPIDModule::publishAutotuneProgress(unsigned long now, float temperature) {
-#if !SIMULATION_MODE
     StaticJsonDocument<256> doc;
     doc["autotune_time"] = now - autotuneStartMillis;
     doc["autotune_temp"] = temperature;
@@ -1090,10 +1089,6 @@ void AsymmetricPIDModule::publishAutotuneProgress(unsigned long now, float tempe
     doc["autotune_delta"] = temperature - autotuneBaselineTemp;
     serializeJson(doc, Serial);
     Serial.println();
-#else
-    (void)now;
-    (void)temperature;
-#endif
 }
 
 void AsymmetricPIDModule::finalizeAutotune(bool success) {
@@ -1124,10 +1119,6 @@ void AsymmetricPIDModule::finalizeAutotune(bool success) {
 }
 
 bool AsymmetricPIDModule::calculateAutotuneResults() {
-#if SIMULATION_MODE
-    autotuneStatusString = "done";
-    return true;
-#else
     if (autotuneLogIndex < 10) {
         comm.sendEvent("Autotune aborted: insufficient samples");
         return false;
@@ -1364,7 +1355,6 @@ bool AsymmetricPIDModule::calculateAutotuneResults() {
     }
 
     return true;
-#endif
 }
 
 void AsymmetricPIDModule::abortAutotune() {
@@ -1577,14 +1567,6 @@ void AsymmetricPIDModule::enterPanicState() {
     resetOutputState();
     ensureOutputsOff();
 }
-
-#if SIMULATION_MODE
-void AsymmetricPIDModule::setEquilibriumStateForTest(double temp, bool valid, bool estimating) {
-    equilibriumTemp = temp;
-    equilibriumValid = valid;
-    equilibriumEstimating = estimating;
-}
-#endif
 
 bool AsymmetricPIDModule::isActive() {
     return active;

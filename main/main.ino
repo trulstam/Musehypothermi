@@ -1,6 +1,10 @@
+// Sett til 1 for å kjøre innebygd simulering på Arduino, 0 for ekte sensorer
+#ifndef SIMULATION_MODE
 #define SIMULATION_MODE 0
+#endif
 
-#include <Arduino.h>
+#include "arduino_platform.h"
+
 #include "comm_api.h"
 #include "task_scheduler.h"
 #include "pid_module_asymmetric.h"

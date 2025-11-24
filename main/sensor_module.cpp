@@ -7,6 +7,7 @@
 
 extern AsymmetricPIDModule pid;
 
+#if SIMULATION_MODE
 static double coolingPlateTemp = 22.0;
 static double rectalTemp = 37.0;
 
@@ -17,6 +18,7 @@ const double plateCoolingLoss = 0.01;
 const double rectalThermalMass = 0.03;
 const double rectalSpecificHeat = 3470.0;
 const double rectalCoupling = 0.02;
+#endif
 
 SensorModule::SensorModule()
   : calibrationOffsetCooling(0.0), calibrationOffsetRectal(0.0),
@@ -28,6 +30,7 @@ void SensorModule::begin() {
 }
 
 void SensorModule::update() {
+#if SIMULATION_MODE
   static unsigned long lastUpdate = millis();
   unsigned long now = millis();
   double deltaTime = (now - lastUpdate) / 1000.0;
@@ -58,6 +61,12 @@ void SensorModule::update() {
 
   cachedCoolingPlateTemp = coolingPlateTemp + calibrationOffsetCooling + noise;
   cachedRectalTemp = rectalTemp + calibrationOffsetRectal + noise;
+#else
+  cachedCoolingPlateTemp = convertRawToTemp(analogRead(COOLING_PLATE_PIN)) +
+                           calibrationOffsetCooling;
+  cachedRectalTemp = convertRawToTemp(analogRead(RECTAL_PROBE_PIN)) +
+                     calibrationOffsetRectal;
+#endif
 }
 
 double SensorModule::getCoolingPlateTemp() {
@@ -79,4 +88,16 @@ void SensorModule::setRectalCalibration(double offset) {
 void SensorModule::setSimulatedTemps(double plate, double rectal) {
   cachedCoolingPlateTemp = plate;
   cachedRectalTemp = rectal;
+}
+
+double SensorModule::convertRawToTemp(int raw) {
+  if (raw <= 0 || raw >= 16383) {
+    Serial.println("{\"err\": \"Sensor raw value out of range\"}");
+    return -273.15;  // Invalid temp marker
+  }
+
+  double voltage = (raw / 16383.0) * 4.096;  // 14-bit ADC scaling
+  double resistance = (voltage / (4.096 - voltage)) * 10000.0;  // 10k pull-up
+  double tempK = 1.0 / (1.0 / 298.15 + (1.0 / 3988.0) * log(resistance / 10000.0));
+  return tempK - 273.15;  // Kelvin to Celsius
 }

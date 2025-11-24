@@ -422,6 +422,8 @@ class MainWindow(QMainWindow):
 
     def clear_failsafe(self):
         self.serial_manager.sendCMD("failsafe_clear", "")
+        # Ensure any PC-side watchdog flag is cleared alongside the firmware state
+        self.serial_manager.failsafe_triggered_flag = False
         self.log("🔧 Sent failsafe_clear command to Arduino")
 
     def save_pid_to_eeprom(self):

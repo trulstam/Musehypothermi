@@ -9,6 +9,8 @@
 #include "eeprom_manager.h"
 #include "comm_api.h"
 
+#include <string.h>
+
 #include "arduino_platform.h"
 
 // === Eksterne moduler ===
@@ -22,6 +24,7 @@ extern CommAPI comm;  // Brukes til sendEvent()
 // === Failsafe status ===
 static bool failsafeActive = false;
 static const char* failsafeReason = "";
+static bool breathCheckEnabled = true;
 
 // === Panic status ===
 static bool panicActive = false;
@@ -35,7 +38,9 @@ int heartbeatTimeoutMs = 5000;  // default, lastes i initTasks
 int breathingTimeoutMs = 10000; // kan lastes fra EEPROM senere
 
 // === Panic Button ===
-#define PANIC_BUTTON_PIN 7
+// Pin 7 is used as a PWM direction pin in the PID module, so keep the panic
+// button disabled unless it is moved to a free GPIO.
+static constexpr int PANIC_BUTTON_PIN = -1;
 
 // === Trigger failsafe ===
 void triggerFailsafe(const char* reason) {
@@ -67,6 +72,20 @@ bool isFailsafeActive() {
 
 const char* getFailsafeReason() {
     return failsafeReason;
+}
+
+void setBreathCheckEnabled(bool enabled) {
+    breathCheckEnabled = enabled;
+
+    if (!breathCheckEnabled && failsafeActive &&
+        strcmp(failsafeReason, "no_breathing_detected") == 0) {
+        clearFailsafe();
+        comm.sendEvent("✅ Breath-stop failsafe cleared (check disabled)");
+    }
+}
+
+bool isBreathCheckEnabled() {
+    return breathCheckEnabled;
 }
 
 void triggerPanic(const char* reason) {
@@ -119,7 +138,9 @@ static unsigned long lastProfileUpdate = 0;
 
 // === Init Tasks ===
 void initTasks() {
-    pinMode(PANIC_BUTTON_PIN, INPUT_PULLUP);  // Kan fjernes hvis ikke i bruk
+    if (PANIC_BUTTON_PIN >= 0) {
+        pinMode(PANIC_BUTTON_PIN, INPUT_PULLUP);  // Kan aktiveres hvis fysisk knapp kobles
+    }
     clearFailsafe();
 
     eeprom.loadFailsafeTimeout(heartbeatTimeoutMs);
@@ -184,7 +205,7 @@ void runTasks() {
         pressure.update();
         lastPressureUpdate = now;
 
-        if (pressure.getBreathRate() < 1.0) {
+        if (breathCheckEnabled && pressure.getBreathRate() < 1.0) {
             triggerFailsafe("no_breathing_detected");
         }
     }

@@ -11,6 +11,8 @@
 bool isFailsafeActive();
 bool isPanicActive();
 void clearFailsafe();
+bool isBreathCheckEnabled();
+const char* getFailsafeReason();
 
 // Global PWM tracker for simulation
 extern int currentPwmOutput;
@@ -39,7 +41,7 @@ public:
     void begin(EEPROMManager &eepromManager);
     void update(double currentTemp);
     
-    void start();
+    bool start();
     void stop();
     bool isActive();
     

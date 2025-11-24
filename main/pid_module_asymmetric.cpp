@@ -8,6 +8,7 @@
 #include <PID_v1.h>
 #include <math.h>
 #include <algorithm>
+#include <string.h>
 
 extern SensorModule sensors;
 extern CommAPI comm;
@@ -351,6 +352,11 @@ void AsymmetricPIDModule::begin(EEPROMManager &eepromManager) {
     heatingPID.SetMode(MANUAL);
 
     pwm.begin();
+
+    pinMode(7, OUTPUT);  // RETRAIT
+    pinMode(8, OUTPUT);  // RETRAIT
+    digitalWrite(7, LOW);
+    digitalWrite(8, LOW);
 
     comm.sendEvent("🔧 Asymmetric PID controller ready");
 }
@@ -1510,11 +1516,16 @@ bool AsymmetricPIDModule::isDebugEnabled() {
     return debugEnabled;
 }
 
-void AsymmetricPIDModule::start() {
+bool AsymmetricPIDModule::start() {
+    if (isFailsafeActive() && !isBreathCheckEnabled() &&
+        strcmp(getFailsafeReason(), "no_breathing_detected") == 0) {
+        clearFailsafe();
+    }
+
     if (isPanicActive() || isFailsafeActive()) {
         comm.sendEvent("⚠️ PID start blocked: panic/failsafe active");
         ensureOutputsOff();
-        return;
+        return false;
     }
 
     clearFailsafe();
@@ -1524,6 +1535,7 @@ void AsymmetricPIDModule::start() {
     coolingPID.SetMode(AUTOMATIC);
     heatingPID.SetMode(AUTOMATIC);
     comm.sendEvent("🚀 Asymmetric PID started");
+    return true;
 }
 
 void AsymmetricPIDModule::stop() {

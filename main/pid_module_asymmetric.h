@@ -237,6 +237,7 @@ private:
     double equilibriumLastSampleTemp;
     double equilibriumAccumulatedTemp;
     size_t equilibriumStableSamples;
+    size_t equilibriumUnstableCount;
     unsigned long equilibriumMaxDurationMs;
     unsigned long equilibriumSampleIntervalMs;
     double equilibriumSlopeThreshold;

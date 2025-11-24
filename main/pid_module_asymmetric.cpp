@@ -40,7 +40,8 @@ constexpr double kDefaultFeedforwardGain = 15.0;
 constexpr unsigned long kEquilibriumEstimateMinStableMs = 300000;   // 5 minutes
 constexpr unsigned long kEquilibriumEstimateMaxDurationMs = 600000; // 10 minutes
 constexpr unsigned long kEquilibriumEstimateSampleMs = 1000;
-constexpr double kEquilibriumEstimateSlopeThreshold = 0.01;         // °C/s
+// Allow for the observed ±0.01–0.02°C sensor jitter when deciding stability
+constexpr double kEquilibriumEstimateSlopeThreshold = 0.02;         // °C/s
 
 constexpr float kHeatingKpMin = 0.05f;
 constexpr float kHeatingKpMax = 40.0f;
@@ -313,6 +314,7 @@ AsymmetricPIDModule::AsymmetricPIDModule()
       lastEquilibriumCheckMillis(0), equilibriumEstimating(false), equilibriumEstimateStart(0),
       equilibriumStableStart(0), equilibriumLastSample(0), equilibriumLastSampleTemp(0.0),
       equilibriumAccumulatedTemp(0.0), equilibriumStableSamples(0),
+      equilibriumUnstableCount(0),
       equilibriumMaxDurationMs(kEquilibriumEstimateMaxDurationMs),
       equilibriumSampleIntervalMs(kEquilibriumEstimateSampleMs),
       equilibriumSlopeThreshold(kEquilibriumEstimateSlopeThreshold), kff(kDefaultFeedforwardGain) {
@@ -579,6 +581,7 @@ void AsymmetricPIDModule::startEquilibriumEstimation() {
     equilibriumStableStart = 0;
     equilibriumLastSample = 0;
     equilibriumStableSamples = 0;
+    equilibriumUnstableCount = 0;
     equilibriumAccumulatedTemp = 0.0;
     equilibriumValid = false;
     equilibriumLastSampleTemp = sensors.getCoolingPlateTemp();
@@ -623,6 +626,8 @@ void AsymmetricPIDModule::updateEquilibriumEstimationTask() {
     equilibriumLastSampleTemp = currentTemp;
 
     if (stable) {
+        equilibriumUnstableCount = 0;
+
         if (equilibriumStableStart == 0) {
             equilibriumStableStart = now;
             equilibriumAccumulatedTemp = 0.0;
@@ -642,9 +647,14 @@ void AsymmetricPIDModule::updateEquilibriumEstimationTask() {
             return;
         }
     } else {
-        equilibriumStableStart = 0;
-        equilibriumAccumulatedTemp = 0.0;
-        equilibriumStableSamples = 0;
+        constexpr size_t kMaxUnstableSamples = 3;
+        equilibriumUnstableCount++;
+        if (equilibriumUnstableCount >= kMaxUnstableSamples) {
+            equilibriumStableStart = 0;
+            equilibriumAccumulatedTemp = 0.0;
+            equilibriumStableSamples = 0;
+            equilibriumUnstableCount = 0;
+        }
     }
 
     if (now - equilibriumEstimateStart >= equilibriumMaxDurationMs) {

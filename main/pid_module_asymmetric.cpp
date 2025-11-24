@@ -446,7 +446,7 @@ void AsymmetricPIDModule::update(double /*currentTemp*/) {
     }
 
     pwm.setDutyCycle(pwmValue);
-    currentPwmOutput = static_cast<int>(finalOutput);
+    currentPwmOutput = finalOutput >= 0.0 ? pwmValue : -pwmValue;
 }
 
 void AsymmetricPIDModule::updatePIDMode(double error) {
@@ -1075,7 +1075,7 @@ void AsymmetricPIDModule::applyManualOutputPercent(float percent) {
     }
 
     pwm.setDutyCycle(pwmValue);
-    currentPwmOutput = static_cast<int>(percent);
+    currentPwmOutput = percent >= 0.0f ? pwmValue : -pwmValue;
     lastAutotuneOutput = percent;
 }
 

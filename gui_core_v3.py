@@ -4203,6 +4203,13 @@ class MainWindow(QMainWindow):
                     self.log(f"🔌 Connected to {port}", "success")
                     self.event_logger.log_event(f"Connected to {port}")
 
+                    if self.disable_breath_check:
+                        try:
+                            self.serial_manager.sendSET("breath_check_enabled", False)
+                            self.log("⚠️ Breath-stop check sent to controller (disabled)", "warning")
+                        except Exception as exc:
+                            self.log(f"⚠️ Failed to sync breath-stop check: {exc}", "warning")
+
                     # Start sync
                     self.sync_timer.start(1000)
 

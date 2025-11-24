@@ -11,6 +11,8 @@
 bool isFailsafeActive();
 bool isPanicActive();
 void clearFailsafe();
+bool isBreathCheckEnabled();
+const char* getFailsafeReason();
 
 // Global PWM tracker for simulation
 extern int currentPwmOutput;

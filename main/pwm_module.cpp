@@ -1,51 +1,32 @@
 #include "pwm_module.h"
 
-#include "arduino_platform.h"
-
-PWMModule::PWMModule() {}
+PWMModule::PWMModule() : _pwm(D6) {}
 
 void PWMModule::begin() {
-    configurePin6();
-    enableGPT0();
-}
-
-void PWMModule::configurePin6() {
-    R_PMISC->PWPR_b.B0WI = 0;
-    R_PMISC->PWPR_b.PFSWE = 1;
-
-    // Pin 6 (P313) til GPT0 GTIOCA
-    R_PFS->PORT[3].PIN[13].PmnPFS = 0x11;
-
-    R_PMISC->PWPR_b.PFSWE = 0;
-    R_PMISC->PWPR_b.B0WI = 1;
-}
-
-void PWMModule::enableGPT0() {
-    R_MSTP->MSTPCRD_b.MSTPD5 = 0;  // Enable GPT0
-    R_GPT0->GTCR = 0x0000;         // Stop timer
-    R_GPT0->GTUDDTYC = 0x0000;     // Count up
-    R_GPT0->GTIOR = 0x0303;        // PWM mode
-
-    R_GPT0->GTPR = 2399;           // 20kHz period (48MHz / 20kHz - 1)
-    R_GPT0->GTCCR[0] = 0;          // Start with 0% duty
-
-    R_GPT0->GTCR_b.CST = 1;        // Start counter
+    pinMode(D6, OUTPUT);
+    _pwm.begin(20000.0f, 0.0f);
 }
 
 void PWMModule::setDutyCycle(int duty) {
-    if (duty > 2399) duty = 2399;
-    if (duty < 0) duty = 0;
-    lastDutyCycle = duty;
-    R_GPT0->GTCCR[0] = duty;
-
-    // Ensure GPT0 is running (stopPWM() halts the counter)
-    if (R_GPT0->GTCR_b.CST == 0) {
-        R_GPT0->GTCR_b.CST = 1;
+    if (duty > 2399) {
+        duty = 2399;
+    } else if (duty < 0) {
+        duty = 0;
     }
+
+    lastDutyCycle = duty;
+
+    float dutyPercent = static_cast<float>(duty) * 100.0f / 2399.0f;
+    if (dutyPercent > 100.0f) {
+        dutyPercent = 100.0f;
+    } else if (dutyPercent < 0.0f) {
+        dutyPercent = 0.0f;
+    }
+
+    _pwm.pulse_perc(dutyPercent);
 }
 
 void PWMModule::stopPWM() {
     lastDutyCycle = 0;
-    R_GPT0->GTCCR[0] = 0;          // ← nullstill duty til 0
-    R_GPT0->GTCR_b.CST = 0;        // ← stopp teller (setDutyCycle() re-starter GPT0 ved behov)
+    _pwm.pulse_perc(0.0f);
 }

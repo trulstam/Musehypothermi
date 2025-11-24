@@ -38,8 +38,11 @@ int heartbeatTimeoutMs = 5000;  // default, lastes i initTasks
 int breathingTimeoutMs = 10000; // kan lastes fra EEPROM senere
 
 // === Panic Button ===
-// Pin 7 is used as a PWM direction pin in the PID module, so keep the panic
-// button disabled unless it is moved to a free GPIO.
+// No physical panic input is wired right now; keep it disabled with -1 so
+// nothing can trigger panic from a floating pin. If you move the button to a
+// free GPIO (pin 7 is already used by the PID direction output), set the pin
+// number here: it will be configured with INPUT_PULLUP in initTasks() and a
+// LOW level will trigger panic in checkPanicButton().
 static constexpr int PANIC_BUTTON_PIN = -1;
 
 // === Trigger failsafe ===

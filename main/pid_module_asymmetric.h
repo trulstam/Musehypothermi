@@ -73,7 +73,11 @@ public:
     float getMaxOutputPercent();
     float getOutput() { return finalOutput; }
     float getRawPIDOutput() { return rawPIDOutput; }
-    float getPwmOutput() { return finalOutput; }
+    float getPwmOutput() {
+        // Return signed PWM duty (−MAX_PWM..+MAX_PWM) so simulation and
+        // monitoring reflect the actual power delivered to the Peltier.
+        return static_cast<float>((finalOutput / 100.0) * MAX_PWM);
+    }
     bool isCooling() { return coolingMode; }
     bool isEmergencyStop() { return emergencyStop; }
     float getTemperatureRate() { return temperatureRate; }

@@ -47,5 +47,5 @@ void PWMModule::setDutyCycle(int duty) {
 void PWMModule::stopPWM() {
     lastDutyCycle = 0;
     R_GPT0->GTCCR[0] = 0;          // ← nullstill duty til 0
-    R_GPT0->GTCR_b.CST = 0;        // ← stopp teller
+    R_GPT0->GTCR_b.CST = 0;        // ← stopp teller (setDutyCycle() re-starter GPT0 ved behov)
 }

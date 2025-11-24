@@ -37,6 +37,11 @@ void PWMModule::setDutyCycle(int duty) {
     if (duty < 0) duty = 0;
     lastDutyCycle = duty;
     R_GPT0->GTCCR[0] = duty;
+
+    // Ensure GPT0 is running (stopPWM() halts the counter)
+    if (R_GPT0->GTCR_b.CST == 0) {
+        R_GPT0->GTCR_b.CST = 1;
+    }
 }
 
 void PWMModule::stopPWM() {

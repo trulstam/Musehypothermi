@@ -1510,11 +1510,11 @@ bool AsymmetricPIDModule::isDebugEnabled() {
     return debugEnabled;
 }
 
-void AsymmetricPIDModule::start() {
+bool AsymmetricPIDModule::start() {
     if (isPanicActive() || isFailsafeActive()) {
         comm.sendEvent("⚠️ PID start blocked: panic/failsafe active");
         ensureOutputsOff();
-        return;
+        return false;
     }
 
     clearFailsafe();
@@ -1524,6 +1524,7 @@ void AsymmetricPIDModule::start() {
     coolingPID.SetMode(AUTOMATIC);
     heatingPID.SetMode(AUTOMATIC);
     comm.sendEvent("🚀 Asymmetric PID started");
+    return true;
 }
 
 void AsymmetricPIDModule::stop() {

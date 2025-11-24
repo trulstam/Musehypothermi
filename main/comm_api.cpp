@@ -65,7 +65,8 @@ void CommAPI::handleCommand(const String &jsonString) {
 
         if (action == "pid") {
             if (state == "start") {
-                pid.start(); sendResponse("PID started");
+                bool started = pid.start();
+                sendResponse(started ? "PID started" : "PID blocked: panic/failsafe active");
             } else if (state == "stop") {
                 pid.stop(); sendResponse("PID stopped");
             } else if (state == "autotune") {

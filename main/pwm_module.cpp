@@ -4,7 +4,7 @@ PWMModule::PWMModule() : _pwm(D6) {}
 
 void PWMModule::begin() {
     pinMode(D6, OUTPUT);
-    _pwm.begin(20000.0f, 0.0f);
+    _pwm.begin(500.0f, 0.0f);
 }
 
 void PWMModule::setDutyCycle(int duty) {

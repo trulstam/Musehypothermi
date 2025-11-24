@@ -9,7 +9,7 @@ class PWMModule {
 public:
     PWMModule();
     void begin();               // Init: configure pin and start PWM
-    void setDutyCycle(int duty); // 0–2399 (20kHz PWM)
+    void setDutyCycle(int duty); // 0–2399 duty counts mapped to %
     void stopPWM();             // Sets duty to 0%
 
     // Host/test visibility for latest duty command

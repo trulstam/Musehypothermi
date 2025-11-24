@@ -1,6 +1,5 @@
-#define SIMULATION_MODE 0
+#include "arduino_platform.h"
 
-#include <Arduino.h>
 #include "comm_api.h"
 #include "task_scheduler.h"
 #include "pid_module_asymmetric.h"

@@ -97,9 +97,6 @@ public:
     void startEquilibriumEstimation();
     void estimateEquilibrium();
     void updateEquilibriumEstimationTask();
-#if SIMULATION_MODE
-    void setEquilibriumStateForTest(double temp, bool valid, bool estimating);
-#endif
 
     // Autotune functionality
     void startAutotune();  // Standard autotune for compatibility

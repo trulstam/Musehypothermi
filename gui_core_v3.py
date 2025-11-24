@@ -19,7 +19,8 @@ from PySide6.QtWidgets import (
     QFormLayout, QLineEdit, QSplitter,
     QProgressBar, QCheckBox, QSpinBox, QGridLayout,
     QTabWidget, QScrollArea, QFrame, QDialog,
-    QDialogButtonBox, QDoubleSpinBox, QStackedWidget
+    QDialogButtonBox, QDoubleSpinBox, QStackedWidget,
+    QListWidget
 )
 from PySide6.QtCore import QTimer, Qt, Signal, QSignalBlocker
 from PySide6.QtGui import QFont, QPalette, QColor, QTextCursor
@@ -276,6 +277,41 @@ class AsymmetricPIDControls(QWidget):
         
         status_group.setLayout(status_layout)
         layout.addWidget(status_group)
+
+        # Emergency events log
+        emergency_group = QGroupBox("🚨 Emergency Events")
+        emergency_layout = QVBoxLayout()
+
+        emergency_controls = QHBoxLayout()
+        self.clearEmergencyLogButton = QPushButton("🧹 Clear log")
+        self.clearEmergencyLogButton.clicked.connect(self.clear_emergency_log)
+        emergency_controls.addWidget(self.clearEmergencyLogButton)
+        emergency_controls.addStretch()
+
+        self.emergencyEventList = QListWidget()
+        self.emergencyEventList.setMinimumHeight(120)
+        self.emergencyEventList.setMaximumHeight(180)
+        self.emergencyEventList.setStyleSheet(
+            """
+            QListWidget {
+                background-color: #fff5f5;
+                border: 1px solid #f5c2c7;
+                border-radius: 6px;
+                padding: 6px;
+            }
+            QListWidget::item {
+                padding: 4px;
+            }
+            """
+        )
+
+        emergency_layout.addLayout(emergency_controls)
+        emergency_layout.addWidget(self.emergencyEventList)
+        if self.emergency_event_history:
+            self.emergencyEventList.addItems(self.emergency_event_history)
+            self.emergencyEventList.scrollToBottom()
+        emergency_group.setLayout(emergency_layout)
+        layout.addWidget(emergency_group)
         self.status_group = status_group
         self.external_mode_label: Optional[QLabel] = None
         self.external_rate_label: Optional[QLabel] = None
@@ -2148,6 +2184,7 @@ class MainWindow(QMainWindow):
         self.last_failsafe_reason: str = ""
         self.panic_active: bool = False
         self.pc_failsafe_dialog_shown = False
+        self.emergency_event_history: List[str] = []
         self.profile_data = []
         self.profile_steps = []
         self.profile_ready = False
@@ -3059,6 +3096,7 @@ class MainWindow(QMainWindow):
                 if self.data_logger is not None:
                     self.data_logger.log_event(f"FAILSAFE_TRIGGERED ({reason_text})")
                 self.log(f"🚨 FAILSAFE ACTIVE: {reason_text}", "error")
+                self.log_emergency_event(f"FAILSAFE TRIGGERED → {reason_text}")
         else:
             self.failsafeIndicator.setText("🟢 Safe")
             self.failsafeIndicator.setStyleSheet("color: #28a745; font-weight: bold;")
@@ -3072,6 +3110,32 @@ class MainWindow(QMainWindow):
                 if self.data_logger is not None:
                     self.data_logger.log_event("FAILSAFE_CLEARED")
                 self.log("✅ Failsafe cleared", "info")
+                self.log_emergency_event("FAILSAFE CLEARED")
+
+    def log_emergency_event(self, message: str):
+        """Append a timestamped emergency/failsafe event to the control tab log."""
+
+        try:
+            timestamp = time.strftime("%H:%M:%S")
+            entry = f"[{timestamp}] {message}"
+            self.emergency_event_history.append(entry)
+            # Keep the log to the most recent 50 entries
+            if len(self.emergency_event_history) > 50:
+                self.emergency_event_history = self.emergency_event_history[-50:]
+
+            if hasattr(self, "emergencyEventList"):
+                self.emergencyEventList.clear()
+                self.emergencyEventList.addItems(self.emergency_event_history)
+                self.emergencyEventList.scrollToBottom()
+        except Exception as exc:
+            print(f"⚠️ Emergency log error: {exc}")
+
+    def clear_emergency_log(self):
+        """Clear the in-memory and on-screen emergency event log."""
+
+        self.emergency_event_history.clear()
+        if hasattr(self, "emergencyEventList"):
+            self.emergencyEventList.clear()
 
     def on_serial_line(self, direction: str, line: str):
         """Append raw TX/RX serial lines to the Serial Monitor tab."""
@@ -3715,6 +3779,7 @@ class MainWindow(QMainWindow):
                     self.data_logger.log_event("PANIC_TRIGGERED")
                 self.panic_active = True
                 self._apply_failsafe_state(True, "gui_panic_triggered", log_event=True)
+                self.log_emergency_event("PANIC TRIGGERED (GUI)")
 
                 self.log("🚨 PANIC TRIGGERED!", "error")
                 QMessageBox.critical(self, "PANIC", "🚨 PANIC triggered!")
@@ -3733,9 +3798,9 @@ class MainWindow(QMainWindow):
             self.event_logger.log_event("CMD: failsafe_clear")
             if self.data_logger is not None:
                 self.data_logger.log_event("FAILSAFE_CLEAR_REQUESTED")
-            self.failsafe_active = False
-            self.panic_active = False
+            self._apply_failsafe_state(False, "manual_clear", log_event=True)
             self.serial_manager.failsafe_triggered_flag = False
+            self.log_emergency_event("Failsafe clear requested from GUI")
             self.log("🔧 Failsafe clear requested", "command")
             
         except Exception as e:

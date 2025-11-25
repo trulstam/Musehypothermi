@@ -145,7 +145,17 @@ if (pressure.getBreathRate() < 1.0) {
 ---
 
 ## Versjon
-**Dummy Simuleringsmodell v1.0**  
-Dato: 2025-03-21  
+**Dummy Simuleringsmodell v1.0**
+Dato: 2025-03-21
 Ansvarlig: Truls & ChatGPT
+
+## Updated Asymmetric PID Behavior (2025)
+
+- Separate heating/cooling PID loops with ±0.3 °C deadband around SP.
+- Heating is forcibly stopped once the plate reaches or exceeds the setpoint.
+- Cooling near setpoint is reduced smoothly but never below 30% of the requested command.
+- Feedforward (equilibrium compensation) is now **optional**: only active when
+  `useEquilibriumCompensation == true`, equilibrium is valid, and the system is outside deadband.
+- Autotune uses IMC tuning with lambda = max(0.5·τ, 2L, 5 s) and a global gain aggressiveness factor of 1.5.
+- Output smoothing reduced (0.6 instead of 0.8) for faster control response.
 

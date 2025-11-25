@@ -537,11 +537,6 @@ void AsymmetricPIDModule::applySafetyConstraints() {
         heatingLimit *= scale;
     }
 
-    // Stop heating if at or above setpoint for safety
-    if (!coolingMode && Input >= Setpoint) {
-        rawPIDOutput = 0.0;
-    }
-
     if (coolingMode) {
         double distance = fabs(Input - Setpoint);
         if (distance < 2.0) {
@@ -551,6 +546,16 @@ void AsymmetricPIDModule::applySafetyConstraints() {
         }
         rawPIDOutput = max(rawPIDOutput, coolingLimit);
     } else {
+        // Gradually taper heating authority near setpoint instead of zeroing it
+        double distance = Setpoint - Input;
+        if (distance < 0.0) {
+            rawPIDOutput = 0.0;  // above setpoint: no heating
+        } else if (distance < 2.0) {
+            double scale = distance / 2.0;
+            if (scale < 0.2) scale = 0.2;   // keep minimum heating authority
+            rawPIDOutput *= scale;
+        }
+
         rawPIDOutput = min(rawPIDOutput, heatingLimit);
     }
 }

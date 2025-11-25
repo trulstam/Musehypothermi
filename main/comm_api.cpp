@@ -477,8 +477,6 @@ void CommAPI::handleCommand(const String &jsonString) {
             sendResponse("Unknown SET variable");
         }
     }
-}
-
 void CommAPI::parseProfile(JsonArray arr) {
     const size_t profileLen = arr.size();
 

@@ -2020,15 +2020,15 @@ class MatplotlibGraphWidget(QWidget):
             self.ax_temp.grid(True, alpha=0.3)
             self.ax_temp.set_facecolor('#f8f9fa')
             
-            # PID subplot
-            self.ax_pid = self.figure.add_subplot(gs[1])
+            # PID subplot (share X axis for synchronized zoom/pan)
+            self.ax_pid = self.figure.add_subplot(gs[1], sharex=self.ax_temp)
             self.ax_pid.set_title('PID Output', fontsize=12, fontweight='bold')
             self.ax_pid.set_ylabel('PID Output', fontsize=11)
             self.ax_pid.grid(True, alpha=0.3)
             self.ax_pid.set_facecolor('#f0f8ff')
             
-            # Breath subplot
-            self.ax_breath = self.figure.add_subplot(gs[2])
+            # Breath subplot (share X axis for synchronized zoom/pan)
+            self.ax_breath = self.figure.add_subplot(gs[2], sharex=self.ax_temp)
             self.ax_breath.set_title('Breath Frequency', fontsize=12, fontweight='bold')
             self.ax_breath.set_xlabel('Time (seconds)', fontsize=12)
             self.ax_breath.set_ylabel('BPM', fontsize=11)
@@ -2291,20 +2291,21 @@ class MatplotlibGraphWidget(QWidget):
                 self.auto_follow_checkbox.setChecked(False)
 
         scale_factor = 0.9 if event.button == 'up' else 1.1
-        axes = [self.ax_temp, self.ax_pid, self.ax_breath]
 
-        for ax in axes:
-            x_min, x_max = ax.get_xlim()
-            y_min, y_max = ax.get_ylim()
+        # Compute new X range from the axis under the cursor and apply to all axes.
+        x_min, x_max = event.inaxes.get_xlim()
+        x_center = event.xdata if event.xdata is not None else (x_min + x_max) / 2
+        new_x_range = (x_max - x_min) * scale_factor
+        new_xlim = (x_center - new_x_range / 2, x_center + new_x_range / 2)
 
-            x_center = event.xdata if event.xdata is not None else (x_min + x_max) / 2
-            y_center = event.ydata if event.ydata is not None else (y_min + y_max) / 2
+        for ax in (self.ax_temp, self.ax_pid, self.ax_breath):
+            ax.set_xlim(new_xlim)
 
-            new_x_range = (x_max - x_min) * scale_factor
-            new_y_range = (y_max - y_min) * scale_factor
-
-            ax.set_xlim(x_center - new_x_range / 2, x_center + new_x_range / 2)
-            ax.set_ylim(y_center - new_y_range / 2, y_center + new_y_range / 2)
+        # Only scale Y on the axis being interacted with.
+        y_min, y_max = event.inaxes.get_ylim()
+        y_center = event.ydata if event.ydata is not None else (y_min + y_max) / 2
+        new_y_range = (y_max - y_min) * scale_factor
+        event.inaxes.set_ylim(y_center - new_y_range / 2, y_center + new_y_range / 2)
 
         self.canvas.draw_idle()
 
@@ -4347,6 +4348,10 @@ class MainWindow(QMainWindow):
         plot = self.profilePreviewPlot
         plot.clear()
 
+        # Restore legend after clearing so lines remain discoverable.
+        if plot.plotItem.legend is None:
+            plot.addLegend()
+
         if not self.profile_data:
             return
 
@@ -4371,7 +4376,24 @@ class MainWindow(QMainWindow):
                 name="Rectal setpoint",
             )
 
-        plot.enableAutoRange()
+        # Fit the entire profile once so the view stays stable instead of auto-playing.
+        x_samples = list(times) + list(rectal_times)
+        y_samples = list(targets) + list(plate_targets) + list(rectal_values)
+        if not y_samples:
+            return
+
+        x_min = min(x_samples) if x_samples else 0
+        x_max = max(x_samples) if x_samples else max(60, x_min + 60)
+        y_min = min(y_samples)
+        y_max = max(y_samples)
+        y_margin = max((y_max - y_min) * 0.1, 1.0)
+
+        plot.enableAutoRange(x=False, y=False)
+        plot.setRange(
+            xRange=(x_min, x_max if x_samples else x_min + 60),
+            yRange=(y_min - y_margin, y_max + y_margin),
+            padding=0,
+        )
 
     def _get_current_rectal_setpoint(self) -> Optional[float]:
         """Return the active rectal setpoint if a profile is running."""

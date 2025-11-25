@@ -1,0 +1,51 @@
+[
+  {
+    "plate_start_temp": 37,
+    "plate_end_temp": 30,
+    "ramp_time_ms": 240000,
+    "rectal_override_target": -1000,
+    "total_step_time_ms": 240000
+  },
+  {
+    "plate_start_temp": 30,
+    "plate_end_temp": 30,
+    "ramp_time_ms": 0,
+    "rectal_override_target": -1000,
+    "total_step_time_ms": 60000
+  },
+  {
+    "plate_start_temp": 30,
+    "plate_end_temp": 15,
+    "ramp_time_ms": 0,
+    "rectal_override_target": -1000,
+    "total_step_time_ms": 300000
+  },
+  {
+    "plate_start_temp": 15,
+    "plate_end_temp": 12,
+    "ramp_time_ms": 0,
+    "rectal_override_target": 15,
+    "total_step_time_ms": 60000
+  },
+  {
+    "plate_start_temp": 12,
+    "plate_end_temp": 20,
+    "ramp_time_ms": 300000,
+    "rectal_override_target": 15,
+    "total_step_time_ms": 300000
+  },
+  {
+    "plate_start_temp": 20,
+    "plate_end_temp": 37,
+    "ramp_time_ms": 120000,
+    "rectal_override_target": -1000,
+    "total_step_time_ms": 120000
+  },
+  {
+    "plate_start_temp": 37,
+    "plate_end_temp": 37,
+    "ramp_time_ms": 0,
+    "rectal_override_target": -1000,
+    "total_step_time_ms": 300000
+  }
+]

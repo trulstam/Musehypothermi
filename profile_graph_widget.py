@@ -21,6 +21,8 @@ class ProfileGraphPopup(QMainWindow):
         self._plot_widget.addLegend()
         self._plot_widget.setLabel("bottom", "Time", units="s")
         self._plot_widget.setLabel("left", "Temperature", units="°C")
+        self._plot_widget.getPlotItem().getAxis("bottom").enableAutoSIPrefix(False)
+        self._plot_widget.getPlotItem().getAxis("left").enableAutoSIPrefix(False)
 
         container = QWidget()
         layout = QVBoxLayout(container)

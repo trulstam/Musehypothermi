@@ -2965,6 +2965,8 @@ class MainWindow(QMainWindow):
         self.profilePreviewPlot.showGrid(x=True, y=True, alpha=0.3)
         self.profilePreviewPlot.setLabel("bottom", "Tid", units="s")
         self.profilePreviewPlot.setLabel("left", "Temperatur", units="°C")
+        self.profilePreviewPlot.getPlotItem().getAxis("bottom").enableAutoSIPrefix(False)
+        self.profilePreviewPlot.getPlotItem().getAxis("left").enableAutoSIPrefix(False)
         preview_layout.addWidget(self.profilePreviewPlot)
         preview_group.setLayout(preview_layout)
         profile_layout.addWidget(preview_group)
@@ -4346,51 +4348,56 @@ class MainWindow(QMainWindow):
             return
 
         plot = self.profilePreviewPlot
-        plot.clear()
+        if not hasattr(self, "_profile_preview_items"):
+            legend = plot.plotItem.legend
+            if legend is None:
+                legend = plot.addLegend()
 
-        # Restore legend after clearing so lines remain discoverable.
-        if plot.plotItem.legend is None:
-            plot.addLegend()
+            self._profile_preview_items = {
+                "target": plot.plot(name="Target", pen=pg.mkPen(color="#0d6efd", width=2)),
+                "plate": plot.plot(
+                    name="Plate target",
+                    pen=pg.mkPen(color="#20c997", width=2, style=Qt.DashLine),
+                ),
+                "rectal": plot.plot(
+                    name="Rectal setpoint",
+                    pen=pg.mkPen(color="#343a40", width=2, style=Qt.DotLine),
+                ),
+            }
+            legend.updateSize()
 
         if not self.profile_data:
+            for item in self._profile_preview_items.values():
+                item.setData([], [])
+            plot.enableAutoRange(x=True, y=True)
             return
 
         times, targets, plate_targets, rectal_times, rectal_values = self._build_profile_preview_series(
             self.profile_data
         )
 
-        if targets:
-            plot.plot(times, targets, pen=pg.mkPen(color="#0d6efd", width=2), name="Target")
-        if plate_targets:
-            plot.plot(
-                times,
-                plate_targets,
-                pen=pg.mkPen(color="#20c997", width=2, style=Qt.DashLine),
-                name="Plate target",
-            )
-        if rectal_times:
-            plot.plot(
-                rectal_times,
-                rectal_values,
-                pen=pg.mkPen(color="#343a40", width=2, style=Qt.DotLine),
-                name="Rectal setpoint",
-            )
+        self._profile_preview_items["target"].setData(times, targets)
+        self._profile_preview_items["plate"].setData(times, plate_targets)
+        self._profile_preview_items["rectal"].setData(rectal_times, rectal_values)
 
         # Fit the entire profile once so the view stays stable instead of auto-playing.
-        x_samples = list(times) + list(rectal_times)
-        y_samples = list(targets) + list(plate_targets) + list(rectal_values)
-        if not y_samples:
+        x_samples = [value for value in list(times) + list(rectal_times) if math.isfinite(value)]
+        y_samples = [
+            value
+            for value in list(targets) + list(plate_targets) + list(rectal_values)
+            if math.isfinite(value)
+        ]
+        if not x_samples or not y_samples:
+            plot.enableAutoRange(x=True, y=True)
             return
 
-        x_min = min(x_samples) if x_samples else 0
-        x_max = max(x_samples) if x_samples else max(60, x_min + 60)
-        y_min = min(y_samples)
-        y_max = max(y_samples)
+        x_min, x_max = min(x_samples), max(x_samples)
+        y_min, y_max = min(y_samples), max(y_samples)
         y_margin = max((y_max - y_min) * 0.1, 1.0)
 
         plot.enableAutoRange(x=False, y=False)
         plot.setRange(
-            xRange=(x_min, x_max if x_samples else x_min + 60),
+            xRange=(x_min, x_max if x_max > x_min else x_min + 60),
             yRange=(y_min - y_margin, y_max + y_margin),
             padding=0,
         )

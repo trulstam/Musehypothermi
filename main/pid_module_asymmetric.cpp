@@ -486,6 +486,15 @@ void AsymmetricPIDModule::updatePIDMode(double error) {
         wantCooling = true;
     }
 
+    // After a downward step we can end up stuck in cooling mode at 0% once we
+    // drop just below the new setpoint (error within the deadband). In that
+    // case immediately hand control to the heating PID so it can start
+    // stabilising without waiting for a larger positive error.
+    if (coolingMode && setpointDecreased && Input <= Setpoint) {
+        wantHeating = true;
+        wantCooling = false;
+    }
+
     if (wantCooling && !coolingMode) {
         switchToCoolingPID();
     } else if (wantHeating && coolingMode) {

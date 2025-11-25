@@ -148,7 +148,7 @@ bool SensorModule::addCalibrationPoint(const char* sensorName, float referenceTe
     return false;
   }
 
-  if (*countPtr >= MAX_CAL_POINTS) {
+  if (*countPtr >= CALIB_MAX_POINTS) {
     return false;
   }
 

@@ -29,14 +29,20 @@ from PySide6.QtGui import QFont, QPalette, QColor, QTextCursor
 import matplotlib
 matplotlib.use('Qt5Agg')
 import matplotlib.pyplot as plt
-from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.backends.backend_qt5agg import (
+    FigureCanvasQTAgg as FigureCanvas,
+    NavigationToolbar2QT,
+)
 from matplotlib.figure import Figure
+
+import pyqtgraph as pg
 
 # Local imports
 from framework.serial_comm import SerialManager
 from framework.event_logger import EventLogger
 from framework.profile_loader import ProfileLoader
 from framework.logger import Logger
+from profile_graph_widget import _first_present
 
 # ============================================================================
 # 1. ADD THIS NEW CLASS BEFORE THE MatplotlibGraphWidget CLASS
@@ -1152,6 +1158,10 @@ class AutotuneWizardTab(QWidget):
         self.apply_button.setStyleSheet("background-color: #28a745; color: white; font-weight: bold;")
         self.apply_button.clicked.connect(self.apply_to_heating)
 
+        self.apply_cooling_button = QPushButton("Aktiver kjøle-PID")
+        self.apply_cooling_button.setStyleSheet("background-color: #20c997; color: white; font-weight: bold;")
+        self.apply_cooling_button.clicked.connect(self.apply_to_cooling)
+
         self.apply_both_button = QPushButton("Aktiver begge")
         self.apply_both_button.setStyleSheet("background-color: #6f42c1; color: white; font-weight: bold;")
         self.apply_both_button.clicked.connect(self.apply_to_both)
@@ -1161,6 +1171,7 @@ class AutotuneWizardTab(QWidget):
 
         buttons.addStretch()
         buttons.addWidget(self.apply_button)
+        buttons.addWidget(self.apply_cooling_button)
         buttons.addWidget(self.apply_both_button)
         buttons.addWidget(self.restart_button)
         layout.addLayout(buttons)
@@ -1374,6 +1385,29 @@ class AutotuneWizardTab(QWidget):
         self._percent_user_override = False
         self._handle_step_changed(self.step_spin.value())
 
+    def _sanitize_pid_values(
+        self, kp: float, ki: float, kd: float, limits: Dict[str, Tuple[float, float]]
+    ) -> Tuple[float, float, float, List[str]]:
+        adjustments: List[str] = []
+
+        def _clamp(value: float, lower: float, upper: float, label: str) -> float:
+            nonlocal adjustments
+            clamped = min(max(value, lower), upper)
+            if abs(clamped - value) > 1e-6:
+                adjustments.append(f"{label}→[{lower}, {upper}]")
+            return clamped
+
+        kp_val = _clamp(kp, *limits["kp"], label="Kp")
+        ki_val = _clamp(ki, *limits["ki"], label="Ki")
+        kd_val = _clamp(kd, *limits["kd"], label="Kd")
+        return kp_val, ki_val, kd_val, adjustments
+
+    def _sanitize_heating_values(self, kp: float, ki: float, kd: float) -> Tuple[float, float, float, List[str]]:
+        return self._sanitize_pid_values(kp, ki, kd, self.HEATING_LIMITS)
+
+    def _sanitize_cooling_values(self, kp: float, ki: float, kd: float) -> Tuple[float, float, float, List[str]]:
+        return self._sanitize_pid_values(kp, ki, kd, self.COOLING_LIMITS)
+
     def apply_to_heating(self) -> None:
         kp = self.kp_spin.value()
         ki = self.ki_spin.value()
@@ -1392,6 +1426,23 @@ class AutotuneWizardTab(QWidget):
         self.parent.asymmetric_controls.ki_heating_input.setText(f"{ki:.4f}")
         self.parent.asymmetric_controls.kd_heating_input.setText(f"{kd:.3f}")
         self.parent.asymmetric_controls.set_heating_pid()
+
+    def apply_to_cooling(self) -> None:
+        kp = self.kp_spin.value()
+        ki = self.ki_spin.value()
+        kd = self.kd_spin.value()
+
+        kp, ki, kd, cool_adj = self._sanitize_cooling_values(kp, ki, kd)
+        if cool_adj:
+            self.parent.log(
+                "⚠️ Autotune-verdier klippet til sikre grenser (kjøling): " + ", ".join(cool_adj),
+                "warning",
+            )
+
+        self.parent.asymmetric_controls.kp_cooling_input.setText(f"{kp:.3f}")
+        self.parent.asymmetric_controls.ki_cooling_input.setText(f"{ki:.4f}")
+        self.parent.asymmetric_controls.kd_cooling_input.setText(f"{kd:.3f}")
+        self.parent.asymmetric_controls.set_cooling_pid()
 
     def apply_to_both(self) -> None:
         kp = self.kp_spin.value()
@@ -1417,6 +1468,14 @@ class AutotuneWizardTab(QWidget):
             cool_kp = kp * 0.5
             cool_ki = ki * 0.5
             cool_kd = kd * 0.5
+
+        cool_kp, cool_ki, cool_kd, cool_adj = self._sanitize_cooling_values(cool_kp, cool_ki, cool_kd)
+        if cool_adj:
+            self.parent.log(
+                "⚠️ Autotune-verdier klippet til sikre grenser (kjøling): " + ", ".join(cool_adj),
+                "warning",
+            )
+
         self.parent.asymmetric_controls.kp_cooling_input.setText(f"{cool_kp:.3f}")
         self.parent.asymmetric_controls.ki_cooling_input.setText(f"{cool_ki:.4f}")
         self.parent.asymmetric_controls.kd_cooling_input.setText(f"{cool_kd:.3f}")
@@ -1933,13 +1992,16 @@ class AutotuneWizardTab(QWidget):
 
 class MatplotlibGraphWidget(QWidget):
     """Stable matplotlib widget with proven functionality"""
-    
+
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.auto_scale_enabled = True
         self.setup_plots()
         self.setup_layout()
         self.max_points = 200
         self.update_counter = 0
+        self._last_time_data: List[float] = []
+        self._last_graph_data: Dict[str, List] = {}
         print("✅ MatplotlibGraphWidget initialized")
 
     def setup_plots(self):
@@ -1958,15 +2020,15 @@ class MatplotlibGraphWidget(QWidget):
             self.ax_temp.grid(True, alpha=0.3)
             self.ax_temp.set_facecolor('#f8f9fa')
             
-            # PID subplot
-            self.ax_pid = self.figure.add_subplot(gs[1])
+            # PID subplot (share X axis for synchronized zoom/pan)
+            self.ax_pid = self.figure.add_subplot(gs[1], sharex=self.ax_temp)
             self.ax_pid.set_title('PID Output', fontsize=12, fontweight='bold')
             self.ax_pid.set_ylabel('PID Output', fontsize=11)
             self.ax_pid.grid(True, alpha=0.3)
             self.ax_pid.set_facecolor('#f0f8ff')
             
-            # Breath subplot
-            self.ax_breath = self.figure.add_subplot(gs[2])
+            # Breath subplot (share X axis for synchronized zoom/pan)
+            self.ax_breath = self.figure.add_subplot(gs[2], sharex=self.ax_temp)
             self.ax_breath.set_title('Breath Frequency', fontsize=12, fontweight='bold')
             self.ax_breath.set_xlabel('Time (seconds)', fontsize=12)
             self.ax_breath.set_ylabel('BPM', fontsize=11)
@@ -1982,8 +2044,10 @@ class MatplotlibGraphWidget(QWidget):
                                                 label='Target', alpha=0.7)
             self.line_rectal_setpoint, = self.ax_temp.plot([], [], 'k-.', linewidth=2,
                                                           label='Rectal Setpoint', alpha=0.7)
-            
-            self.line_pid, = self.ax_pid.plot([], [], 'purple', linewidth=2.5, 
+            self.line_adjusted_target, = self.ax_temp.plot([], [], color='#ff6f00', linewidth=2,
+                                                          linestyle=':', label='Rectal-adjusted Target', alpha=0.9)
+
+            self.line_pid, = self.ax_pid.plot([], [], 'purple', linewidth=2.5,
                                             label='PID Output', alpha=0.8)
             
             self.line_breath, = self.ax_breath.plot([], [], 'orange', linewidth=2.5, 
@@ -1996,7 +2060,12 @@ class MatplotlibGraphWidget(QWidget):
             
             # Set initial ranges
             self.set_initial_ranges()
-            
+
+            # Enable smooth zooming with mouse wheel
+            self.canvas.mpl_connect('scroll_event', self._handle_scroll_zoom)
+            self.canvas.mpl_connect('button_press_event', self._handle_mouse_action)
+            self.canvas.mpl_connect('button_release_event', self._handle_mouse_action)
+
             print("✅ Matplotlib plots configured")
             
         except Exception as e:
@@ -2007,6 +2076,22 @@ class MatplotlibGraphWidget(QWidget):
         """Setup widget layout"""
         layout = QVBoxLayout()
         layout.setContentsMargins(5, 5, 5, 5)
+        toolbar = NavigationToolbar2QT(self.canvas, self)
+        layout.addWidget(toolbar)
+
+        controls = QHBoxLayout()
+        controls.setContentsMargins(0, 0, 0, 0)
+        self.auto_follow_checkbox = QCheckBox("🔄 Auto-follow")
+        self.auto_follow_checkbox.setChecked(True)
+        self.auto_follow_checkbox.toggled.connect(self._toggle_auto_follow)
+        controls.addWidget(self.auto_follow_checkbox)
+
+        reset_btn = QPushButton("Reset view")
+        reset_btn.clicked.connect(self.reset_zoom)
+        controls.addWidget(reset_btn)
+        controls.addStretch(1)
+
+        layout.addLayout(controls)
         layout.addWidget(self.canvas)
         self.setLayout(layout)
 
@@ -2023,11 +2108,13 @@ class MatplotlibGraphWidget(QWidget):
         """Update all graphs with new data"""
         try:
             self.update_counter += 1
-            
+
             if not graph_data.get("time") or len(graph_data["time"]) == 0:
                 return False
-            
+
             time_data = graph_data["time"]
+            self._last_time_data = time_data
+            self._last_graph_data = graph_data
             
             # Update lines
             if "plate_temp" in graph_data:
@@ -2045,11 +2132,20 @@ class MatplotlibGraphWidget(QWidget):
                 else:
                     self.line_rectal_setpoint.set_data([], [])
                     self.line_rectal_setpoint.set_visible(False)
+            if "adjusted_target_temp" in graph_data:
+                adjusted = graph_data["adjusted_target_temp"]
+                if adjusted:
+                    self.line_adjusted_target.set_data(time_data, adjusted)
+                    has_valid = any(math.isfinite(value) for value in adjusted)
+                    self.line_adjusted_target.set_visible(has_valid)
+                else:
+                    self.line_adjusted_target.set_data([], [])
+                    self.line_adjusted_target.set_visible(False)
             if "pid_output" in graph_data:
                 self.line_pid.set_data(time_data, graph_data["pid_output"])
             if "breath_rate" in graph_data:
                 self.line_breath.set_data(time_data, graph_data["breath_rate"])
-            
+
             # Auto-scale
             self.auto_scale_axes(time_data, graph_data)
             
@@ -2068,6 +2164,10 @@ class MatplotlibGraphWidget(QWidget):
     def auto_scale_axes(self, time_data: List[float], graph_data: Dict[str, List]):
         """Auto-scale axes"""
         try:
+            if hasattr(self, "auto_follow_checkbox"):
+                self.auto_scale_enabled = self.auto_follow_checkbox.isChecked()
+            if not self.auto_scale_enabled:
+                return
             if len(time_data) < 2:
                 return
             
@@ -2085,7 +2185,12 @@ class MatplotlibGraphWidget(QWidget):
             
             # Y-axis auto-scaling
             if graph_data.get("plate_temp") and graph_data.get("rectal_temp"):
-                all_temps = graph_data["plate_temp"] + graph_data["rectal_temp"] + graph_data["target_temp"]
+                combined_temps = graph_data["plate_temp"] + graph_data["rectal_temp"] + graph_data["target_temp"]
+                if graph_data.get("adjusted_target_temp"):
+                    combined_temps += [val for val in graph_data["adjusted_target_temp"] if math.isfinite(val)]
+                if graph_data.get("rectal_target_temp"):
+                    combined_temps += [val for val in graph_data["rectal_target_temp"] if math.isfinite(val)]
+                all_temps = combined_temps
                 temp_min, temp_max = min(all_temps), max(all_temps)
                 margin = max((temp_max - temp_min) * 0.1, 2.0)
                 self.ax_temp.set_ylim(temp_min - margin, temp_max + margin)
@@ -2113,9 +2218,10 @@ class MatplotlibGraphWidget(QWidget):
             self.line_rectal.set_data([], [])
             self.line_target.set_data([], [])
             self.line_rectal_setpoint.set_data([], [])
+            self.line_adjusted_target.set_data([], [])
             self.line_pid.set_data([], [])
             self.line_breath.set_data([], [])
-            
+
             self.set_initial_ranges()
             self.canvas.draw()
             
@@ -2139,6 +2245,7 @@ class MatplotlibGraphWidget(QWidget):
             ]
             pid_outputs = [50 * math.sin(t/10) + 20 * math.sin(t/3) for t in times]
             breath_rates = [max(5, 150 * math.exp(-t/40) + 10 + math.sin(t/4) * 8) for t in times]
+            adjusted_targets = [target_temps[i] + (1.5 if i > 20 else 0.0) for i in range(len(times))]
 
             return {
                 "time": times,
@@ -2146,6 +2253,7 @@ class MatplotlibGraphWidget(QWidget):
                 "rectal_temp": rectal_temps,
                 "target_temp": target_temps,
                 "rectal_target_temp": rectal_targets,
+                "adjusted_target_temp": adjusted_targets,
                 "pid_output": pid_outputs,
                 "breath_rate": breath_rates
             }
@@ -2158,9 +2266,65 @@ class MatplotlibGraphWidget(QWidget):
                 "rectal_temp": [],
                 "target_temp": [],
                 "rectal_target_temp": [],
+                "adjusted_target_temp": [],
                 "pid_output": [],
                 "breath_rate": [],
             }
+
+    def _handle_mouse_action(self, event):
+        """Disable auto-scaling when the user pans/zooms."""
+        if event.inaxes:
+            if hasattr(self, "auto_follow_checkbox"):
+                with QSignalBlocker(self.auto_follow_checkbox):
+                    self.auto_follow_checkbox.setChecked(False)
+            self.auto_scale_enabled = False
+
+    def _handle_scroll_zoom(self, event):
+        """Smooth zoom for both axes centered around the cursor."""
+        if event.inaxes is None:
+            return
+
+        self.auto_scale_enabled = False
+
+        if hasattr(self, "auto_follow_checkbox"):
+            with QSignalBlocker(self.auto_follow_checkbox):
+                self.auto_follow_checkbox.setChecked(False)
+
+        scale_factor = 0.9 if event.button == 'up' else 1.1
+
+        # Compute new X range from the axis under the cursor and apply to all axes.
+        x_min, x_max = event.inaxes.get_xlim()
+        x_center = event.xdata if event.xdata is not None else (x_min + x_max) / 2
+        new_x_range = (x_max - x_min) * scale_factor
+        new_xlim = (x_center - new_x_range / 2, x_center + new_x_range / 2)
+
+        for ax in (self.ax_temp, self.ax_pid, self.ax_breath):
+            ax.set_xlim(new_xlim)
+
+        # Only scale Y on the axis being interacted with.
+        y_min, y_max = event.inaxes.get_ylim()
+        y_center = event.ydata if event.ydata is not None else (y_min + y_max) / 2
+        new_y_range = (y_max - y_min) * scale_factor
+        event.inaxes.set_ylim(y_center - new_y_range / 2, y_center + new_y_range / 2)
+
+        self.canvas.draw_idle()
+
+    def reset_zoom(self):
+        """Return to automatic scaling."""
+        self.auto_scale_enabled = True
+        if hasattr(self, "auto_follow_checkbox"):
+            with QSignalBlocker(self.auto_follow_checkbox):
+                self.auto_follow_checkbox.setChecked(True)
+        self.set_initial_ranges()
+        self.canvas.draw_idle()
+
+    def _toggle_auto_follow(self, checked: bool):
+        """Turn auto-follow on/off, restoring view when re-enabled."""
+
+        self.auto_scale_enabled = checked
+        if checked and self._last_time_data and self._last_graph_data:
+            self.auto_scale_axes(self._last_time_data, self._last_graph_data)
+            self.canvas.draw_idle()
 
 
 class MainWindow(QMainWindow):
@@ -2200,6 +2364,7 @@ class MainWindow(QMainWindow):
             "breath_rate": [],
             "target_temp": [],
             "rectal_target_temp": [],
+            "adjusted_target_temp": [],
         }
 
         self.connection_established = False
@@ -2554,16 +2719,28 @@ class MainWindow(QMainWindow):
         
         self.rectalTempDisplay = QLabel("37.0°C")
         self.rectalTempDisplay.setStyleSheet("""
-            font-family: 'Courier New'; 
-            font-size: 16px; 
-            font-weight: bold; 
+            font-family: 'Courier New';
+            font-size: 16px;
+            font-weight: bold;
             color: #28a745;
             background-color: #f8f9fa;
             padding: 5px;
             border: 1px solid #dee2e6;
             border-radius: 3px;
         """)
-        
+
+        self.rectalSetpointDisplay = QLabel("–")
+        self.rectalSetpointDisplay.setStyleSheet("""
+            font-family: 'Courier New';
+            font-size: 14px;
+            font-weight: bold;
+            color: #495057;
+            background-color: #f8f9fa;
+            padding: 5px;
+            border: 1px dashed #dee2e6;
+            border-radius: 3px;
+        """)
+
         self.targetTempDisplay = QLabel("37.0°C")
         self.targetTempDisplay.setStyleSheet("""
             font-family: 'Courier New';
@@ -2573,6 +2750,18 @@ class MainWindow(QMainWindow):
             background-color: #f8f9fa;
             padding: 5px;
             border: 1px solid #dee2e6;
+            border-radius: 3px;
+        """)
+
+        self.adjustedTargetDisplay = QLabel("–")
+        self.adjustedTargetDisplay.setStyleSheet("""
+            font-family: 'Courier New';
+            font-size: 14px;
+            font-weight: bold;
+            color: #ff6f00;
+            background-color: #fff8e1;
+            padding: 5px;
+            border: 1px solid #ffe4a1;
             border-radius: 3px;
         """)
         
@@ -2606,10 +2795,14 @@ class MainWindow(QMainWindow):
         data_layout.addWidget(self.rectalTempDisplay, 1, 1)
         data_layout.addWidget(QLabel("🎯 Target:"), 2, 0)
         data_layout.addWidget(self.targetTempDisplay, 2, 1)
-        data_layout.addWidget(QLabel("⚡ PID Output:"), 3, 0)
-        data_layout.addWidget(self.pidOutputDisplay, 3, 1)
-        data_layout.addWidget(QLabel("🫁 Breath Rate:"), 4, 0)
-        data_layout.addWidget(self.breathRateDisplay, 4, 1)
+        data_layout.addWidget(QLabel("📌 Rectal setpoint:"), 3, 0)
+        data_layout.addWidget(self.rectalSetpointDisplay, 3, 1)
+        data_layout.addWidget(QLabel("🟠 Modified target:"), 4, 0)
+        data_layout.addWidget(self.adjustedTargetDisplay, 4, 1)
+        data_layout.addWidget(QLabel("⚡ PID Output:"), 5, 0)
+        data_layout.addWidget(self.pidOutputDisplay, 5, 1)
+        data_layout.addWidget(QLabel("🫁 Breath Rate:"), 6, 0)
+        data_layout.addWidget(self.breathRateDisplay, 6, 1)
         
         data_group.setLayout(data_layout)
         layout.addWidget(data_group)
@@ -2709,10 +2902,15 @@ class MainWindow(QMainWindow):
         self.clearGraphsButton = QPushButton("🧹 Clear Graphs")
         self.clearGraphsButton.clicked.connect(self.clear_graphs)
         self.clearGraphsButton.setStyleSheet("background-color: #fd7e14; color: white; font-weight: bold;")
-        
+
+        self.resetZoomButton = QPushButton("🔍 Reset zoom")
+        self.resetZoomButton.clicked.connect(lambda: hasattr(self, 'graph_widget') and self.graph_widget.reset_zoom())
+        self.resetZoomButton.setStyleSheet("background-color: #6c757d; color: white; font-weight: bold;")
+
         controls_layout.addWidget(self.testBasicPlotButton)
         controls_layout.addWidget(self.generateTestDataButton)
         controls_layout.addWidget(self.clearGraphsButton)
+        controls_layout.addWidget(self.resetZoomButton)
         controls_layout.addStretch()
         
         monitoring_layout.addLayout(controls_layout)
@@ -2756,9 +2954,20 @@ class MainWindow(QMainWindow):
         load_layout.addWidget(self.loadProfileButton)
         load_layout.addWidget(self.profileFileLabel)
         load_layout.addStretch()
-        
+
         load_group.setLayout(load_layout)
         profile_layout.addWidget(load_group)
+
+        preview_group = QGroupBox("🔎 Profile Preview")
+        preview_layout = QVBoxLayout()
+        self.profilePreviewPlot = pg.PlotWidget()
+        self.profilePreviewPlot.addLegend()
+        self.profilePreviewPlot.showGrid(x=True, y=True, alpha=0.3)
+        self.profilePreviewPlot.setLabel("bottom", "Tid", units="s")
+        self.profilePreviewPlot.setLabel("left", "Temperatur", units="°C")
+        preview_layout.addWidget(self.profilePreviewPlot)
+        preview_group.setLayout(preview_layout)
+        profile_layout.addWidget(preview_group)
         
         # Profile controls
         control_group = QGroupBox("🎮 Profile Control")
@@ -2926,7 +3135,8 @@ class MainWindow(QMainWindow):
             # Status timer
             self.status_timer = QTimer()
             self.status_timer.timeout.connect(self.request_status)
-            self.status_timer.start(3000)
+            # 1s cadence keeps graphs/data responsive without noticeable CPU load.
+            self.status_timer.start(1000)
             
             # Sync timer
             self.sync_timer = QTimer()
@@ -3205,9 +3415,19 @@ class MainWindow(QMainWindow):
             if len(log_list) > self.serial_monitor_max_lines:
                 log_list[:] = log_list[-self.serial_monitor_max_lines :]
 
+            scrollbar = widget.verticalScrollBar()
+            prev_value = scrollbar.value()
+            prev_max = scrollbar.maximum()
+
             widget.setPlainText("\n".join(log_list))
             if self.serialMonitorAutoScroll.isChecked():
                 widget.moveCursor(QTextCursor.End)
+            else:
+                if prev_max != scrollbar.maximum():
+                    delta = scrollbar.maximum() - prev_max
+                    scrollbar.setValue(max(0, prev_value + delta))
+                else:
+                    scrollbar.setValue(prev_value)
 
         except Exception as e:
             print(f"Serial monitor error: {e}")
@@ -3251,6 +3471,12 @@ class MainWindow(QMainWindow):
                 temp = float(data["anal_probe_temp"])
                 self.rectalTempDisplay.setText(f"{temp:.1f}°C")
 
+            rectal_setpoint = self._extract_rectal_setpoint(data)
+            if rectal_setpoint is not None:
+                self.rectalSetpointDisplay.setText(f"{rectal_setpoint:.1f}°C")
+            else:
+                self.rectalSetpointDisplay.setText("–")
+
             if "pid_output" in data:
                 output = float(data["pid_output"])
                 self.pidOutputDisplay.setText(f"{output:.1f}")
@@ -3259,6 +3485,14 @@ class MainWindow(QMainWindow):
                 target = float(data["plate_target_active"])
                 self.targetTempDisplay.setText(f"{target:.1f}°C")
                 self.current_target_temp = target
+
+                adjusted_target = self._extract_adjusted_plate_target(
+                    data, target, rectal_setpoint
+                )
+                if adjusted_target is not None:
+                    self.adjustedTargetDisplay.setText(f"{adjusted_target:.1f}°C")
+                else:
+                    self.adjustedTargetDisplay.setText("–")
 
             if "breath_freq_bpm" in data:
                 breath = float(data["breath_freq_bpm"])
@@ -3478,13 +3712,23 @@ class MainWindow(QMainWindow):
             self.graph_data["rectal_temp"].append(float(data["anal_probe_temp"]))
             self.graph_data["pid_output"].append(float(data.get("pid_output", 0)))
             self.graph_data["breath_rate"].append(float(data.get("breath_freq_bpm", 0)))
-            self.graph_data["target_temp"].append(float(data.get("plate_target_active", 37)))
 
-            rectal_setpoint = self._get_current_rectal_setpoint()
+            base_target = float(data.get("plate_target_active", 37))
+            self.graph_data["target_temp"].append(base_target)
+
+            rectal_setpoint = self._extract_rectal_setpoint(data)
             if rectal_setpoint is None:
                 self.graph_data["rectal_target_temp"].append(float("nan"))
             else:
                 self.graph_data["rectal_target_temp"].append(float(rectal_setpoint))
+
+            adjusted_target = self._extract_adjusted_plate_target(
+                data, base_target, rectal_setpoint
+            )
+            if adjusted_target is None:
+                self.graph_data["adjusted_target_temp"].append(float("nan"))
+            else:
+                self.graph_data["adjusted_target_temp"].append(float(adjusted_target))
             
             # Trim data
             for key in self.graph_data:
@@ -3867,14 +4111,18 @@ class MainWindow(QMainWindow):
             y_plate = [20 + i * 2 for i in x_data]
             y_rectal = [37 - i * 0.5 for i in x_data]
             y_target = [25] * len(x_data)
+            y_rectal_setpoint = [32 if i > 4 else float('nan') for i in x_data]
+            y_adjusted_target = [target + (2 if i > 4 else 0) for i, target in enumerate(y_target)]
             y_pid = [10 * (i % 3) for i in x_data]
             y_breath = [150 - i * 5 for i in x_data]
-            
+
             test_data = {
                 "time": x_data,
                 "plate_temp": y_plate,
                 "rectal_temp": y_rectal,
                 "target_temp": y_target,
+                "rectal_target_temp": y_rectal_setpoint,
+                "adjusted_target_temp": y_adjusted_target,
                 "pid_output": y_pid,
                 "breath_rate": y_breath
             }
@@ -3911,6 +4159,14 @@ class MainWindow(QMainWindow):
                     self.plateTempDisplay.setText(f"{test_data['plate_temp'][-1]:.1f}°C")
                     self.rectalTempDisplay.setText(f"{test_data['rectal_temp'][-1]:.1f}°C")
                     self.targetTempDisplay.setText(f"{test_data['target_temp'][-1]:.1f}°C")
+                    if test_data.get("rectal_target_temp"):
+                        self.rectalSetpointDisplay.setText(
+                            f"{test_data['rectal_target_temp'][-1]:.1f}°C"
+                        )
+                    if test_data.get("adjusted_target_temp"):
+                        self.adjustedTargetDisplay.setText(
+                            f"{test_data['adjusted_target_temp'][-1]:.1f}°C"
+                        )
                     self.pidOutputDisplay.setText(f"{test_data['pid_output'][-1]:.1f}")
                     self.breathRateDisplay.setText(f"{test_data['breath_rate'][-1]:.0f} BPM")
                     
@@ -3937,6 +4193,7 @@ class MainWindow(QMainWindow):
                 "breath_rate": [],
                 "target_temp": [],
                 "rectal_target_temp": [],
+                "adjusted_target_temp": [],
             }
 
             self.start_time = None
@@ -4022,6 +4279,122 @@ class MainWindow(QMainWindow):
 
         return schedule
 
+    def _build_profile_preview_series(
+        self, profile_points: List[Dict[str, Any]]
+    ) -> Tuple[List[float], List[float], List[float], List[float], List[float]]:
+        """Normalize profile points for plotting."""
+
+        times: List[float] = []
+        targets: List[float] = []
+        plate_targets: List[float] = []
+        rectal_times: List[float] = []
+        rectal_values: List[float] = []
+
+        for point in profile_points:
+            if not isinstance(point, dict):
+                continue
+
+            try:
+                raw_time = _first_present(point, ("time_min", "time", "t"))
+                if raw_time is None:
+                    raw_time = len(times)
+                time_seconds = float(raw_time) * (60.0 if "time_min" in point or "ramp_min" in point else 1.0)
+                times.append(time_seconds)
+
+                target_value = _first_present(
+                    point,
+                    ("temp", "temp_c", "targetTemp", "target", "plate_target", "plate_end_temp"),
+                )
+                if target_value is None and targets:
+                    target_value = targets[-1]
+                targets.append(float(target_value if target_value is not None else 0.0))
+
+                plate_value = _first_present(
+                    point,
+                    ("plate_target", "plate_end_temp", "actualPlateTarget"),
+                )
+                if plate_value is None:
+                    plate_value = targets[-1]
+                plate_targets.append(float(plate_value))
+
+                rectal_value = _first_present(
+                    point,
+                    (
+                        "rectalSetpoint",
+                        "rectal_setpoint",
+                        "rectalTarget",
+                        "rectal_override_target",
+                    ),
+                )
+                if rectal_value is not None:
+                    rectal_times.append(time_seconds)
+                    rectal_values.append(float(rectal_value))
+            except (TypeError, ValueError):
+                continue
+
+        if not rectal_values and getattr(self, "rectal_setpoint_schedule", None):
+            for start, end, value in self.rectal_setpoint_schedule:
+                rectal_times.extend([start, end])
+                rectal_values.extend([value, value])
+
+        return times, targets, plate_targets, rectal_times, rectal_values
+
+    def _update_profile_preview(self) -> None:
+        """Refresh inline profile preview plot."""
+
+        if not hasattr(self, "profilePreviewPlot"):
+            return
+
+        plot = self.profilePreviewPlot
+        plot.clear()
+
+        # Restore legend after clearing so lines remain discoverable.
+        if plot.plotItem.legend is None:
+            plot.addLegend()
+
+        if not self.profile_data:
+            return
+
+        times, targets, plate_targets, rectal_times, rectal_values = self._build_profile_preview_series(
+            self.profile_data
+        )
+
+        if targets:
+            plot.plot(times, targets, pen=pg.mkPen(color="#0d6efd", width=2), name="Target")
+        if plate_targets:
+            plot.plot(
+                times,
+                plate_targets,
+                pen=pg.mkPen(color="#20c997", width=2, style=Qt.DashLine),
+                name="Plate target",
+            )
+        if rectal_times:
+            plot.plot(
+                rectal_times,
+                rectal_values,
+                pen=pg.mkPen(color="#343a40", width=2, style=Qt.DotLine),
+                name="Rectal setpoint",
+            )
+
+        # Fit the entire profile once so the view stays stable instead of auto-playing.
+        x_samples = list(times) + list(rectal_times)
+        y_samples = list(targets) + list(plate_targets) + list(rectal_values)
+        if not y_samples:
+            return
+
+        x_min = min(x_samples) if x_samples else 0
+        x_max = max(x_samples) if x_samples else max(60, x_min + 60)
+        y_min = min(y_samples)
+        y_max = max(y_samples)
+        y_margin = max((y_max - y_min) * 0.1, 1.0)
+
+        plot.enableAutoRange(x=False, y=False)
+        plot.setRange(
+            xRange=(x_min, x_max if x_samples else x_min + 60),
+            yRange=(y_min - y_margin, y_max + y_margin),
+            padding=0,
+        )
+
     def _get_current_rectal_setpoint(self) -> Optional[float]:
         """Return the active rectal setpoint if a profile is running."""
 
@@ -4035,6 +4408,59 @@ class MainWindow(QMainWindow):
         for start, end, value in self.rectal_setpoint_schedule:
             if start <= elapsed <= end:
                 return value
+
+        return None
+
+    def _extract_rectal_setpoint(self, data: Dict[str, Any]) -> Optional[float]:
+        """Prefer firmware-reported rectal setpoints, then fall back to profile schedule."""
+
+        for key in (
+            "rectal_override_target",
+            "rectal_setpoint",
+            "rectal_target_active",
+            "rectal_setpoint_active",
+        ):
+            if key in data:
+                try:
+                    value = float(data[key])
+                    if not math.isnan(value):
+                        return value
+                except (TypeError, ValueError):
+                    continue
+
+        schedule_value = self._get_current_rectal_setpoint()
+        return schedule_value
+
+    def _extract_adjusted_plate_target(
+        self, data: Dict[str, Any], base_target: Optional[float], rectal_setpoint: Optional[float]
+    ) -> Optional[float]:
+        """Return a rectal-adjusted plate target when available."""
+
+        for key in (
+            "plate_target_rectal",
+            "plate_target_modified",
+            "rectal_adjusted_plate_target",
+            "rectal_plate_target",
+        ):
+            if key in data:
+                try:
+                    candidate = float(data[key])
+                    if not math.isnan(candidate):
+                        return candidate
+                except (TypeError, ValueError):
+                    continue
+
+        if rectal_setpoint is not None:
+            try:
+                rectal_temp = float(data.get("anal_probe_temp", float("nan")))
+            except (TypeError, ValueError):
+                rectal_temp = float("nan")
+
+            if not math.isnan(rectal_temp) and rectal_temp < rectal_setpoint - 0.05:
+                fallback = rectal_setpoint
+                if base_target is not None and not math.isnan(base_target):
+                    fallback = max(base_target, rectal_setpoint)
+                return fallback
 
         return None
 
@@ -4052,6 +4478,24 @@ class MainWindow(QMainWindow):
         if not profile_points:
             raise ValueError("Loaded profile is empty")
 
+        def _extract_rectal_target(entry: Dict[str, Any]) -> Optional[float]:
+            target = _first_present(
+                entry,
+                (
+                    "rectal_override_target",
+                    "rectal_setpoint",
+                    "rectalSetpoint",
+                    "rectalTarget",
+                    "rectal_target",
+                ),
+            )
+            if target is None:
+                return None
+            try:
+                return float(target)
+            except (TypeError, ValueError):
+                return None
+
         def _validate_and_append(steps: List[Dict[str, Any]], t_value: float, target: float, index: int):
             if t_value < 0:
                 raise ValueError(f"Time cannot be negative at position {index}")
@@ -4061,7 +4505,12 @@ class MainWindow(QMainWindow):
                     f"Time must be ascending. Entry {index} has t={t_value} which is not greater than previous t={steps[-1]['t']}"
                 )
 
-            steps.append({"t": t_value, "temp": target})
+            step_entry: Dict[str, Any] = {"t": t_value, "temp": target}
+            rectal_value = _extract_rectal_target(profile_points[index - 1])
+            if rectal_value is not None:
+                step_entry["rectal_override_target"] = rectal_value
+
+            steps.append(step_entry)
 
         # Case 1: Already in controller timeline format
         first_entry = profile_points[0]
@@ -4189,10 +4638,12 @@ class MainWindow(QMainWindow):
                     self.profile_steps
                 )
                 self._refresh_rectal_setpoint_series()
+                self._update_profile_preview()
             except ValueError as exc:
                 self.profile_steps = []
                 self.rectal_setpoint_schedule = []
                 self._refresh_rectal_setpoint_series()
+                self._update_profile_preview()
                 self.profile_ready = False
                 self.profile_upload_pending = False
                 self.profile_active = False
@@ -4207,6 +4658,7 @@ class MainWindow(QMainWindow):
             if not self.profile_steps:
                 self.rectal_setpoint_schedule = []
                 self._refresh_rectal_setpoint_series()
+                self._update_profile_preview()
                 self.profile_ready = False
                 self.profile_upload_pending = False
                 self.profile_active = False
@@ -4379,20 +4831,30 @@ class MainWindow(QMainWindow):
             
             colors = {
                 "error": "#dc3545",
-                "warning": "#fd7e14", 
+                "warning": "#fd7e14",
                 "success": "#28a745",
                 "command": "#007bff",
                 "info": "#212529"
             }
-            
+
             color = colors.get(level, colors["info"])
             formatted_message = f'<span style="color: {color}; font-weight: bold;">[{timestamp}]</span> {message}'
-            
+
+            scrollbar = self.logBox.verticalScrollBar()
+            previous_value = scrollbar.value()
+            previous_max = scrollbar.maximum()
+
             self.logBox.append(formatted_message)
-            
+
             if self.autoScrollCheckbox.isChecked():
-                scrollbar = self.logBox.verticalScrollBar()
                 scrollbar.setValue(scrollbar.maximum())
+            else:
+                # Preserve the user's scroll position when auto-scroll is off
+                if previous_max != scrollbar.maximum():
+                    delta = scrollbar.maximum() - previous_max
+                    scrollbar.setValue(max(0, previous_value + delta))
+                else:
+                    scrollbar.setValue(previous_value)
                 
             print(f"LOG: {message}")
             

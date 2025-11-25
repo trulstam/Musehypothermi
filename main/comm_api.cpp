@@ -279,202 +279,196 @@ void CommAPI::handleCommand(const String &jsonString) {
                 JsonVariant value = set["calibration_point"];
                 if (!value.is<JsonObject>()) {
                     sendResponse("Invalid calibration_point payload");
-                    return;
-                }
-
-                JsonObject obj = value.as<JsonObject>();
-                const char* sensor = obj["sensor"] | nullptr;
-                float reference = obj["reference"] | NAN;
-
-                if (!sensor || isnan(reference)) {
-                    sendResponse("Missing sensor or reference for calibration_point");
                 } else {
-                    bool ok = sensors.addCalibrationPoint(sensor, reference);
-                    if (ok) {
-                        sendResponse("Calibration point added");
-                        String msg = "Added calibration point: ";
-                        msg += sensor;
-                        msg += " ref=";
-                        msg += reference;
-                        sendEvent(msg);
+                    JsonObject obj = value.as<JsonObject>();
+                    const char* sensor = obj["sensor"] | nullptr;
+                    float reference = obj["reference"] | NAN;
+
+                    if (!sensor || isnan(reference)) {
+                        sendResponse("Missing sensor or reference for calibration_point");
                     } else {
-                        sendResponse("Calibration point rejected");
+                        bool ok = sensors.addCalibrationPoint(sensor, reference);
+                        if (ok) {
+                            sendResponse("Calibration point added");
+                            String msg = "Added calibration point: ";
+                            msg += sensor;
+                            msg += " ref=";
+                            msg += reference;
+                            sendEvent(msg);
+                        } else {
+                            sendResponse("Calibration point rejected");
+                        }
                     }
                 }
-                return;
-            }
-
-            if (set.containsKey("calibration_commit")) {
+            } else if (set.containsKey("calibration_commit")) {
                 JsonVariant value = set["calibration_commit"];
                 if (!value.is<JsonObject>()) {
                     sendResponse("Invalid calibration_commit payload");
-                    return;
-                }
-
-                JsonObject obj = value.as<JsonObject>();
-                const char* sensor = obj["sensor"] | nullptr;
-                const char* operatorName = obj["operator"] | "";
-                uint32_t timestamp = obj["timestamp"] | 0;
-
-                if (!sensor || timestamp == 0) {
-                    sendResponse("Missing sensor or timestamp for calibration_commit");
                 } else {
-                    bool ok = sensors.commitCalibration(sensor, operatorName, timestamp);
-                    if (ok) {
-                        sendResponse("Calibration committed");
-                        String msg = "Calibration committed for ";
-                        msg += sensor;
-                        msg += " by ";
-                        msg += operatorName;
-                        sendEvent(msg);
+                    JsonObject obj = value.as<JsonObject>();
+                    const char* sensor = obj["sensor"] | nullptr;
+                    const char* operatorName = obj["operator"] | "";
+                    uint32_t timestamp = obj["timestamp"] | 0;
+
+                    if (!sensor || timestamp == 0) {
+                        sendResponse("Missing sensor or timestamp for calibration_commit");
                     } else {
-                        sendResponse("Calibration commit failed");
-                    }
-                }
-                return;
-            }
-        }
-
-        String variable = set["variable"];
-
-        if (variable == "target_temp") {
-            float value = set["value"];
-            pid.setTargetTemp(value);
-            eeprom.saveTargetTemp(value);
-            sendResponse("Target temperature updated");
-
-        } else if (variable == "pid_kp") {
-            float value = set["value"];
-            pid.setHeatingPID(value, pid.getHeatingKi(), pid.getHeatingKd());
-            sendResponse("Heating Kp updated");
-
-        } else if (variable == "pid_ki") {
-            float value = set["value"];
-            pid.setHeatingPID(pid.getHeatingKp(), value, pid.getHeatingKd());
-            sendResponse("Heating Ki updated");
-
-        } else if (variable == "pid_kd") {
-            float value = set["value"];
-            pid.setHeatingPID(pid.getHeatingKp(), pid.getHeatingKi(), value);
-            sendResponse("Heating Kd updated");
-
-        } else if (variable == "pid_max_output") {
-            float value = set["value"];
-            pid.setMaxOutputPercent(value);
-            sendResponse("Max output limit updated");
-
-        } else if (variable == "pid_heating_limit") {
-            float value = set["value"];
-            pid.setOutputLimits(pid.getCoolingOutputLimit(), value);
-            sendResponse("Heating output limit updated");
-
-        } else if (variable == "pid_cooling_limit") {
-            float value = set["value"];
-            pid.setOutputLimits(value, pid.getHeatingOutputLimit());
-            sendResponse("Cooling output limit updated");
-
-        } else if (variable == "calibration_point") {
-            JsonVariant value = set["value"];
-            if (!value.is<JsonObject>()) {
-                sendResponse("Invalid calibration_point payload");
-            } else {
-                JsonObject obj = value.as<JsonObject>();
-                const char* sensor = obj["sensor"] | nullptr;
-                float reference = obj["reference"] | NAN;
-
-                if (!sensor || isnan(reference)) {
-                    sendResponse("Missing sensor or reference for calibration_point");
-                } else {
-                    bool ok = sensors.addCalibrationPoint(sensor, reference);
-                    if (ok) {
-                        sendResponse("Calibration point added");
-                        String msg = "Added calibration point: ";
-                        msg += sensor;
-                        msg += " ref=";
-                        msg += reference;
-                        sendEvent(msg);
-                    } else {
-                        sendResponse("Calibration point rejected");
+                        bool ok = sensors.commitCalibration(sensor, operatorName, timestamp);
+                        if (ok) {
+                            sendResponse("Calibration committed");
+                            String msg = "Calibration committed for ";
+                            msg += sensor;
+                            msg += " by ";
+                            msg += operatorName;
+                            sendEvent(msg);
+                        } else {
+                            sendResponse("Calibration commit failed");
+                        }
                     }
                 }
             }
+        } else {
+            String variable = set["variable"];
 
-        } else if (variable == "pid_cooling_kp") {
-            float value = set["value"];
-            pid.setCoolingPID(value, pid.getCoolingKi(), pid.getCoolingKd());
-            sendResponse("Cooling Kp updated");
+            if (variable == "target_temp") {
+                float value = set["value"];
+                pid.setTargetTemp(value);
+                eeprom.saveTargetTemp(value);
+                sendResponse("Target temperature updated");
 
-        } else if (variable == "pid_cooling_ki") {
-            float value = set["value"];
-            pid.setCoolingPID(pid.getCoolingKp(), value, pid.getCoolingKd());
-            sendResponse("Cooling Ki updated");
+            } else if (variable == "pid_kp") {
+                float value = set["value"];
+                pid.setHeatingPID(value, pid.getHeatingKi(), pid.getHeatingKd());
+                sendResponse("Heating Kp updated");
 
-        } else if (variable == "pid_cooling_kd") {
-            float value = set["value"];
-            pid.setCoolingPID(pid.getCoolingKp(), pid.getCoolingKi(), value);
-            sendResponse("Cooling Kd updated");
+            } else if (variable == "pid_ki") {
+                float value = set["value"];
+                pid.setHeatingPID(pid.getHeatingKp(), value, pid.getHeatingKd());
+                sendResponse("Heating Ki updated");
 
-        } else if (variable == "calibration_commit") {
-            JsonVariant value = set["value"];
-            if (!value.is<JsonObject>()) {
-                sendResponse("Invalid calibration_commit payload");
-            } else {
-                JsonObject obj = value.as<JsonObject>();
-                const char* sensor = obj["sensor"] | nullptr;
-                const char* operatorName = obj["operator"] | "";
-                uint32_t timestamp = obj["timestamp"] | 0;
+            } else if (variable == "pid_kd") {
+                float value = set["value"];
+                pid.setHeatingPID(pid.getHeatingKp(), pid.getHeatingKi(), value);
+                sendResponse("Heating Kd updated");
 
-                if (!sensor || timestamp == 0) {
-                    sendResponse("Missing sensor or timestamp for calibration_commit");
+            } else if (variable == "pid_max_output") {
+                float value = set["value"];
+                pid.setMaxOutputPercent(value);
+                sendResponse("Max output limit updated");
+
+            } else if (variable == "pid_heating_limit") {
+                float value = set["value"];
+                pid.setOutputLimits(pid.getCoolingOutputLimit(), value);
+                sendResponse("Heating output limit updated");
+
+            } else if (variable == "pid_cooling_limit") {
+                float value = set["value"];
+                pid.setOutputLimits(value, pid.getHeatingOutputLimit());
+                sendResponse("Cooling output limit updated");
+
+            } else if (variable == "calibration_point") {
+                JsonVariant value = set["value"];
+                if (!value.is<JsonObject>()) {
+                    sendResponse("Invalid calibration_point payload");
                 } else {
-                    bool ok = sensors.commitCalibration(sensor, operatorName, timestamp);
-                    if (ok) {
-                        sendResponse("Calibration committed");
-                        String msg = "Calibration committed for ";
-                        msg += sensor;
-                        msg += " by ";
-                        msg += operatorName;
-                        sendEvent(msg);
+                    JsonObject obj = value.as<JsonObject>();
+                    const char* sensor = obj["sensor"] | nullptr;
+                    float reference = obj["reference"] | NAN;
+
+                    if (!sensor || isnan(reference)) {
+                        sendResponse("Missing sensor or reference for calibration_point");
                     } else {
-                        sendResponse("Calibration commit failed");
+                        bool ok = sensors.addCalibrationPoint(sensor, reference);
+                        if (ok) {
+                            sendResponse("Calibration point added");
+                            String msg = "Added calibration point: ";
+                            msg += sensor;
+                            msg += " ref=";
+                            msg += reference;
+                            sendEvent(msg);
+                        } else {
+                            sendResponse("Calibration point rejected");
+                        }
                     }
                 }
-            }
 
-        } else if (variable == "debug_level") {
-            int value = set["value"];
-            pid.enableDebug(value > 0);
-            eeprom.saveDebugLevel(value);
-            sendResponse("Debug level updated");
+            } else if (variable == "pid_cooling_kp") {
+                float value = set["value"];
+                pid.setCoolingPID(value, pid.getCoolingKi(), pid.getCoolingKd());
+                sendResponse("Cooling Kp updated");
 
-        } else if (variable == "failsafe_timeout") {
-            int value = set["value"];
-            heartbeatTimeoutMs = value;
-            eeprom.saveFailsafeTimeout(value);
-            sendResponse("Failsafe timeout updated");
+            } else if (variable == "pid_cooling_ki") {
+                float value = set["value"];
+                pid.setCoolingPID(pid.getCoolingKp(), value, pid.getCoolingKd());
+                sendResponse("Cooling Ki updated");
 
-        } else if (variable == "profile_data") {
-            JsonVariant value = set["value"];
-            if (!value.is<JsonArray>()) {
-                sendResponse("Invalid profile payload");
-            } else {
-                parseProfile(value.as<JsonArray>());
-            }
+            } else if (variable == "pid_cooling_kd") {
+                float value = set["value"];
+                pid.setCoolingPID(pid.getCoolingKp(), pid.getCoolingKi(), value);
+                sendResponse("Cooling Kd updated");
 
-        } else if (variable == "equilibrium_compensation") {
-            bool enable = set["value"];
-            pid.setUseEquilibriumCompensation(enable);
-            sendResponse(enable ? "Equilibrium compensation enabled" :
+            } else if (variable == "calibration_commit") {
+                JsonVariant value = set["value"];
+                if (!value.is<JsonObject>()) {
+                    sendResponse("Invalid calibration_commit payload");
+                } else {
+                    JsonObject obj = value.as<JsonObject>();
+                    const char* sensor = obj["sensor"] | nullptr;
+                    const char* operatorName = obj["operator"] | "";
+                    uint32_t timestamp = obj["timestamp"] | 0;
+
+                    if (!sensor || timestamp == 0) {
+                        sendResponse("Missing sensor or timestamp for calibration_commit");
+                    } else {
+                        bool ok = sensors.commitCalibration(sensor, operatorName, timestamp);
+                        if (ok) {
+                            sendResponse("Calibration committed");
+                            String msg = "Calibration committed for ";
+                            msg += sensor;
+                            msg += " by ";
+                            msg += operatorName;
+                            sendEvent(msg);
+                        } else {
+                            sendResponse("Calibration commit failed");
+                        }
+                    }
+                }
+
+            } else if (variable == "debug_level") {
+                int value = set["value"];
+                pid.enableDebug(value > 0);
+                eeprom.saveDebugLevel(value);
+                sendResponse("Debug level updated");
+
+            } else if (variable == "failsafe_timeout") {
+                int value = set["value"];
+                heartbeatTimeoutMs = value;
+                eeprom.saveFailsafeTimeout(value);
+                sendResponse("Failsafe timeout updated");
+
+            } else if (variable == "profile_data") {
+                JsonVariant value = set["value"];
+                if (!value.is<JsonArray>()) {
+                    sendResponse("Invalid profile payload");
+                } else {
+                    parseProfile(value.as<JsonArray>());
+                }
+
+            } else if (variable == "equilibrium_compensation") {
+                bool enable = set["value"];
+                pid.setUseEquilibriumCompensation(enable);
+                sendResponse(enable ? "Equilibrium compensation enabled" :
                                   "Equilibrium compensation disabled");
 
-        } else if (variable == "breath_check_enabled") {
-            bool enable = set["value"];
-            setBreathCheckEnabled(enable);
-            sendResponse(enable ? "Breath-stop check enabled" :
+            } else if (variable == "breath_check_enabled") {
+                bool enable = set["value"];
+                setBreathCheckEnabled(enable);
+                sendResponse(enable ? "Breath-stop check enabled" :
                                   "Breath-stop check disabled");
 
-        } else {
-            sendResponse("Unknown SET variable");
+            } else {
+                sendResponse("Unknown SET variable");
+            }
         }
     }
 void CommAPI::parseProfile(JsonArray arr) {

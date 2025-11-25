@@ -408,18 +408,37 @@ class AsymmetricPIDControls(QWidget):
 
             # Update emergency status
             if "emergency_stop" in data:
-                if data["emergency_stop"]:
+                emergency_active = bool(data["emergency_stop"])
+                state_changed = emergency_active != self.emergency_stop_active
+
+                if emergency_active:
                     self._update_label_styles(
                         [self.emergency_status_label, self.external_emergency_label],
                         "🚨 ACTIVE",
                         "color: #dc3545; font-weight: bold;",
                     )
+                    if state_changed:
+                        if self.event_logger is not None:
+                            self.event_logger.log_event("EVENT: EMERGENCY_STOP_TRIGGERED")
+                        if self.data_logger is not None:
+                            self.data_logger.log_event("EMERGENCY_STOP_TRIGGERED")
+                        self.log("🚨 Emergency stop active", "error")
+                        self.log_emergency_event("EMERGENCY STOP TRIGGERED")
                 else:
                     self._update_label_styles(
                         [self.emergency_status_label, self.external_emergency_label],
                         "✅ Clear",
                         "color: #28a745; font-weight: bold;",
                     )
+                    if state_changed:
+                        if self.event_logger is not None:
+                            self.event_logger.log_event("EVENT: EMERGENCY_STOP_CLEARED")
+                        if self.data_logger is not None:
+                            self.data_logger.log_event("EMERGENCY_STOP_CLEARED")
+                        self.log("✅ Emergency stop cleared", "info")
+                        self.log_emergency_event("EMERGENCY STOP CLEARED")
+
+                self.emergency_stop_active = emergency_active
             
             # Sync parameter fields when not being edited
             if all(key in data for key in ["pid_cooling_kp", "pid_cooling_ki", "pid_cooling_kd"]):
@@ -2200,6 +2219,7 @@ class MainWindow(QMainWindow):
         self.panic_active: bool = False
         self.pc_failsafe_dialog_shown = False
         self.emergency_event_history: List[str] = []
+        self.emergency_stop_active: bool = False
         self.profile_data = []
         self.profile_steps = []
         self.profile_ready = False

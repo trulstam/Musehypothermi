@@ -94,7 +94,10 @@ public:
     bool isEquilibriumCompensationEnabled() const { return useEquilibriumCompensation; }
 
     // Compatibility setters
-    void setTargetTemp(float value) { Setpoint = value; }
+    void setTargetTemp(float value) {
+        lastSetpoint = Setpoint;
+        Setpoint = value;
+    }
     void setKp(float value);
     void setKi(float value);
     void setKd(float value);
@@ -133,6 +136,7 @@ private:
     // Control variables
     double Input;
     double Setpoint;
+    double lastSetpoint;
     double rawPIDOutput;
     double finalOutput;
     double coolingOutput, heatingOutput;

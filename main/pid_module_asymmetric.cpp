@@ -310,7 +310,8 @@ AsymmetricPIDModule::AsymmetricPIDModule()
                  kDefaultCoolingKp, kDefaultCoolingKi, kDefaultCoolingKd, DIRECT),
       heatingPID(&Input, &heatingOutput, &Setpoint,
                  kDefaultHeatingKp, kDefaultHeatingKi, kDefaultHeatingKd, DIRECT),
-      Input(0.0), Setpoint(kDefaultTargetTemp), rawPIDOutput(0.0), finalOutput(0.0),
+      Input(0.0), Setpoint(kDefaultTargetTemp), lastSetpoint(kDefaultTargetTemp),
+      rawPIDOutput(0.0), finalOutput(0.0),
       coolingOutput(0.0), heatingOutput(0.0),
       active(false), coolingMode(false), emergencyStop(false), autotuneActive(false),
       autotuneStatusString("idle"), debugEnabled(false), useEquilibriumCompensation(false),
@@ -478,6 +479,22 @@ void AsymmetricPIDModule::updatePIDMode(double error) {
     bool wantCooling = error < -currentParams.deadband;
     bool wantHeating = error > currentParams.deadband;
 
+    // If the setpoint was lowered and we are still above it, bias toward
+    // switching into cooling even inside the deadband so we don't pause at 0%.
+    bool setpointDecreased = Setpoint < lastSetpoint;
+    if (!coolingMode && !wantCooling && setpointDecreased && Input > Setpoint) {
+        wantCooling = true;
+    }
+
+    // After a downward step we can end up stuck in cooling mode at 0% once we
+    // drop just below the new setpoint (error within the deadband). In that
+    // case immediately hand control to the heating PID so it can start
+    // stabilising without waiting for a larger positive error.
+    if (coolingMode && setpointDecreased && Input <= Setpoint) {
+        wantHeating = true;
+        wantCooling = false;
+    }
+
     if (wantCooling && !coolingMode) {
         switchToCoolingPID();
     } else if (wantHeating && coolingMode) {
@@ -537,11 +554,6 @@ void AsymmetricPIDModule::applySafetyConstraints() {
         heatingLimit *= scale;
     }
 
-    // Stop heating if at or above setpoint for safety
-    if (!coolingMode && Input >= Setpoint) {
-        rawPIDOutput = 0.0;
-    }
-
     if (coolingMode) {
         double distance = fabs(Input - Setpoint);
         if (distance < 2.0) {
@@ -551,6 +563,16 @@ void AsymmetricPIDModule::applySafetyConstraints() {
         }
         rawPIDOutput = max(rawPIDOutput, coolingLimit);
     } else {
+        // Gradually taper heating authority near setpoint instead of zeroing it
+        double distance = Setpoint - Input;
+        if (distance < 0.0) {
+            rawPIDOutput = 0.0;  // above setpoint: no heating
+        } else if (distance < 2.0) {
+            double scale = distance / 2.0;
+            if (scale < 0.2) scale = 0.2;   // keep minimum heating authority
+            rawPIDOutput *= scale;
+        }
+
         rawPIDOutput = min(rawPIDOutput, heatingLimit);
     }
 }

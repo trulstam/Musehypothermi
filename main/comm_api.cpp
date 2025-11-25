@@ -273,63 +273,66 @@ void CommAPI::handleCommand(const String &jsonString) {
     if (doc.containsKey("SET")) {
         JsonObject set = doc["SET"];
 
-        if (set.containsKey("calibration_point")) {
-            JsonVariant value = set["calibration_point"];
-            if (!value.is<JsonObject>()) {
-                sendResponse("Invalid calibration_point payload");
+        // Backwards/alternative format: calibration payload provided directly
+        if (!set.containsKey("variable")) {
+            if (set.containsKey("calibration_point")) {
+                JsonVariant value = set["calibration_point"];
+                if (!value.is<JsonObject>()) {
+                    sendResponse("Invalid calibration_point payload");
+                    return;
+                }
+
+                JsonObject obj = value.as<JsonObject>();
+                const char* sensor = obj["sensor"] | nullptr;
+                float reference = obj["reference"] | NAN;
+
+                if (!sensor || isnan(reference)) {
+                    sendResponse("Missing sensor or reference for calibration_point");
+                } else {
+                    bool ok = sensors.addCalibrationPoint(sensor, reference);
+                    if (ok) {
+                        sendResponse("Calibration point added");
+                        String msg = "Added calibration point: ";
+                        msg += sensor;
+                        msg += " ref=";
+                        msg += reference;
+                        sendEvent(msg);
+                    } else {
+                        sendResponse("Calibration point rejected");
+                    }
+                }
                 return;
             }
 
-            JsonObject obj = value.as<JsonObject>();
-            const char* sensor = obj["sensor"] | nullptr;
-            float reference = obj["reference"] | NAN;
-
-            if (!sensor || isnan(reference)) {
-                sendResponse("Missing sensor or reference for calibration_point");
-            } else {
-                bool ok = sensors.addCalibrationPoint(sensor, reference);
-                if (ok) {
-                    sendResponse("Calibration point added");
-                    String msg = "Added calibration point: ";
-                    msg += sensor;
-                    msg += " ref=";
-                    msg += reference;
-                    sendEvent(msg);
-                } else {
-                    sendResponse("Calibration point rejected");
+            if (set.containsKey("calibration_commit")) {
+                JsonVariant value = set["calibration_commit"];
+                if (!value.is<JsonObject>()) {
+                    sendResponse("Invalid calibration_commit payload");
+                    return;
                 }
-            }
-            return;
-        }
 
-        if (set.containsKey("calibration_commit")) {
-            JsonVariant value = set["calibration_commit"];
-            if (!value.is<JsonObject>()) {
-                sendResponse("Invalid calibration_commit payload");
+                JsonObject obj = value.as<JsonObject>();
+                const char* sensor = obj["sensor"] | nullptr;
+                const char* operatorName = obj["operator"] | "";
+                uint32_t timestamp = obj["timestamp"] | 0;
+
+                if (!sensor || timestamp == 0) {
+                    sendResponse("Missing sensor or timestamp for calibration_commit");
+                } else {
+                    bool ok = sensors.commitCalibration(sensor, operatorName, timestamp);
+                    if (ok) {
+                        sendResponse("Calibration committed");
+                        String msg = "Calibration committed for ";
+                        msg += sensor;
+                        msg += " by ";
+                        msg += operatorName;
+                        sendEvent(msg);
+                    } else {
+                        sendResponse("Calibration commit failed");
+                    }
+                }
                 return;
             }
-
-            JsonObject obj = value.as<JsonObject>();
-            const char* sensor = obj["sensor"] | nullptr;
-            const char* operatorName = obj["operator"] | "";
-            uint32_t timestamp = obj["timestamp"] | 0;
-
-            if (!sensor || timestamp == 0) {
-                sendResponse("Missing sensor or timestamp for calibration_commit");
-            } else {
-                bool ok = sensors.commitCalibration(sensor, operatorName, timestamp);
-                if (ok) {
-                    sendResponse("Calibration committed");
-                    String msg = "Calibration committed for ";
-                    msg += sensor;
-                    msg += " by ";
-                    msg += operatorName;
-                    sendEvent(msg);
-                } else {
-                    sendResponse("Calibration commit failed");
-                }
-            }
-            return;
         }
 
         String variable = set["variable"];

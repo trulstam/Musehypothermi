@@ -471,8 +471,6 @@ void CommAPI::handleCommand(const String &jsonString) {
             }
         }
     }
-}
-
 void CommAPI::parseProfile(JsonArray arr) {
     const size_t profileLen = arr.size();
 

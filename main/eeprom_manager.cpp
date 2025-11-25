@@ -1,4 +1,5 @@
 #include "eeprom_manager.h"
+#include <string.h>
 
 namespace {
 constexpr float kDefaultHeatingKp = 2.0f;
@@ -130,6 +131,118 @@ void EEPROMManager::loadFailsafeTimeout(int &timeout) const {
     EEPROM.get(addrFailsafeTimeout, timeout);
 }
 
+bool EEPROMManager::savePlateCalibration(const SensorModule::CalibrationPoint* table,
+                                          uint8_t count,
+                                          const char* operatorName,
+                                          uint32_t timestamp) {
+    if (!table) {
+        return false;
+    }
+
+    uint8_t clampedCount = count > SensorModule::MAX_CAL_POINTS ? SensorModule::MAX_CAL_POINTS : count;
+
+    SensorCalibrationMeta meta{};
+    meta.timestamp = timestamp;
+    meta.pointCount = clampedCount;
+    if (operatorName) {
+        strncpy(meta.operatorName, operatorName, sizeof(meta.operatorName) - 1);
+        meta.operatorName[sizeof(meta.operatorName) - 1] = '\0';
+    } else {
+        meta.operatorName[0] = '\0';
+    }
+
+    EEPROM.put(addrCalibPlateMeta, meta);
+
+    for (uint8_t i = 0; i < clampedCount; ++i) {
+        int addr = addrCalibPlateTable + i * sizeof(SensorModule::CalibrationPoint);
+        EEPROM.put(addr, table[i]);
+    }
+
+    return true;
+}
+
+bool EEPROMManager::saveRectalCalibration(const SensorModule::CalibrationPoint* table,
+                                           uint8_t count,
+                                           const char* operatorName,
+                                           uint32_t timestamp) {
+    if (!table) {
+        return false;
+    }
+
+    uint8_t clampedCount = count > SensorModule::MAX_CAL_POINTS ? SensorModule::MAX_CAL_POINTS : count;
+
+    SensorCalibrationMeta meta{};
+    meta.timestamp = timestamp;
+    meta.pointCount = clampedCount;
+    if (operatorName) {
+        strncpy(meta.operatorName, operatorName, sizeof(meta.operatorName) - 1);
+        meta.operatorName[sizeof(meta.operatorName) - 1] = '\0';
+    } else {
+        meta.operatorName[0] = '\0';
+    }
+
+    EEPROM.put(addrCalibRectalMeta, meta);
+
+    for (uint8_t i = 0; i < clampedCount; ++i) {
+        int addr = addrCalibRectalTable + i * sizeof(SensorModule::CalibrationPoint);
+        EEPROM.put(addr, table[i]);
+    }
+
+    return true;
+}
+
+void EEPROMManager::loadPlateCalibration(SensorModule::CalibrationPoint* table,
+                                         uint8_t& count) {
+    if (!table) {
+        count = 0;
+        return;
+    }
+
+    SensorCalibrationMeta meta{};
+    EEPROM.get(addrCalibPlateMeta, meta);
+
+    if (meta.pointCount == 0 || meta.pointCount > SensorModule::MAX_CAL_POINTS || meta.timestamp == 0) {
+        count = 0;
+        return;
+    }
+
+    count = meta.pointCount;
+    for (uint8_t i = 0; i < count; ++i) {
+        int addr = addrCalibPlateTable + i * sizeof(SensorModule::CalibrationPoint);
+        EEPROM.get(addr, table[i]);
+    }
+}
+
+void EEPROMManager::loadRectalCalibration(SensorModule::CalibrationPoint* table,
+                                          uint8_t& count) {
+    if (!table) {
+        count = 0;
+        return;
+    }
+
+    SensorCalibrationMeta meta{};
+    EEPROM.get(addrCalibRectalMeta, meta);
+
+    if (meta.pointCount == 0 || meta.pointCount > SensorModule::MAX_CAL_POINTS || meta.timestamp == 0) {
+        count = 0;
+        return;
+    }
+
+    count = meta.pointCount;
+    for (uint8_t i = 0; i < count; ++i) {
+        int addr = addrCalibRectalTable + i * sizeof(SensorModule::CalibrationPoint);
+        EEPROM.get(addr, table[i]);
+    }
+}
+
+void EEPROMManager::getPlateCalibrationMeta(SensorCalibrationMeta& meta) const {
+    EEPROM.get(addrCalibPlateMeta, meta);
+}
+
+void EEPROMManager::getRectalCalibrationMeta(SensorCalibrationMeta& meta) const {
+    EEPROM.get(addrCalibRectalMeta, meta);
+}
+
 bool EEPROMManager::factoryReset() {
     saveHeatingPIDParams(kDefaultHeatingKp, kDefaultHeatingKi, kDefaultHeatingKd);
     saveCoolingPIDParams(kDefaultCoolingKp, kDefaultCoolingKi, kDefaultCoolingKd);
@@ -145,6 +258,18 @@ bool EEPROMManager::factoryReset() {
 
     saveDebugLevel(kDefaultDebugLevel);
     saveFailsafeTimeout(kDefaultFailsafeTimeout);
+
+    SensorCalibrationMeta emptyMeta{};
+    EEPROM.put(addrCalibPlateMeta, emptyMeta);
+    EEPROM.put(addrCalibRectalMeta, emptyMeta);
+
+    SensorModule::CalibrationPoint emptyPoint{};
+    for (uint8_t i = 0; i < SensorModule::MAX_CAL_POINTS; ++i) {
+        int plateAddr = addrCalibPlateTable + i * sizeof(SensorModule::CalibrationPoint);
+        int rectalAddr = addrCalibRectalTable + i * sizeof(SensorModule::CalibrationPoint);
+        EEPROM.put(plateAddr, emptyPoint);
+        EEPROM.put(rectalAddr, emptyPoint);
+    }
 
     saveMagicNumber();
     return true;

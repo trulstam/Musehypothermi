@@ -3,6 +3,7 @@
 
 #include "arduino_platform.h"
 #include <EEPROM.h>
+#include "sensor_module.h"
 
 class EEPROMManager {
 public:
@@ -21,6 +22,13 @@ public:
         float coolingRateLimit;
         float deadband;
         float safetyMargin;
+    };
+
+    struct SensorCalibrationMeta {
+        uint32_t timestamp;        // Unix time of last calibration
+        char operatorName[16];     // Null-terminated operator name
+        uint8_t pointCount;        // Number of valid points in table
+        uint8_t reserved[3];       // Padding / future use
     };
 
     bool begin();
@@ -67,6 +75,25 @@ public:
     void saveFailsafeTimeout(int timeout);
     void loadFailsafeTimeout(int &timeout) const;
 
+    bool savePlateCalibration(const SensorModule::CalibrationPoint* table,
+                              uint8_t count,
+                              const char* operatorName,
+                              uint32_t timestamp);
+
+    bool saveRectalCalibration(const SensorModule::CalibrationPoint* table,
+                               uint8_t count,
+                               const char* operatorName,
+                               uint32_t timestamp);
+
+    void loadPlateCalibration(SensorModule::CalibrationPoint* table,
+                              uint8_t& count);
+
+    void loadRectalCalibration(SensorModule::CalibrationPoint* table,
+                               uint8_t& count);
+
+    void getPlateCalibrationMeta(SensorCalibrationMeta& meta) const;
+    void getRectalCalibrationMeta(SensorCalibrationMeta& meta) const;
+
     bool factoryReset();
 
 private:
@@ -86,6 +113,11 @@ private:
     static const int addrCoolingRateLimit = addrCoolingKd + sizeof(float);
     static const int addrDeadband = addrCoolingRateLimit + sizeof(float);
     static const int addrSafetyMargin = addrDeadband + sizeof(float);
+
+    static const int addrCalibPlateMeta = addrSafetyMargin + sizeof(float);
+    static const int addrCalibPlateTable = addrCalibPlateMeta + sizeof(SensorCalibrationMeta);
+    static const int addrCalibRectalMeta = addrCalibPlateTable + SensorModule::MAX_CAL_POINTS * sizeof(SensorModule::CalibrationPoint);
+    static const int addrCalibRectalTable = addrCalibRectalMeta + sizeof(SensorCalibrationMeta);
 
     static const uint32_t MAGIC_NUMBER;
 

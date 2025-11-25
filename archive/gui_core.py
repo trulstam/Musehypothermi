@@ -341,10 +341,48 @@ class MainWindow(QMainWindow):
         control_layout.addWidget(self.startPIDButton)
         control_layout.addWidget(self.stopPIDButton)
         control_layout.addStretch()
-        
+
         control_group.setLayout(control_layout)
         layout.addWidget(control_group)
-        
+
+        # Calibration Group
+        calibration_group = QGroupBox("Calibration")
+        calibration_layout = QFormLayout()
+
+        # Live raw + calibrated temps (4 desimaler)
+        self.calPlateRawLabel = QLabel("Plate raw: n/a")
+        self.calPlateCalLabel = QLabel("Plate cal: n/a")
+        self.calRectalRawLabel = QLabel("Rectal raw: n/a")
+        self.calRectalCalLabel = QLabel("Rectal cal: n/a")
+
+        calibration_layout.addRow("Plate raw:", self.calPlateRawLabel)
+        calibration_layout.addRow("Plate calibrated:", self.calPlateCalLabel)
+        calibration_layout.addRow("Rectal raw:", self.calRectalRawLabel)
+        calibration_layout.addRow("Rectal calibrated:", self.calRectalCalLabel)
+
+        self.calSensorSelector = QComboBox()
+        self.calSensorSelector.addItems(["plate", "rectal", "both"])
+
+        self.calReferenceInput = QLineEdit()
+        self.calReferenceInput.setPlaceholderText("Reference °C")
+
+        self.calOperatorInput = QLineEdit()
+        self.calOperatorInput.setPlaceholderText("Operator name")
+
+        self.addCalPointButton = QPushButton("Add Calibration Point")
+        self.commitCalButton = QPushButton("Commit Calibration")
+
+        self.addCalPointButton.clicked.connect(self.add_calibration_point)
+        self.commitCalButton.clicked.connect(self.commit_calibration)
+
+        calibration_layout.addRow("Sensor:", self.calSensorSelector)
+        calibration_layout.addRow("Reference:", self.calReferenceInput)
+        calibration_layout.addRow("Operator:", self.calOperatorInput)
+        calibration_layout.addRow(self.addCalPointButton, self.commitCalButton)
+
+        calibration_group.setLayout(calibration_layout)
+        layout.addWidget(calibration_group)
+
         # Autotune + Advanced
         bottom_layout = QHBoxLayout()
         bottom_layout.setSpacing(10)
@@ -908,7 +946,26 @@ class MainWindow(QMainWindow):
         try:
             # Update live data display first
             self.update_live_data_display(data)
-            
+
+            # Oppdater kalibreringsvisning – rå og kalibrerte verdier
+            plate_raw = data.get("cooling_plate_temp_raw")
+            plate_cal = data.get("cooling_plate_temp")
+            rectal_raw = data.get("anal_probe_temp_raw")
+            rectal_cal = data.get("anal_probe_temp")
+
+            def fmt_temp(value):
+                if value is None:
+                    return "n/a"
+                try:
+                    return f"{float(value):.4f} °C"
+                except (TypeError, ValueError):
+                    return "n/a"
+
+            self.calPlateRawLabel.setText(fmt_temp(plate_raw))
+            self.calPlateCalLabel.setText(fmt_temp(plate_cal))
+            self.calRectalRawLabel.setText(fmt_temp(rectal_raw))
+            self.calRectalCalLabel.setText(fmt_temp(rectal_cal))
+
             # Update PID parameters
             if all(key in data for key in ["pid_kp", "pid_ki", "pid_kd"]):
                 kp, ki, kd = data["pid_kp"], data["pid_ki"], data["pid_kd"]
@@ -1317,6 +1374,45 @@ class MainWindow(QMainWindow):
             self.log(f"❌ Invalid temperature input: {e}", "error")
         except Exception as e:
             self.log(f"❌ Error setting setpoint: {e}", "error")
+
+    def add_calibration_point(self):
+        sensor = self.calSensorSelector.currentText()
+        if sensor not in ("plate", "rectal"):
+            QMessageBox.warning(self, "Invalid sensor", "Calibration point can only be added for 'plate' or 'rectal'.")
+            return
+        try:
+            reference = float(self.calReferenceInput.text())
+        except ValueError:
+            QMessageBox.warning(self, "Invalid reference", "Please enter a numeric reference temperature.")
+            return
+
+        payload = {"sensor": sensor, "reference": reference}
+        self.serial_manager.sendSET("calibration_point", payload)
+        msg = f"SET: calibration_point → sensor={sensor}, reference={reference}"
+        self.event_logger.log_event(msg)
+        self.log(f"📐 {msg}")
+
+    def commit_calibration(self):
+        sensor = self.calSensorSelector.currentText()
+        operator = self.calOperatorInput.text().strip()
+        if not operator:
+            operator, ok = QInputDialog.getText(self, "Operator name", "Enter operator name:")
+            if not ok or not operator.strip():
+                QMessageBox.warning(self, "Missing operator", "Operator name is required to commit calibration.")
+                return
+            operator = operator.strip()
+
+        timestamp = int(time.time())
+
+        payload = {
+            "sensor": sensor,         # "plate", "rectal" eller "both"
+            "operator": operator,
+            "timestamp": timestamp,
+        }
+        self.serial_manager.sendSET("calibration_commit", payload)
+        msg = f"SET: calibration_commit → sensor={sensor}, operator={operator}, ts={timestamp}"
+        self.event_logger.log_event(msg)
+        self.log(f"💾 {msg}")
 
     def _convert_profile_points_to_steps(self, profile_points):
         """Convert loader data into firmware profile steps.

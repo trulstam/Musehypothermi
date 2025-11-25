@@ -24,24 +24,22 @@ const double rectalCoupling = 0.02;
 #endif
 
 SensorModule::SensorModule()
-  : plateCalCount(0), rectalCalCount(0), eepromManagerPointer(nullptr),
+  : plateCalCount(0), rectalCalCount(0),
     calibrationOffsetCooling(0.0), calibrationOffsetRectal(0.0),
     cachedCoolingPlateTemp(0.0), cachedRectalTemp(0.0),
     lastRawCoolingPlateTemp(0.0), lastRawRectalTemp(0.0) {}
 
 void SensorModule::begin() {
-  eepromManagerPointer = &eeprom;
-
   analogReadResolution(14);
   analogReference(AR_EXTERNAL);  // Bruk AR_DEFAULT hvis ingen ekstern referanse
 
-  if (eepromManagerPointer) {
-    eepromManagerPointer->loadPlateCalibration(plateCalTable, plateCalCount);
-    eepromManagerPointer->loadRectalCalibration(rectalCalTable, rectalCalCount);
-  } else {
-    plateCalCount = 0;
-    rectalCalCount = 0;
-  }
+  plateCalCount = 0;
+  rectalCalCount = 0;
+  lastRawCoolingPlateTemp = 0.0;
+  lastRawRectalTemp = 0.0;
+
+  eeprom.loadPlateCalibration(plateCalTable, plateCalCount);
+  eeprom.loadRectalCalibration(rectalCalTable, rectalCalCount);
 }
 
 void SensorModule::update() {
@@ -85,16 +83,20 @@ void SensorModule::update() {
   cachedRectalTemp = applyCalibration(rawRectal, rectalCalTable, rectalCalCount) +
                      calibrationOffsetRectal;
 #else
-  double rawPlate = convertRawToTemp(analogRead(COOLING_PLATE_PIN));
-  double rawRectal = convertRawToTemp(analogRead(RECTAL_PROBE_PIN));
+  int rawPlate = analogRead(COOLING_PLATE_PIN);
+  int rawRectal = analogRead(RECTAL_PROBE_PIN);
 
-  lastRawCoolingPlateTemp = rawPlate;
-  lastRawRectalTemp = rawRectal;
+  double rawPlateTemp  = convertRawToTemp(rawPlate);
+  double rawRectalTemp = convertRawToTemp(rawRectal);
 
-  cachedCoolingPlateTemp = applyCalibration(rawPlate, plateCalTable, plateCalCount) +
-                           calibrationOffsetCooling;  // Table is primary calibration
-  cachedRectalTemp = applyCalibration(rawRectal, rectalCalTable, rectalCalCount) +
-                     calibrationOffsetRectal;
+  lastRawCoolingPlateTemp = rawPlateTemp;
+  lastRawRectalTemp       = rawRectalTemp;
+
+  double calibratedPlate  = applyCalibration(rawPlateTemp, plateCalTable, plateCalCount);
+  double calibratedRectal = applyCalibration(rawRectalTemp, rectalCalTable, rectalCalCount);
+
+  cachedCoolingPlateTemp = calibratedPlate + calibrationOffsetCooling;
+  cachedRectalTemp       = calibratedRectal + calibrationOffsetRectal;
 #endif
 }
 
@@ -104,6 +106,14 @@ double SensorModule::getCoolingPlateTemp() {
 
 double SensorModule::getRectalTemp() {
   return cachedRectalTemp;
+}
+
+double SensorModule::getCoolingPlateRawTemp() const {
+  return lastRawCoolingPlateTemp;
+}
+
+double SensorModule::getRectalRawTemp() const {
+  return lastRawRectalTemp;
 }
 
 void SensorModule::setCoolingCalibration(double offset) {
@@ -163,30 +173,16 @@ bool SensorModule::addCalibrationPoint(const char* sensorName, float referenceTe
 bool SensorModule::commitCalibration(const char* sensorName,
                                      const char* operatorName,
                                      uint32_t timestamp) {
-  if (!eepromManagerPointer || !sensorName) {
-    return false;
-  }
+  if (!sensorName) return false;
 
   const char* op = operatorName ? operatorName : "";
   if (strcmp(sensorName, "plate") == 0) {
-    return eepromManagerPointer->savePlateCalibration(plateCalTable,
-                                                      plateCalCount,
-                                                      op,
-                                                      timestamp);
+    return eeprom.savePlateCalibration(plateCalTable, plateCalCount, op, timestamp);
   } else if (strcmp(sensorName, "rectal") == 0) {
-    return eepromManagerPointer->saveRectalCalibration(rectalCalTable,
-                                                       rectalCalCount,
-                                                       op,
-                                                       timestamp);
+    return eeprom.saveRectalCalibration(rectalCalTable, rectalCalCount, op, timestamp);
   } else if (strcmp(sensorName, "both") == 0) {
-    bool ok1 = eepromManagerPointer->savePlateCalibration(plateCalTable,
-                                                          plateCalCount,
-                                                          op,
-                                                          timestamp);
-    bool ok2 = eepromManagerPointer->saveRectalCalibration(rectalCalTable,
-                                                           rectalCalCount,
-                                                           op,
-                                                           timestamp);
+    bool ok1 = eeprom.savePlateCalibration(plateCalTable, plateCalCount, op, timestamp);
+    bool ok2 = eeprom.saveRectalCalibration(rectalCalTable, rectalCalCount, op, timestamp);
     return ok1 && ok2;
   }
   return false;
@@ -206,12 +202,14 @@ double SensorModule::convertRawToTemp(int raw) {
 
 // Applies table-based calibration using linear interpolation of (measured, reference) pairs.
 double SensorModule::applyCalibration(double rawTemp,
-                                      const CalibrationPoint* table,
+                                      CalibrationPoint* table,
                                       uint8_t count) const {
-  if (count == 0 || !table) {
+  if (!table || count == 0) {
     return rawTemp;
   }
 
+  // Antar at tabellen er sortert på measured (stigende); vi sikrer dette i addCalibrationPoint.
+  // Utenfor område: clamp til nærmeste endepunkt.
   if (rawTemp <= table[0].measured) {
     return table[0].reference;
   }
@@ -222,9 +220,7 @@ double SensorModule::applyCalibration(double rawTemp,
   for (uint8_t i = 0; i + 1 < count; ++i) {
     float m0 = table[i].measured;
     float m1 = table[i + 1].measured;
-    if (m1 <= m0) {
-      continue;
-    }
+    if (m1 <= m0) continue; // defensivt
 
     if (rawTemp >= m0 && rawTemp <= m1) {
       float r0 = table[i].reference;
@@ -234,5 +230,6 @@ double SensorModule::applyCalibration(double rawTemp,
     }
   }
 
+  // Fallback – burde normalt ikke nås
   return rawTemp;
 }

@@ -1,1 +1,16 @@
-content
+# Musehypothermi firmware
+
+### Temperature calibration (cooling plate and rectal probe)
+
+- Each sensor (cooling plate and rectal probe) has its own calibration table stored in EEPROM.
+- A calibration point consists of:
+  - `measured`: the raw temperature read by the MCU (in °C) at the moment the point is added.
+  - `reference`: the true temperature in °C, typed in manually in the GUI from an external thermometer.
+- The firmware uses piecewise linear interpolation between calibration points to map `measured → reference`. Outside the calibrated range, values are clamped to the nearest endpoint.
+- Calibration is controlled via JSON over serial:
+  - `SET: { "variable": "calibration_point", "value": { "sensor": "plate" | "rectal", "reference": <float> } }`
+  - `SET: { "variable": "calibration_commit", "value": { "sensor": "plate" | "rectal" | "both", "operator": "<name>", "timestamp": <unix> } }`
+- The GUI exposes a "Calibration" panel showing:
+  - Raw vs calibrated temperature for both sensors with 4 decimal places.
+  - Controls to add calibration points and commit tables, including operator name.
+- Calibration metadata (timestamp, operator, number of points) is stored per sensor and reported in the periodic status JSON under the `calibration` object.

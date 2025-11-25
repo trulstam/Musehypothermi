@@ -310,7 +310,8 @@ AsymmetricPIDModule::AsymmetricPIDModule()
                  kDefaultCoolingKp, kDefaultCoolingKi, kDefaultCoolingKd, DIRECT),
       heatingPID(&Input, &heatingOutput, &Setpoint,
                  kDefaultHeatingKp, kDefaultHeatingKi, kDefaultHeatingKd, DIRECT),
-      Input(0.0), Setpoint(kDefaultTargetTemp), rawPIDOutput(0.0), finalOutput(0.0),
+      Input(0.0), Setpoint(kDefaultTargetTemp), lastSetpoint(kDefaultTargetTemp),
+      rawPIDOutput(0.0), finalOutput(0.0),
       coolingOutput(0.0), heatingOutput(0.0),
       active(false), coolingMode(false), emergencyStop(false), autotuneActive(false),
       autotuneStatusString("idle"), debugEnabled(false), useEquilibriumCompensation(false),
@@ -477,6 +478,13 @@ void AsymmetricPIDModule::update(double /*currentTemp*/) {
 void AsymmetricPIDModule::updatePIDMode(double error) {
     bool wantCooling = error < -currentParams.deadband;
     bool wantHeating = error > currentParams.deadband;
+
+    // If the setpoint was lowered and we are still above it, bias toward
+    // switching into cooling even inside the deadband so we don't pause at 0%.
+    bool setpointDecreased = Setpoint < lastSetpoint;
+    if (!coolingMode && !wantCooling && setpointDecreased && Input > Setpoint) {
+        wantCooling = true;
+    }
 
     if (wantCooling && !coolingMode) {
         switchToCoolingPID();

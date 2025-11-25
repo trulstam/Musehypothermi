@@ -272,6 +272,51 @@ void CommAPI::handleCommand(const String &jsonString) {
 
     if (doc.containsKey("SET")) {
         JsonObject set = doc["SET"];
+        if (set.containsKey("calibration_point")) {
+            JsonObject point = set["calibration_point"];
+            const char* sensor = point["sensor"] | "";
+            if (!point.containsKey("reference")) {
+                sendResponse("Calibration reference missing");
+                return;
+            }
+            float reference = point["reference"];
+            if (sensors.addCalibrationPoint(sensor, reference)) {
+                double measured = strcmp(sensor, "rectal") == 0 ? sensors.getRectalTemp() : sensors.getCoolingPlateTemp();
+                String msg = "Calibration point added for ";
+                msg += sensor;
+                msg += ": measured=";
+                msg += String(measured, 2);
+                msg += "C reference=";
+                msg += String(reference, 2);
+                sendEvent(msg);
+                sendResponse("Calibration point stored in RAM");
+            } else {
+                sendResponse("Calibration point rejected");
+            }
+            return;
+        }
+
+        if (set.containsKey("calibration_commit")) {
+            JsonObject commit = set["calibration_commit"];
+            const char* sensor = commit["sensor"] | "";
+            const char* op = commit["operator"] | "";
+            uint32_t ts = commit.containsKey("timestamp") ? commit["timestamp"].as<uint32_t>() : 0;
+            if (sensors.commitCalibration(sensor, op, ts)) {
+                EEPROMManager::SensorCalibrationMeta plateMeta{};
+                EEPROMManager::SensorCalibrationMeta rectalMeta{};
+                eeprom.getPlateCalibrationMeta(plateMeta);
+                eeprom.getRectalCalibrationMeta(rectalMeta);
+                String msg = "Calibration saved: plate=";
+                msg += String(plateMeta.pointCount);
+                msg += " rectal=";
+                msg += String(rectalMeta.pointCount);
+                sendEvent(msg);
+                sendResponse("Calibration committed to EEPROM");
+            } else {
+                sendResponse("Calibration commit failed");
+            }
+            return;
+        }
         String variable = set["variable"];
 
         if (variable == "target_temp") {
@@ -478,7 +523,7 @@ void CommAPI::sendFailsafeStatus() {
 }
 
 void CommAPI::sendStatus() {
-    StaticJsonDocument<512> doc;
+    StaticJsonDocument<768> doc;
     doc["failsafe_active"] = isFailsafeActive();
     doc["failsafe_reason"] = getFailsafeReason();
     doc["breath_check_enabled"] = isBreathCheckEnabled();
@@ -516,6 +561,22 @@ void CommAPI::sendStatus() {
     doc["cooling_rate_limit"] = pid.getCoolingRateLimit();
     doc["deadband"] = pid.getCurrentDeadband();
     doc["safety_margin"] = pid.getSafetyMargin();
+
+    EEPROMManager::SensorCalibrationMeta plateMeta{};
+    EEPROMManager::SensorCalibrationMeta rectalMeta{};
+    eeprom.getPlateCalibrationMeta(plateMeta);
+    eeprom.getRectalCalibrationMeta(rectalMeta);
+
+    JsonObject cal = doc.createNestedObject("calibration");
+    JsonObject plateObj = cal.createNestedObject("plate");
+    plateObj["timestamp"] = plateMeta.timestamp;
+    plateObj["operator"] = plateMeta.operatorName;
+    plateObj["points"] = plateMeta.pointCount;
+
+    JsonObject rectalObj = cal.createNestedObject("rectal");
+    rectalObj["timestamp"] = rectalMeta.timestamp;
+    rectalObj["operator"] = rectalMeta.operatorName;
+    rectalObj["points"] = rectalMeta.pointCount;
 
     serializeJson(doc, *serial);
     serial->println();
@@ -562,7 +623,7 @@ void CommAPI::sendPIDParams() {
 }
 
 void CommAPI::sendConfig() {
-    StaticJsonDocument<512> doc;
+    StaticJsonDocument<768> doc;
     doc["pid_kp"] = pid.getHeatingKp();
     doc["pid_ki"] = pid.getHeatingKi();
     doc["pid_kd"] = pid.getHeatingKd();
@@ -583,6 +644,22 @@ void CommAPI::sendConfig() {
     doc["deadband"] = pid.getCurrentDeadband();
     doc["safety_margin"] = pid.getSafetyMargin();
     doc["equilibrium_compensation_active"] = pid.isEquilibriumCompensationEnabled();
+
+    EEPROMManager::SensorCalibrationMeta plateMeta{};
+    EEPROMManager::SensorCalibrationMeta rectalMeta{};
+    eeprom.getPlateCalibrationMeta(plateMeta);
+    eeprom.getRectalCalibrationMeta(rectalMeta);
+
+    JsonObject cal = doc.createNestedObject("calibration");
+    JsonObject plateObj = cal.createNestedObject("plate");
+    plateObj["timestamp"] = plateMeta.timestamp;
+    plateObj["operator"] = plateMeta.operatorName;
+    plateObj["points"] = plateMeta.pointCount;
+
+    JsonObject rectalObj = cal.createNestedObject("rectal");
+    rectalObj["timestamp"] = rectalMeta.timestamp;
+    rectalObj["operator"] = rectalMeta.operatorName;
+    rectalObj["points"] = rectalMeta.pointCount;
     serializeJson(doc, *serial);
     serial->println();
 }

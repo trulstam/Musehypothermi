@@ -29,14 +29,14 @@ constexpr float kDefaultCoolingKd = 0.8f;
 
 constexpr float kDefaultTargetTemp = 37.0f;
 constexpr float kDefaultMaxOutputPercent = 50.0f;
-constexpr float kDefaultDeadband = 0.5f;
+constexpr float kDefaultDeadband = 0.3f;
 constexpr float kDefaultSafetyMargin = 2.0f;
 constexpr float kDefaultCoolingRate = 2.0f;
-constexpr double kOutputSmoothingFactor = 0.8;
+constexpr double kOutputSmoothingFactor = 0.6;  // faster response smoothing
 constexpr unsigned long kSampleTimeMs = 100;
 constexpr double kDefaultEquilibriumEpsilon = 0.02;
 constexpr unsigned long kDefaultEquilibriumStableMs = 60000;
-constexpr double kDefaultFeedforwardGain = 15.0;
+constexpr double kDefaultFeedforwardGain = 5.0;  // reduced default feedforward gain
 constexpr unsigned long kEquilibriumEstimateMinStableMs = 300000;   // 5 minutes
 constexpr unsigned long kEquilibriumEstimateMaxDurationMs = 600000; // 10 minutes
 constexpr unsigned long kEquilibriumEstimateSampleMs = 1000;
@@ -58,7 +58,8 @@ constexpr float kCoolingKdMin = 0.0f;
 constexpr float kCoolingKdMax = 12.0f;
 
 constexpr float kLambdaFloor = 5.0f;
-constexpr float kLambdaFactor = 0.8f;
+constexpr float kLambdaFactor = 0.5f;
+constexpr float kAutotuneAggressiveness = 1.5f;  // global autotune gain boost
 
 bool isInvalidValue(float value) {
     return isnan(value) || isinf(value);
@@ -270,9 +271,17 @@ bool ComputeImcPid(const SegmentStats& stats,
     float Td = stats.timeConstant * stats.deadTime /
                std::max(2.0f * stats.timeConstant + stats.deadTime, 1e-3f);
 
-    float kp = constrain(kc, kpMin, kpMax);
-    float ki = constrain(kc / Ti, kiMin, kiMax);
-    float kd = constrain(kc * Td, kdMin, kdMax);
+    float kp0 = kc;
+    float ki0 = kc / Ti;
+    float kd0 = kc * Td;
+
+    float kp = kp0 * kAutotuneAggressiveness;
+    float ki = ki0 * kAutotuneAggressiveness;
+    float kd = kd0 * kAutotuneAggressiveness;
+
+    kp = constrain(kp, kpMin, kpMax);
+    ki = constrain(ki, kiMin, kiMax);
+    kd = constrain(kd, kdMin, kdMax);
 
     outKp = kp;
     outKi = ki;
@@ -528,10 +537,16 @@ void AsymmetricPIDModule::applySafetyConstraints() {
         heatingLimit *= scale;
     }
 
+    // Stop heating if at or above setpoint for safety
+    if (!coolingMode && Input >= Setpoint) {
+        rawPIDOutput = 0.0;
+    }
+
     if (coolingMode) {
         double distance = fabs(Input - Setpoint);
         if (distance < 2.0) {
             double scale = distance / 2.0;
+            if (scale < 0.3) scale = 0.3;   // keep minimum cooling authority
             rawPIDOutput *= scale;
         }
         rawPIDOutput = max(rawPIDOutput, coolingLimit);
@@ -712,21 +727,23 @@ void AsymmetricPIDModule::updatePassiveEquilibriumEstimate() {
 }
 
 double AsymmetricPIDModule::computeFeedforward() {
-    if (!equilibriumValid) {
+    if (!useEquilibriumCompensation || !equilibriumValid) {
+        return 0.0;
+    }
+
+    double error = Setpoint - Input;
+    if (fabs(error) <= currentParams.deadband) {
         return 0.0;
     }
 
     double delta = Setpoint - equilibriumTemp;
     double ff = kff * delta;
 
-    double limit = std::max(fabs(static_cast<double>(currentParams.heating_limit)),
-                            fabs(static_cast<double>(currentParams.cooling_limit)));
-    if (limit <= 0.0) {
-        return 0.0;
-    }
+    double limit = std::max(fabs((double)currentParams.heating_limit),
+                             fabs((double)currentParams.cooling_limit));
+    if (limit <= 0.0) return 0.0;
 
-    ff = constrain(ff, -limit, limit);
-    return ff;
+    return constrain(ff, -limit, limit);
 }
 
 // --- Compatibility-style getters (preserve existing API) ---

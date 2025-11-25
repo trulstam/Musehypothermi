@@ -2000,6 +2000,8 @@ class MatplotlibGraphWidget(QWidget):
         self.setup_layout()
         self.max_points = 200
         self.update_counter = 0
+        self._last_time_data: List[float] = []
+        self._last_graph_data: Dict[str, List] = {}
         print("✅ MatplotlibGraphWidget initialized")
 
     def setup_plots(self):
@@ -2076,6 +2078,20 @@ class MatplotlibGraphWidget(QWidget):
         layout.setContentsMargins(5, 5, 5, 5)
         toolbar = NavigationToolbar2QT(self.canvas, self)
         layout.addWidget(toolbar)
+
+        controls = QHBoxLayout()
+        controls.setContentsMargins(0, 0, 0, 0)
+        self.auto_follow_checkbox = QCheckBox("🔄 Auto-follow")
+        self.auto_follow_checkbox.setChecked(True)
+        self.auto_follow_checkbox.toggled.connect(self._toggle_auto_follow)
+        controls.addWidget(self.auto_follow_checkbox)
+
+        reset_btn = QPushButton("Reset view")
+        reset_btn.clicked.connect(self.reset_zoom)
+        controls.addWidget(reset_btn)
+        controls.addStretch(1)
+
+        layout.addLayout(controls)
         layout.addWidget(self.canvas)
         self.setLayout(layout)
 
@@ -2092,11 +2108,13 @@ class MatplotlibGraphWidget(QWidget):
         """Update all graphs with new data"""
         try:
             self.update_counter += 1
-            
+
             if not graph_data.get("time") or len(graph_data["time"]) == 0:
                 return False
-            
+
             time_data = graph_data["time"]
+            self._last_time_data = time_data
+            self._last_graph_data = graph_data
             
             # Update lines
             if "plate_temp" in graph_data:
@@ -2146,6 +2164,8 @@ class MatplotlibGraphWidget(QWidget):
     def auto_scale_axes(self, time_data: List[float], graph_data: Dict[str, List]):
         """Auto-scale axes"""
         try:
+            if hasattr(self, "auto_follow_checkbox"):
+                self.auto_scale_enabled = self.auto_follow_checkbox.isChecked()
             if not self.auto_scale_enabled:
                 return
             if len(time_data) < 2:
@@ -2254,6 +2274,9 @@ class MatplotlibGraphWidget(QWidget):
     def _handle_mouse_action(self, event):
         """Disable auto-scaling when the user pans/zooms."""
         if event.inaxes:
+            if hasattr(self, "auto_follow_checkbox"):
+                with QSignalBlocker(self.auto_follow_checkbox):
+                    self.auto_follow_checkbox.setChecked(False)
             self.auto_scale_enabled = False
 
     def _handle_scroll_zoom(self, event):
@@ -2262,6 +2285,10 @@ class MatplotlibGraphWidget(QWidget):
             return
 
         self.auto_scale_enabled = False
+
+        if hasattr(self, "auto_follow_checkbox"):
+            with QSignalBlocker(self.auto_follow_checkbox):
+                self.auto_follow_checkbox.setChecked(False)
 
         scale_factor = 0.9 if event.button == 'up' else 1.1
         axes = [self.ax_temp, self.ax_pid, self.ax_breath]
@@ -2284,8 +2311,19 @@ class MatplotlibGraphWidget(QWidget):
     def reset_zoom(self):
         """Return to automatic scaling."""
         self.auto_scale_enabled = True
+        if hasattr(self, "auto_follow_checkbox"):
+            with QSignalBlocker(self.auto_follow_checkbox):
+                self.auto_follow_checkbox.setChecked(True)
         self.set_initial_ranges()
         self.canvas.draw_idle()
+
+    def _toggle_auto_follow(self, checked: bool):
+        """Turn auto-follow on/off, restoring view when re-enabled."""
+
+        self.auto_scale_enabled = checked
+        if checked and self._last_time_data and self._last_graph_data:
+            self.auto_scale_axes(self._last_time_data, self._last_graph_data)
+            self.canvas.draw_idle()
 
 
 class MainWindow(QMainWindow):
@@ -4293,6 +4331,11 @@ class MainWindow(QMainWindow):
             except (TypeError, ValueError):
                 continue
 
+        if not rectal_values and getattr(self, "rectal_setpoint_schedule", None):
+            for start, end, value in self.rectal_setpoint_schedule:
+                rectal_times.extend([start, end])
+                rectal_values.extend([value, value])
+
         return times, targets, plate_targets, rectal_times, rectal_values
 
     def _update_profile_preview(self) -> None:
@@ -4413,6 +4456,24 @@ class MainWindow(QMainWindow):
         if not profile_points:
             raise ValueError("Loaded profile is empty")
 
+        def _extract_rectal_target(entry: Dict[str, Any]) -> Optional[float]:
+            target = _first_present(
+                entry,
+                (
+                    "rectal_override_target",
+                    "rectal_setpoint",
+                    "rectalSetpoint",
+                    "rectalTarget",
+                    "rectal_target",
+                ),
+            )
+            if target is None:
+                return None
+            try:
+                return float(target)
+            except (TypeError, ValueError):
+                return None
+
         def _validate_and_append(steps: List[Dict[str, Any]], t_value: float, target: float, index: int):
             if t_value < 0:
                 raise ValueError(f"Time cannot be negative at position {index}")
@@ -4422,7 +4483,12 @@ class MainWindow(QMainWindow):
                     f"Time must be ascending. Entry {index} has t={t_value} which is not greater than previous t={steps[-1]['t']}"
                 )
 
-            steps.append({"t": t_value, "temp": target})
+            step_entry: Dict[str, Any] = {"t": t_value, "temp": target}
+            rectal_value = _extract_rectal_target(profile_points[index - 1])
+            if rectal_value is not None:
+                step_entry["rectal_override_target"] = rectal_value
+
+            steps.append(step_entry)
 
         # Case 1: Already in controller timeline format
         first_entry = profile_points[0]

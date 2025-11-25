@@ -4341,6 +4341,26 @@ class MainWindow(QMainWindow):
 
         return times, targets, plate_targets, rectal_times, rectal_values
 
+    def _build_preview_from_steps(
+        self, steps: List[Dict[str, Any]]
+    ) -> Tuple[List[float], List[float], List[float]]:
+        """Fallback builder that uses controller steps when raw points are unavailable."""
+
+        times: List[float] = []
+        targets: List[float] = []
+        plates: List[float] = []
+
+        for entry in steps:
+            try:
+                times.append(float(entry.get("t", len(times))))
+                target_val = float(entry.get("temp", entry.get("plate_target", 0.0)))
+                targets.append(target_val)
+                plates.append(target_val)
+            except (TypeError, ValueError):
+                continue
+
+        return times, targets, plates
+
     def _update_profile_preview(self) -> None:
         """Refresh inline profile preview plot."""
 
@@ -4366,15 +4386,33 @@ class MainWindow(QMainWindow):
             }
             legend.updateSize()
 
-        if not self.profile_data:
+        times: List[float]
+        targets: List[float]
+        plate_targets: List[float]
+        rectal_times: List[float]
+        rectal_values: List[float]
+
+        if self.profile_data:
+            times, targets, plate_targets, rectal_times, rectal_values = self._build_profile_preview_series(
+                self.profile_data
+            )
+        else:
+            times = targets = plate_targets = rectal_times = rectal_values = []
+
+        if not times and getattr(self, "profile_steps", None):
+            times, targets, plate_targets = self._build_preview_from_steps(self.profile_steps)
+            rectal_times = []
+            rectal_values = []
+            if getattr(self, "rectal_setpoint_schedule", None):
+                for start, end, value in self.rectal_setpoint_schedule:
+                    rectal_times.extend([start, end])
+                    rectal_values.extend([value, value])
+
+        if not times and not rectal_times:
             for item in self._profile_preview_items.values():
                 item.setData([], [])
             plot.enableAutoRange(x=True, y=True)
             return
-
-        times, targets, plate_targets, rectal_times, rectal_values = self._build_profile_preview_series(
-            self.profile_data
-        )
 
         self._profile_preview_items["target"].setData(times, targets)
         self._profile_preview_items["plate"].setData(times, plate_targets)

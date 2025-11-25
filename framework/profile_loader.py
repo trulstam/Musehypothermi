@@ -48,6 +48,63 @@ class ProfileLoader:
 
         return self.profile
 
+    # --- Backward-compatible public helpers used by GUI/TestSuite ---
+    def load_profile_json(self, filepath: str) -> bool:
+        """Load a JSON profile and store it on the instance.
+
+        Returns
+        -------
+        bool
+            ``True`` on success, ``False`` on validation or IO failure.
+        """
+
+        try:
+            self.profile = self._load_profile_json(filepath)
+
+            if self.event_logger:
+                filename = os.path.basename(filepath)
+                self.event_logger.log_event(
+                    f"PROFILE_LOADED file={filename} steps={len(self.profile)}"
+                )
+
+            return True
+
+        except Exception as exc:
+            print(f"❌ Failed to load JSON profile '{filepath}': {exc}")
+            if self.event_logger:
+                self.event_logger.log_event(
+                    f"PROFILE_LOAD_FAILED file={filepath} error={exc}"
+                )
+            return False
+
+    def load_profile_csv(self, filepath: str) -> bool:
+        """Load a CSV profile and store it on the instance.
+
+        Returns
+        -------
+        bool
+            ``True`` on success, ``False`` on validation or IO failure.
+        """
+
+        try:
+            self.profile = self._load_profile_csv(filepath)
+
+            if self.event_logger:
+                filename = os.path.basename(filepath)
+                self.event_logger.log_event(
+                    f"PROFILE_LOADED file={filename} steps={len(self.profile)}"
+                )
+
+            return True
+
+        except Exception as exc:
+            print(f"❌ Failed to load CSV profile '{filepath}': {exc}")
+            if self.event_logger:
+                self.event_logger.log_event(
+                    f"PROFILE_LOAD_FAILED file={filepath} error={exc}"
+                )
+            return False
+
     def _load_profile_csv(self, filepath: str) -> List[Dict]:
         """Load and normalize a temperature profile from a CSV file."""
         profile_data: List[Dict] = []

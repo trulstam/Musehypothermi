@@ -1341,7 +1341,7 @@ class AutotuneWizardTab(QWidget):
         )
         self.metric_label.setText("Samler data – vent til responsen stabiliserer seg.")
         self.parent.log(
-            f"🎯 Firmware-autotune startet: {step:.1f} °C steg → {step_percent:.1f}% {direction_label}",
+            f"🎯 Firmware-autotune startet: {step:.2f} °C steg → {step_percent:.1f}% {direction_label}",
             "info",
         )
         self.parent.request_status()
@@ -1980,7 +1980,7 @@ class AutotuneWizardTab(QWidget):
             silent=True,
         ):
             self.parent.log(
-                f"🎯 Autotune: måltemperatur tilbake til {self._original_target:.1f} °C",
+                f"🎯 Autotune: måltemperatur tilbake til {self._original_target:.2f} °C",
                 "info",
             )
         self._original_target = None
@@ -3667,16 +3667,16 @@ class MainWindow(QMainWindow):
         try:
             if "cooling_plate_temp" in data:
                 temp = float(data["cooling_plate_temp"])
-                self.plateTempDisplay.setText(f"{temp:.1f}°C")
+                self.plateTempDisplay.setText(f"{temp:.2f}°C")
                 self.current_plate_temp = temp
 
             if "anal_probe_temp" in data:
                 temp = float(data["anal_probe_temp"])
-                self.rectalTempDisplay.setText(f"{temp:.1f}°C")
+                self.rectalTempDisplay.setText(f"{temp:.2f}°C")
 
             rectal_setpoint = self._extract_rectal_setpoint(data)
             if rectal_setpoint is not None:
-                self.rectalSetpointDisplay.setText(f"{rectal_setpoint:.1f}°C")
+                self.rectalSetpointDisplay.setText(f"{rectal_setpoint:.2f}°C")
             else:
                 self.rectalSetpointDisplay.setText("–")
 
@@ -3686,14 +3686,14 @@ class MainWindow(QMainWindow):
 
             if "plate_target_active" in data:
                 target = float(data["plate_target_active"])
-                self.targetTempDisplay.setText(f"{target:.1f}°C")
+                self.targetTempDisplay.setText(f"{target:.2f}°C")
                 self.current_target_temp = target
 
                 adjusted_target = self._extract_adjusted_plate_target(
                     data, target, rectal_setpoint
                 )
                 if adjusted_target is not None:
-                    self.adjustedTargetDisplay.setText(f"{adjusted_target:.1f}°C")
+                    self.adjustedTargetDisplay.setText(f"{adjusted_target:.2f}°C")
                 else:
                     self.adjustedTargetDisplay.setText("–")
 
@@ -4369,16 +4369,16 @@ class MainWindow(QMainWindow):
                 
                 if success:
                     # Update displays
-                    self.plateTempDisplay.setText(f"{test_data['plate_temp'][-1]:.1f}°C")
-                    self.rectalTempDisplay.setText(f"{test_data['rectal_temp'][-1]:.1f}°C")
-                    self.targetTempDisplay.setText(f"{test_data['target_temp'][-1]:.1f}°C")
+                    self.plateTempDisplay.setText(f"{test_data['plate_temp'][-1]:.2f}°C")
+                    self.rectalTempDisplay.setText(f"{test_data['rectal_temp'][-1]:.2f}°C")
+                    self.targetTempDisplay.setText(f"{test_data['target_temp'][-1]:.2f}°C")
                     if test_data.get("rectal_target_temp"):
                         self.rectalSetpointDisplay.setText(
-                            f"{test_data['rectal_target_temp'][-1]:.1f}°C"
+                            f"{test_data['rectal_target_temp'][-1]:.2f}°C"
                         )
                     if test_data.get("adjusted_target_temp"):
                         self.adjustedTargetDisplay.setText(
-                            f"{test_data['adjusted_target_temp'][-1]:.1f}°C"
+                            f"{test_data['adjusted_target_temp'][-1]:.2f}°C"
                         )
                     self.pidOutputDisplay.setText(f"{test_data['pid_output'][-1]:.1f}")
                     self.breathRateDisplay.setText(f"{test_data['breath_rate'][-1]:.0f} BPM")

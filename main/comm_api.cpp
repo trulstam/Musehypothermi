@@ -18,6 +18,29 @@ extern EEPROMManager eeprom;
 extern ProfileManager profileManager;
 extern int heartbeatTimeoutMs;
 
+namespace {
+// Rens meta slik at uinitialiserte EEPROM-biter (0xFF) ikke sendes som tekst.
+void sanitizeCalibrationMeta(SensorCalibrationMeta &meta, uint8_t tableCount = 0) {
+    meta.operatorName[sizeof(meta.operatorName) - 1] = '\0';
+
+    bool invalid = (meta.timestamp == 0 || meta.timestamp == 0xFFFFFFFF ||
+                    meta.pointCount == 0 || meta.pointCount > CALIB_MAX_POINTS);
+
+    if (invalid) {
+        meta.timestamp = 0;
+        meta.pointCount = 0;
+        meta.operatorName[0] = '\0';
+    }
+
+    if (tableCount > CALIB_MAX_POINTS) {
+        tableCount = CALIB_MAX_POINTS;
+    }
+    if (tableCount > 0) {
+        meta.pointCount = tableCount;
+    }
+}
+}  // namespace
+
 CommAPI::CommAPI(Stream &serialStream) {
     serial = &serialStream;
     buffer = "";
@@ -91,8 +114,62 @@ void CommAPI::handleCommand(const String &jsonString) {
                 sendConfig();
             } else if (state == "calibration_table") {
                 sendCalibrationTable();
+            } else if (state == "get_calibration_table") {
+                sendCalibrationTable();
             } else {
                 sendResponse("Unknown GET action");
+            }
+
+        } else if (action == "add_calibration_point") {
+            JsonVariant obj = cmd["state"];
+            if (!obj.is<JsonObject>()) {
+                sendResponse("Invalid calibration payload");
+            } else {
+                JsonObject payload = obj.as<JsonObject>();
+                const char* sensor = payload["sensor"] | nullptr;
+                float reference = payload["reference"] | NAN;
+                if (!sensor || isnan(reference)) {
+                    sendResponse("Missing sensor or reference");
+                } else {
+                    bool ok = sensors.addCalibrationPoint(sensor, reference);
+                    if (ok) {
+                        String msg = "Added calibration point: ";
+                        msg += sensor;
+                        msg += " ref=";
+                        msg += reference;
+                        sendEvent(msg);  // Norsk: logg at kalibreringspunkt er lagt til
+                        sendResponse("Calibration point added");
+                    } else {
+                        sendResponse("Calibration point rejected");
+                    }
+                }
+            }
+
+        } else if (action == "commit_calibration") {
+            JsonVariant obj = cmd["state"];
+            if (!obj.is<JsonObject>()) {
+                sendResponse("Invalid calibration commit payload");
+            } else {
+                JsonObject payload = obj.as<JsonObject>();
+                const char* sensor = payload["sensor"] | nullptr;
+                const char* operatorName = payload["operator"] | "";
+                uint32_t timestamp = static_cast<uint32_t>(millis());
+
+                if (!sensor) {
+                    sendResponse("Missing sensor for calibration commit");
+                } else {
+                    bool ok = sensors.commitCalibration(sensor, operatorName, timestamp);
+                    if (ok) {
+                        String msg = "Calibration committed for ";
+                        msg += sensor;
+                        msg += " by ";
+                        msg += operatorName;
+                        sendEvent(msg);  // Norsk: logg at kalibrering ble lagret
+                        sendResponse("Calibration committed");
+                    } else {
+                        sendResponse("Calibration commit failed");
+                    }
+                }
             }
 
         } else if (action == "profile") {
@@ -644,6 +721,12 @@ void CommAPI::sendStatus() {
     SensorCalibrationMeta rectalMeta{};
     eeprom.getPlateCalibrationMeta(plateMeta);
     eeprom.getRectalCalibrationMeta(rectalMeta);
+    uint8_t plateCount = 0;
+    uint8_t rectalCount = 0;
+    sensors.getPlateCalibrationTable(plateCount);
+    sensors.getRectalCalibrationTable(rectalCount);
+    sanitizeCalibrationMeta(plateMeta, plateCount);
+    sanitizeCalibrationMeta(rectalMeta, rectalCount);
 
     JsonObject cal = doc.createNestedObject("calibration");
     JsonObject plateObj = cal.createNestedObject("plate");
@@ -727,6 +810,12 @@ void CommAPI::sendConfig() {
     SensorCalibrationMeta rectalMeta{};
     eeprom.getPlateCalibrationMeta(plateMeta);
     eeprom.getRectalCalibrationMeta(rectalMeta);
+    uint8_t plateCount = 0;
+    uint8_t rectalCount = 0;
+    sensors.getPlateCalibrationTable(plateCount);
+    sensors.getRectalCalibrationTable(rectalCount);
+    sanitizeCalibrationMeta(plateMeta, plateCount);
+    sanitizeCalibrationMeta(rectalMeta, rectalCount);
 
     JsonObject cal = doc.createNestedObject("calibration");
     JsonObject plateObj = cal.createNestedObject("plate");
@@ -755,6 +844,8 @@ void CommAPI::sendCalibrationTable() {
     uint8_t rectalCount = 0;
     const CalibrationPoint* plateTable = sensors.getPlateCalibrationTable(plateCount);
     const CalibrationPoint* rectalTable = sensors.getRectalCalibrationTable(rectalCount);
+    sanitizeCalibrationMeta(plateMeta, plateCount);
+    sanitizeCalibrationMeta(rectalMeta, rectalCount);
 
     JsonObject plate = doc.createNestedObject("plate");
     JsonObject plateMetaObj = plate.createNestedObject("meta");

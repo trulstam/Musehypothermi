@@ -134,6 +134,16 @@ void SensorModule::setSimulatedTemps(double plate, double rectal) {
   cachedRectalTemp = rectal;
 }
 
+const CalibrationPoint* SensorModule::getPlateCalibrationTable(uint8_t& count) const {
+  count = plateCalCount;
+  return plateCalTable;
+}
+
+const CalibrationPoint* SensorModule::getRectalCalibrationTable(uint8_t& count) const {
+  count = rectalCalCount;
+  return rectalCalTable;
+}
+
 bool SensorModule::addCalibrationPoint(const char* sensorName, float referenceTemp) {
   if (!sensorName) return false;
 

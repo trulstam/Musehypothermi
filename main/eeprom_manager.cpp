@@ -187,7 +187,7 @@ bool EEPROMManager::saveRectalCalibration(const CalibrationPoint* table,
     return true;
 }
 
-void EEPROMManager::loadPlateCalibration(CalibrationPoint* table, uint8_t& count) {
+void EEPROMManager::loadPlateCalibration(CalibrationPoint* table, uint8_t& count) const {
     count = 0;
     if (!table) return;
 
@@ -205,7 +205,7 @@ void EEPROMManager::loadPlateCalibration(CalibrationPoint* table, uint8_t& count
     }
 }
 
-void EEPROMManager::loadRectalCalibration(CalibrationPoint* table, uint8_t& count) {
+void EEPROMManager::loadRectalCalibration(CalibrationPoint* table, uint8_t& count) const {
     count = 0;
     if (!table) return;
 

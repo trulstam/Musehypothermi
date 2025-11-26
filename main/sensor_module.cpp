@@ -43,6 +43,10 @@ void SensorModule::begin() {
 }
 
 void SensorModule::update() {
+  updateTemps();
+}
+
+void SensorModule::updateTemps() {
 #if SIMULATION_MODE
   static unsigned long lastUpdate = millis();
   unsigned long now = millis();
@@ -75,13 +79,14 @@ void SensorModule::update() {
   double rawPlate = coolingPlateTemp + noise;
   double rawRectal = rectalTemp + noise;
 
-  lastRawCoolingPlateTemp = rawPlate;
+  lastRawCoolingPlateTemp = rawPlate;   // Råverdi (simulert)
   lastRawRectalTemp = rawRectal;
 
-  cachedCoolingPlateTemp = applyCalibration(rawPlate, plateCalTable, plateCalCount) +
-                          calibrationOffsetCooling;  // Offset kept for compatibility
-  cachedRectalTemp = applyCalibration(rawRectal, rectalCalTable, rectalCalCount) +
-                     calibrationOffsetRectal;
+  double calibratedPlate = applyCalibration(rawPlate, plateCalTable, plateCalCount);   // Kalibrer plate
+  double calibratedRectal = applyCalibration(rawRectal, rectalCalTable, rectalCalCount); // Kalibrer rektal
+
+  cachedCoolingPlateTemp = calibratedPlate + calibrationOffsetCooling;  // Offset holdes for kompatibilitet
+  cachedRectalTemp = calibratedRectal + calibrationOffsetRectal;
 #else
   int rawPlate = analogRead(COOLING_PLATE_PIN);
   int rawRectal = analogRead(RECTAL_PROBE_PIN);
@@ -89,11 +94,11 @@ void SensorModule::update() {
   double rawPlateTemp  = convertRawToTemp(rawPlate);
   double rawRectalTemp = convertRawToTemp(rawRectal);
 
-  lastRawCoolingPlateTemp = rawPlateTemp;
+  lastRawCoolingPlateTemp = rawPlateTemp;   // Lagre råverdi (ADC → °C)
   lastRawRectalTemp       = rawRectalTemp;
 
-  double calibratedPlate  = applyCalibration(rawPlateTemp, plateCalTable, plateCalCount);
-  double calibratedRectal = applyCalibration(rawRectalTemp, rectalCalTable, rectalCalCount);
+  double calibratedPlate  = applyCalibration(rawPlateTemp, plateCalTable, plateCalCount);     // Kalibrer plate
+  double calibratedRectal = applyCalibration(rawRectalTemp, rectalCalTable, rectalCalCount);  // Kalibrer rektal
 
   cachedCoolingPlateTemp = calibratedPlate + calibrationOffsetCooling;
   cachedRectalTemp       = calibratedRectal + calibrationOffsetRectal;
@@ -201,6 +206,7 @@ double SensorModule::convertRawToTemp(int raw) {
 }
 
 // Applies table-based calibration using linear interpolation of (measured, reference) pairs.
+// Norsk: Bruker måle-/referansepunkter for å justere råtemperaturen.
 double SensorModule::applyCalibration(double rawTemp,
                                       CalibrationPoint* table,
                                       uint8_t count) const {

@@ -231,6 +231,28 @@ void EEPROMManager::getRectalCalibrationMeta(SensorCalibrationMeta& meta) const 
     EEPROM.get(addrCalibRectalMeta, meta);
 }
 
+void EEPROMManager::updateCalibrationMeta(const char* sensorName,
+                                          const char* operatorName,
+                                          uint8_t pointCount,
+                                          uint32_t timestamp) {
+    if (!sensorName) return;
+    SensorCalibrationMeta meta{};
+    int metaAddr = addrCalibPlateMeta;
+    if (strcmp(sensorName, "rectal") == 0) {
+        metaAddr = addrCalibRectalMeta;
+    }
+
+    EEPROM.get(metaAddr, meta);
+    meta.timestamp = timestamp;
+    meta.pointCount = pointCount;
+    if (operatorName) {
+        strncpy(meta.operatorName, operatorName, sizeof(meta.operatorName) - 1);
+        meta.operatorName[sizeof(meta.operatorName) - 1] = '\0';
+    }
+
+    EEPROM.put(metaAddr, meta);
+}
+
 bool EEPROMManager::factoryReset() {
     saveHeatingPIDParams(kDefaultHeatingKp, kDefaultHeatingKi, kDefaultHeatingKd);
     saveCoolingPIDParams(kDefaultCoolingKp, kDefaultCoolingKi, kDefaultCoolingKd);

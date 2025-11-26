@@ -107,6 +107,7 @@ class AsymmetricPIDControls(QWidget):
             if parent and hasattr(parent, "emergency_event_history")
             else []
         )
+        self.emergency_stop_active = False
         self.setup_ui()
         
     def setup_ui(self):
@@ -2377,10 +2378,8 @@ class CalibrationTab(QWidget):
 
         self.sensor_selector = QComboBox()
         self.sensor_selector.addItems(["plate", "rectal"])
-        self.reference_input = QDoubleSpinBox()
-        self.reference_input.setDecimals(2)
-        self.reference_input.setRange(-100.0, 200.0)
-        self.reference_input.setSingleStep(0.1)
+        self.reference_input = QLineEdit()
+        self.reference_input.setPlaceholderText("22.75 eller 22,75")
         self.operator_input = QLineEdit()
 
         buttons_row = QHBoxLayout()
@@ -2450,13 +2449,24 @@ class CalibrationTab(QWidget):
 
     def _add_calibration_point(self):
         sensor = self.sensor_selector.currentText()
-        reference = float(self.reference_input.value())
+        raw_txt = self.reference_input.text().strip()
+        txt = raw_txt.replace(",", ".")
+        try:
+            reference = float(txt)
+        except ValueError:
+            self.main_window.log(f"❗ Ugyldig referansetemperatur: {raw_txt!r}", "error")
+            return
+
         operator = self.operator_input.text().strip()
 
-        payload = {"sensor": sensor, "reference": reference, "operator": operator}
-        if self._send_cmd("add_calibration_point", payload):
-            # Hent oppdatert tabell slik at nye punkter vises umiddelbart
-            self.request_table()
+        if not self.main_window.connection_established:
+            self.main_window.log("❌ Not connected", "error")
+            return
+
+        params = {"sensor": sensor, "reference": reference, "operator": operator}
+        self.main_window.serial_manager.sendCMDParams("add_calibration_point", params)
+        self.main_window.log(f"📡 CMD add_calibration_point → {params}", "command")
+        self.request_table()
 
     def _commit_calibration(self):
         sensor = self.sensor_selector.currentText()
@@ -2528,12 +2538,16 @@ class CalibrationTab(QWidget):
                 )
 
         self.calibration_entries = table_rows
-
+        self.table.setRowCount(0)
         self.table.setRowCount(len(table_rows))
         for row, entry in enumerate(table_rows):
+            measured = entry.get("measured_C")
+            reference = entry.get("reference_C")
+            measured_str = "" if measured is None else f"{float(measured):.2f}"
+            reference_str = "" if reference is None else f"{float(reference):.2f}"
             self.table.setItem(row, 0, QTableWidgetItem(str(entry.get("sensor", ""))))
-            self.table.setItem(row, 1, QTableWidgetItem(self._format_temp(entry.get("measured_C"))))
-            self.table.setItem(row, 2, QTableWidgetItem(self._format_temp(entry.get("reference_C"))))
+            self.table.setItem(row, 1, QTableWidgetItem(measured_str))
+            self.table.setItem(row, 2, QTableWidgetItem(reference_str))
 
 class MainWindow(QMainWindow):
     """Main application window"""
@@ -3705,6 +3719,9 @@ class MainWindow(QMainWindow):
 
             if "anal_probe_temp" in data:
                 temp = float(data["anal_probe_temp"])
+                self.rectalTempDisplay.setText(f"{temp:.2f}°C")
+            if "rectal_temp" in data:
+                temp = float(data["rectal_temp"])
                 self.rectalTempDisplay.setText(f"{temp:.2f}°C")
 
             rectal_setpoint = self._extract_rectal_setpoint(data)

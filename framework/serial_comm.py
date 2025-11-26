@@ -25,8 +25,10 @@ class SerialManager(QObject):
         # States
         self.keep_running = False
         self.last_heartbeat_time = time.time()
-        self.last_data_time = time.time()
+        self.connection_time = None
+        self.last_data_time = None
         self.failsafe_triggered_flag = False
+        self.watchdog_armed = False
         self.latest_data = None
         self._on_data_received = None
 
@@ -61,9 +63,12 @@ class SerialManager(QObject):
         # Start threads
         self.keep_running = True
         # Reset watchdog timers so we don't immediately trigger failsafe
-        self.last_heartbeat_time = time.time()
-        self.last_data_time = self.last_heartbeat_time
+        now = time.time()
+        self.last_heartbeat_time = now
+        self.connection_time = now
+        self.last_data_time = None
         self.failsafe_triggered_flag = False
+        self.watchdog_armed = False
         self.latest_data = None
 
         self.read_thread = threading.Thread(target=self.read_serial_loop, daemon=True)
@@ -169,8 +174,21 @@ class SerialManager(QObject):
                 except json.JSONDecodeError as e:
                     print(f"⚠️ JSON decode error: {e} → Line: {line}")
 
-            if (time.time() - self.last_data_time > self.failsafe_timeout and
-                not self.failsafe_triggered_flag):
+            now = time.time()
+
+            # Allow a grace period after connect so the Arduino can reboot and
+            # respond before arming the PC watchdog.
+            if (self.connection_time is not None and
+                    not self.watchdog_armed and
+                    now - self.connection_time > self.failsafe_timeout * 2):
+                self.watchdog_armed = True
+                # Give an additional timeout window after the grace period to
+                # receive the first response before declaring a failsafe.
+                self.last_data_time = now
+
+            if (self.watchdog_armed and self.last_data_time is not None and
+                    now - self.last_data_time > self.failsafe_timeout and
+                    not self.failsafe_triggered_flag):
                 self.trigger_failsafe()
 
             time.sleep(0.05)
@@ -209,6 +227,7 @@ class SerialManager(QObject):
             print("⚠️ Ignoring non-dict payload")
             return
         self.last_data_time = time.time()
+        self.watchdog_armed = True
         if reset_failsafe:
             self.failsafe_triggered_flag = False
         self.data_received.emit(dict(payload))

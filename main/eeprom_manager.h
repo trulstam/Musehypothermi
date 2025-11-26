@@ -91,9 +91,9 @@ public:
                                const char* operatorName,
                                uint32_t timestamp);
 
-    void loadPlateCalibration(CalibrationPoint* table, uint8_t& count);
+    void loadPlateCalibration(CalibrationPoint* table, uint8_t& count) const;
 
-    void loadRectalCalibration(CalibrationPoint* table, uint8_t& count);
+    void loadRectalCalibration(CalibrationPoint* table, uint8_t& count) const;
 
     void getPlateCalibrationMeta(SensorCalibrationMeta& meta) const;
     void getRectalCalibrationMeta(SensorCalibrationMeta& meta) const;

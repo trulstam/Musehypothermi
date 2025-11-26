@@ -38,6 +38,7 @@ void SensorModule::begin() {
   lastRawCoolingPlateTemp = 0.0;
   lastRawRectalTemp = 0.0;
 
+  // Hent kalibreringstabeller lagret i EEPROM slik at sensormålinger blir korrigert fra start
   eeprom.loadPlateCalibration(plateCalTable, plateCalCount);
   eeprom.loadRectalCalibration(rectalCalTable, rectalCalCount);
 }

@@ -30,6 +30,7 @@ class SensorModule {
 
   private:
     double convertRawToTemp(int raw);
+    void updateTemps();
 
     double calibrationOffsetCooling;
     double calibrationOffsetRectal;
@@ -48,7 +49,7 @@ class SensorModule {
 
     double applyCalibration(double rawTemp,
                             CalibrationPoint* table,
-                            uint8_t count) const;
+                            uint8_t count) const;  // Kalibrerer målt verdi mot referanse
 
     static const uint8_t COOLING_PLATE_PIN = A1;
     static const uint8_t RECTAL_PROBE_PIN = A2;

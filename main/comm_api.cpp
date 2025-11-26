@@ -594,10 +594,19 @@ void CommAPI::sendStatus() {
     doc["breath_check_enabled"] = isBreathCheckEnabled();
     doc["panic_active"] = isPanicActive();
     doc["panic_reason"] = getPanicReason();
-    doc["cooling_plate_temp"] = sensors.getCoolingPlateTemp();
-    doc["anal_probe_temp"] = sensors.getRectalTemp();
-    doc["cooling_plate_temp_raw"] = sensors.getCoolingPlateRawTemp();
-    doc["anal_probe_temp_raw"] = sensors.getRectalRawTemp();
+    double plateTemp = sensors.getCoolingPlateTemp();
+    double rectalTemp = sensors.getRectalTemp();
+
+    doc["cooling_plate_temp"] = plateTemp;  // Kalibrert verdi
+    doc["rectal_temp"] = rectalTemp;        // Kalibrert verdi
+    doc["anal_probe_temp"] = rectalTemp;    // Legacy alias
+
+    double plateRaw = sensors.getCoolingPlateRawTemp();
+    double rectalRaw = sensors.getRectalRawTemp();
+    doc["cooling_plate_raw"] = plateRaw;
+    doc["rectal_raw"] = rectalRaw;
+    doc["cooling_plate_temp_raw"] = plateRaw;  // Legacy alias
+    doc["anal_probe_temp_raw"] = rectalRaw;    // Legacy alias
     doc["pid_output"] = pid.getOutput();
     doc["breath_freq_bpm"] = pressure.getBreathRate();
     doc["plate_target_active"] = pid.getActivePlateTarget();

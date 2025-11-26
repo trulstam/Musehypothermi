@@ -84,7 +84,15 @@ void CommAPI::handleCommand(const String &jsonString) {
     if (doc.containsKey("CMD")) {
         JsonObject cmd = doc["CMD"];
         String action = cmd["action"];
-        String state = cmd["state"];
+        String state;
+        if (cmd["state"].is<const char*>()) {
+            state = cmd["state"].as<const char*>();
+        }
+
+        JsonObject params;
+        if (cmd["params"].is<JsonObject>()) {
+            params = cmd["params"].as<JsonObject>();
+        }
 
         if (action == "pid") {
             if (state == "start") {
@@ -120,34 +128,38 @@ void CommAPI::handleCommand(const String &jsonString) {
                 sendResponse("Unknown GET action");
             }
 
-        } else if (action == "get_calibration_table") {
-            // Norsk: gi full kalibreringstabell på eksplisitt kommando
+        } else if (action == "add_calibration_point") {
+            if (params.isNull() || !params.containsKey("sensor") || !params.containsKey("reference")) {
+                sendResponse("Missing sensor or reference");
+                return;
+            }
+
+            const char* sensor = params["sensor"];
+            float reference = params["reference"];
+
+            const char* opName = "";
+            if (params.containsKey("operator") && !params["operator"].isNull()) {
+                opName = params["operator"];
+            }
+
+            bool ok = sensors.addCalibrationPoint(sensor, reference);
+            if (!ok) {
+                sendResponse("Calibration table full or sensor name invalid");
+                return;
+            }
+
+            uint8_t plateCount = 0;
+            uint8_t rectalCount = 0;
+            sensors.getPlateCalibrationTable(plateCount);
+            sensors.getRectalCalibrationTable(rectalCount);
+            uint8_t pointCount = strcmp(sensor, "rectal") == 0 ? rectalCount : plateCount;
+            eeprom.updateCalibrationMeta(sensor, opName, pointCount, static_cast<uint32_t>(millis()));
+
+            sendResponse("Calibration point added");
             sendCalibrationTable();
 
-        } else if (action == "add_calibration_point") {
-            JsonVariant obj = cmd["state"];
-            if (!obj.is<JsonObject>()) {
-                sendResponse("Invalid calibration payload");
-            } else {
-                JsonObject payload = obj.as<JsonObject>();
-                const char* sensor = payload["sensor"] | nullptr;
-                float reference = payload["reference"] | NAN;
-                if (!sensor || isnan(reference)) {
-                    sendResponse("Missing sensor or reference");
-                } else {
-                    bool ok = sensors.addCalibrationPoint(sensor, reference);
-                    if (ok) {
-                        String msg = "Added calibration point: ";
-                        msg += sensor;
-                        msg += " ref=";
-                        msg += reference;
-                        sendEvent(msg);  // Norsk: logg at kalibreringspunkt er lagt til
-                        sendResponse("Calibration point added");
-                    } else {
-                        sendResponse("Calibration point rejected");
-                    }
-                }
-            }
+        } else if (action == "get_calibration_table") {
+            sendCalibrationTable();
 
         } else if (action == "commit_calibration") {
             JsonVariant obj = cmd["state"];

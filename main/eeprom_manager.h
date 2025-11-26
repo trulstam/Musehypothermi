@@ -98,6 +98,11 @@ public:
     void getPlateCalibrationMeta(SensorCalibrationMeta& meta) const;
     void getRectalCalibrationMeta(SensorCalibrationMeta& meta) const;
 
+    void updateCalibrationMeta(const char* sensorName,
+                               const char* operatorName,
+                               uint8_t pointCount,
+                               uint32_t timestamp);
+
     bool factoryReset();
 
 private:

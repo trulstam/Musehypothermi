@@ -116,6 +116,15 @@ class SerialManager(QObject):
         if (action == "failsafe" and state == "clear") or action == "failsafe_clear":
             self.failsafe_triggered_flag = False
 
+        if action in {"add_calibration_point", "get_calibration_table", "calibration_point"}:
+            print(f"LOG: 📡 CMD {action} → {state}")
+        self.send(json.dumps(cmd))
+
+    def sendCMDParams(self, action: str, params: dict):
+        """Send CMD med params-felt (ikke state-streng)."""
+        cmd = {"CMD": {"action": action, "params": params}}
+        if action in {"add_calibration_point", "get_calibration_table", "calibration_point"}:
+            print(f"LOG: 📡 CMD {action} → {params}")
         self.send(json.dumps(cmd))
 
     def sendSET(self, variable, value):

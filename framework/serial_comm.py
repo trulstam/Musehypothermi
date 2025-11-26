@@ -25,7 +25,6 @@ class SerialManager(QObject):
         # States
         self.keep_running = False
         self.last_heartbeat_time = time.time()
-        self.connection_time = None
         self.last_data_time = None
         self.failsafe_triggered_flag = False
         self.watchdog_armed = False
@@ -55,6 +54,19 @@ class SerialManager(QObject):
         try:
             self.ser = serial.Serial(self.port, self.baud, timeout=1)
             print(f"✅ Connected to {self.port} at {self.baud} baud.")
+            try:
+                # Clear any stale bytes and release/reset DTR so Arduino can reboot cleanly.
+                self.ser.reset_input_buffer()
+                self.ser.reset_output_buffer()
+                try:
+                    self.ser.dtr = False
+                    time.sleep(0.05)
+                    self.ser.dtr = True
+                except Exception:
+                    # Not all adapters expose DTR; continue with a clean buffer flush.
+                    pass
+            except Exception as exc:
+                print(f"⚠️ Unable to prime serial port buffers: {exc}")
         except serial.SerialException as e:
             print(f"❌ Error opening serial port: {e}")
             self.ser = None
@@ -65,16 +77,22 @@ class SerialManager(QObject):
         # Reset watchdog timers so we don't immediately trigger failsafe
         now = time.time()
         self.last_heartbeat_time = now
-        self.connection_time = now
         self.last_data_time = None
         self.failsafe_triggered_flag = False
         self.watchdog_armed = False
         self.latest_data = None
 
+        # Allow the Arduino reboot time after opening the port before we start
+        # spamming it with heartbeats and status requests.
+        time.sleep(2)
+
         self.read_thread = threading.Thread(target=self.read_serial_loop, daemon=True)
         self.heartbeat_thread = threading.Thread(target=self.send_heartbeat_loop, daemon=True)
         self.read_thread.start()
         self.heartbeat_thread.start()
+
+        # Kick off a status poll immediately to wake the firmware and prove link health.
+        self.sendCMD("get", "status")
 
         return True
 
@@ -175,16 +193,6 @@ class SerialManager(QObject):
                     print(f"⚠️ JSON decode error: {e} → Line: {line}")
 
             now = time.time()
-
-            # Allow a grace period after connect so the Arduino can reboot and
-            # respond before arming the PC watchdog.
-            if (self.connection_time is not None and
-                    not self.watchdog_armed and
-                    now - self.connection_time > self.failsafe_timeout * 2):
-                self.watchdog_armed = True
-                # Give an additional timeout window after the grace period to
-                # receive the first response before declaring a failsafe.
-                self.last_data_time = now
 
             if (self.watchdog_armed and self.last_data_time is not None and
                     now - self.last_data_time > self.failsafe_timeout and

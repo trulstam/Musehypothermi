@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QProgressBar, QCheckBox, QSpinBox, QGridLayout,
     QTabWidget, QScrollArea, QFrame, QDialog,
     QDialogButtonBox, QDoubleSpinBox, QStackedWidget,
+    QInputDialog,
     QListWidget
 )
 from PySide6.QtCore import QTimer, Qt, Signal, QSignalBlocker
@@ -2643,6 +2644,43 @@ class MainWindow(QMainWindow):
         target_group.setLayout(target_layout)
         layout.addWidget(target_group)
 
+        # CALIBRATION CONTROLS
+        calibration_group = QGroupBox("📐 Calibration")
+        calibration_layout = QFormLayout()
+
+        self.calPlateRawLabel = QLabel("Plate raw: n/a")
+        self.calPlateCalLabel = QLabel("Plate cal: n/a")
+        self.calRectalRawLabel = QLabel("Rectal raw: n/a")
+        self.calRectalCalLabel = QLabel("Rectal cal: n/a")
+
+        calibration_layout.addRow("Plate raw:", self.calPlateRawLabel)
+        calibration_layout.addRow("Plate calibrated:", self.calPlateCalLabel)
+        calibration_layout.addRow("Rectal raw:", self.calRectalRawLabel)
+        calibration_layout.addRow("Rectal calibrated:", self.calRectalCalLabel)
+
+        self.calSensorSelector = QComboBox()
+        self.calSensorSelector.addItems(["plate", "rectal", "both"])
+
+        self.calReferenceInput = QLineEdit()
+        self.calReferenceInput.setPlaceholderText("Reference °C")
+
+        self.calOperatorInput = QLineEdit()
+        self.calOperatorInput.setPlaceholderText("Operator name")
+
+        self.addCalPointButton = QPushButton("Add Calibration Point")
+        self.commitCalButton = QPushButton("Commit Calibration")
+
+        self.addCalPointButton.clicked.connect(self.add_calibration_point)
+        self.commitCalButton.clicked.connect(self.commit_calibration)
+
+        calibration_layout.addRow("Sensor:", self.calSensorSelector)
+        calibration_layout.addRow("Reference:", self.calReferenceInput)
+        calibration_layout.addRow("Operator:", self.calOperatorInput)
+        calibration_layout.addRow(self.addCalPointButton, self.commitCalButton)
+
+        calibration_group.setLayout(calibration_layout)
+        layout.addWidget(calibration_group)
+
         layout.addStretch()
         return panel
 
@@ -3294,7 +3332,27 @@ class MainWindow(QMainWindow):
 
             # Update live displays
             self.update_live_displays(data)
-            
+
+            # Update calibration labels with 4 decimals
+            plate_raw = data.get("cooling_plate_temp_raw")
+            plate_cal = data.get("cooling_plate_temp")
+            rectal_raw = data.get("anal_probe_temp_raw")
+            rectal_cal = data.get("anal_probe_temp")
+
+            def _fmt_temp(value: Any) -> str:
+                if value is None:
+                    return "n/a"
+                try:
+                    return f"{float(value):.4f} °C"
+                except (TypeError, ValueError):
+                    return "n/a"
+
+            if hasattr(self, "calPlateRawLabel"):
+                self.calPlateRawLabel.setText(_fmt_temp(plate_raw))
+                self.calPlateCalLabel.setText(_fmt_temp(plate_cal))
+                self.calRectalRawLabel.setText(_fmt_temp(rectal_raw))
+                self.calRectalCalLabel.setText(_fmt_temp(rectal_cal))
+
             # Update PID parameters
             self.update_pid_displays(data)
             
@@ -3983,6 +4041,52 @@ class MainWindow(QMainWindow):
             return
 
         self.send_target_temperature(value)
+
+    def add_calibration_point(self):
+        """Capture raw reading and add calibration point on device"""
+        sensor = self.calSensorSelector.currentText()
+        if sensor not in ("plate", "rectal"):
+            QMessageBox.warning(
+                self,
+                "Invalid sensor",
+                "Calibration point can only be added for 'plate' or 'rectal'.",
+            )
+            return
+
+        try:
+            reference = float(self.calReferenceInput.text())
+        except ValueError:
+            QMessageBox.warning(self, "Invalid reference", "Please enter a numeric reference temperature.")
+            return
+
+        payload = {"sensor": sensor, "reference": reference}
+        self.serial_manager.sendSET("calibration_point", payload)
+        msg = f"SET: calibration_point → sensor={sensor}, reference={reference}"
+        self.event_logger.log_event(msg)
+        self.log(f"📐 {msg}", "command")
+
+    def commit_calibration(self):
+        """Persist calibration table to EEPROM"""
+        sensor = self.calSensorSelector.currentText()
+        operator = self.calOperatorInput.text().strip()
+        if not operator:
+            operator, ok = QInputDialog.getText(self, "Operator name", "Enter operator name:")
+            if not ok or not operator.strip():
+                QMessageBox.warning(self, "Missing operator", "Operator name is required to commit calibration.")
+                return
+            operator = operator.strip()
+
+        timestamp = int(time.time())
+
+        payload = {
+            "sensor": sensor,
+            "operator": operator,
+            "timestamp": timestamp,
+        }
+        self.serial_manager.sendSET("calibration_commit", payload)
+        msg = f"SET: calibration_commit → sensor={sensor}, operator={operator}, ts={timestamp}"
+        self.event_logger.log_event(msg)
+        self.log(f"💾 {msg}", "command")
 
     def set_max_output_limit(self):
         """Set max output limit"""

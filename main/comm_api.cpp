@@ -120,6 +120,10 @@ void CommAPI::handleCommand(const String &jsonString) {
                 sendResponse("Unknown GET action");
             }
 
+        } else if (action == "get_calibration_table") {
+            // Norsk: gi full kalibreringstabell på eksplisitt kommando
+            sendCalibrationTable();
+
         } else if (action == "add_calibration_point") {
             JsonVariant obj = cmd["state"];
             if (!obj.is<JsonObject>()) {

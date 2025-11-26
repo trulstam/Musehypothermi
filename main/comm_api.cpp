@@ -18,6 +18,29 @@ extern EEPROMManager eeprom;
 extern ProfileManager profileManager;
 extern int heartbeatTimeoutMs;
 
+namespace {
+// Rens meta slik at uinitialiserte EEPROM-biter (0xFF) ikke sendes som tekst.
+void sanitizeCalibrationMeta(SensorCalibrationMeta &meta, uint8_t tableCount = 0) {
+    meta.operatorName[sizeof(meta.operatorName) - 1] = '\0';
+
+    bool invalid = (meta.timestamp == 0 || meta.timestamp == 0xFFFFFFFF ||
+                    meta.pointCount == 0 || meta.pointCount > CALIB_MAX_POINTS);
+
+    if (invalid) {
+        meta.timestamp = 0;
+        meta.pointCount = 0;
+        meta.operatorName[0] = '\0';
+    }
+
+    if (tableCount > CALIB_MAX_POINTS) {
+        tableCount = CALIB_MAX_POINTS;
+    }
+    if (tableCount > 0) {
+        meta.pointCount = tableCount;
+    }
+}
+}  // namespace
+
 CommAPI::CommAPI(Stream &serialStream) {
     serial = &serialStream;
     buffer = "";
@@ -644,6 +667,12 @@ void CommAPI::sendStatus() {
     SensorCalibrationMeta rectalMeta{};
     eeprom.getPlateCalibrationMeta(plateMeta);
     eeprom.getRectalCalibrationMeta(rectalMeta);
+    uint8_t plateCount = 0;
+    uint8_t rectalCount = 0;
+    sensors.getPlateCalibrationTable(plateCount);
+    sensors.getRectalCalibrationTable(rectalCount);
+    sanitizeCalibrationMeta(plateMeta, plateCount);
+    sanitizeCalibrationMeta(rectalMeta, rectalCount);
 
     JsonObject cal = doc.createNestedObject("calibration");
     JsonObject plateObj = cal.createNestedObject("plate");
@@ -727,6 +756,12 @@ void CommAPI::sendConfig() {
     SensorCalibrationMeta rectalMeta{};
     eeprom.getPlateCalibrationMeta(plateMeta);
     eeprom.getRectalCalibrationMeta(rectalMeta);
+    uint8_t plateCount = 0;
+    uint8_t rectalCount = 0;
+    sensors.getPlateCalibrationTable(plateCount);
+    sensors.getRectalCalibrationTable(rectalCount);
+    sanitizeCalibrationMeta(plateMeta, plateCount);
+    sanitizeCalibrationMeta(rectalMeta, rectalCount);
 
     JsonObject cal = doc.createNestedObject("calibration");
     JsonObject plateObj = cal.createNestedObject("plate");
@@ -755,6 +790,8 @@ void CommAPI::sendCalibrationTable() {
     uint8_t rectalCount = 0;
     const CalibrationPoint* plateTable = sensors.getPlateCalibrationTable(plateCount);
     const CalibrationPoint* rectalTable = sensors.getRectalCalibrationTable(rectalCount);
+    sanitizeCalibrationMeta(plateMeta, plateCount);
+    sanitizeCalibrationMeta(rectalMeta, rectalCount);
 
     JsonObject plate = doc.createNestedObject("plate");
     JsonObject plateMetaObj = plate.createNestedObject("meta");

@@ -2440,7 +2440,9 @@ class CalibrationTab(QWidget):
         operator = self.operator_input.text().strip()
 
         payload = {"sensor": sensor, "reference": reference, "operator": operator}
-        self._send_cmd("add_calibration_point", payload)
+        if self._send_cmd("add_calibration_point", payload):
+            # Hent oppdatert tabell slik at nye punkter vises umiddelbart
+            self.request_table()
 
     def _commit_calibration(self):
         sensor = self.sensor_selector.currentText()
@@ -2450,7 +2452,9 @@ class CalibrationTab(QWidget):
             return
 
         payload = {"sensor": sensor, "operator": operator, "timestamp": int(time.time())}
-        self._send_cmd("commit_calibration", payload)
+        if self._send_cmd("commit_calibration", payload):
+            # Etter lagring henter vi tabellen på nytt slik at GUI speiler EEPROM
+            self.request_table()
 
     def _export_calibration(self):
         if not self.calibration_entries:
@@ -2489,18 +2493,33 @@ class CalibrationTab(QWidget):
         self._send_cmd("get_calibration_table", {})
 
     def update_table(self, payload: Dict[str, Any]):
-        table_data = payload.get("table") or []
-        self.calibration_entries = list(table_data)
+        # Flater ut kalibreringsstrukturen fra kontrolleren til en liste pr. sensor
+        table_rows: List[Dict[str, Any]] = []
+        for sensor_name in ("plate", "rectal"):
+            sensor_data = payload.get(sensor_name, {})
+            meta = sensor_data.get("meta", {}) if isinstance(sensor_data, dict) else {}
+            timestamp = meta.get("timestamp")
+            operator = meta.get("operator")
+            points = sensor_data.get("points", []) if isinstance(sensor_data, dict) else []
 
-        self.table.setRowCount(len(table_data))
-        for row, entry in enumerate(table_data):
-            sensor = entry.get("sensor", "")
-            measured = entry.get("measured_C") if "measured_C" in entry else entry.get("measured")
-            reference = entry.get("reference_C") if "reference_C" in entry else entry.get("reference")
+            for point in points:
+                table_rows.append(
+                    {
+                        "sensor": sensor_name,
+                        "measured_C": point.get("measured"),
+                        "reference_C": point.get("reference"),
+                        "timestamp": timestamp,
+                        "operator": operator,
+                    }
+                )
 
-            self.table.setItem(row, 0, QTableWidgetItem(str(sensor)))
-            self.table.setItem(row, 1, QTableWidgetItem(self._format_temp(measured)))
-            self.table.setItem(row, 2, QTableWidgetItem(self._format_temp(reference)))
+        self.calibration_entries = table_rows
+
+        self.table.setRowCount(len(table_rows))
+        for row, entry in enumerate(table_rows):
+            self.table.setItem(row, 0, QTableWidgetItem(str(entry.get("sensor", ""))))
+            self.table.setItem(row, 1, QTableWidgetItem(self._format_temp(entry.get("measured_C"))))
+            self.table.setItem(row, 2, QTableWidgetItem(self._format_temp(entry.get("reference_C"))))
 
 class MainWindow(QMainWindow):
     """Main application window"""
@@ -3483,10 +3502,10 @@ class MainWindow(QMainWindow):
             self.update_live_displays(data)
 
             # Oppdater kalibreringsfeltene når status inneholder rå/kalibrerte verdier
-            plate_raw = data.get("cooling_plate_temp_raw")
+            plate_raw = data.get("cooling_plate_raw", data.get("cooling_plate_temp_raw"))
             plate_cal = data.get("cooling_plate_temp")
-            rectal_raw = data.get("anal_probe_temp_raw")
-            rectal_cal = data.get("anal_probe_temp")
+            rectal_raw = data.get("rectal_raw", data.get("anal_probe_temp_raw"))
+            rectal_cal = data.get("rectal_temp", data.get("anal_probe_temp"))
 
             if hasattr(self, "calibration_tab"):
                 self.calibration_tab.update_raw_values(

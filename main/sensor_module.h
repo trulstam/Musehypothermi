@@ -24,6 +24,9 @@ class SensorModule {
     void setRectalCalibration(double offset);
     void setSimulatedTemps(double plate, double rectal);
 
+    const CalibrationPoint* getPlateCalibrationTable(uint8_t& count) const;
+    const CalibrationPoint* getRectalCalibrationTable(uint8_t& count) const;
+
     // Kalibrerings-API (kalles fra CommAPI)
     bool addCalibrationPoint(const char* sensorName, float referenceTemp);
     bool commitCalibration(const char* sensorName, const char* operatorName, uint32_t timestamp);

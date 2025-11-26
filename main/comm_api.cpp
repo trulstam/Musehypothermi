@@ -89,6 +89,8 @@ void CommAPI::handleCommand(const String &jsonString) {
                 sendStatus();
             } else if (state == "config") {
                 sendConfig();
+            } else if (state == "calibration_table") {
+                sendCalibrationTable();
             } else {
                 sendResponse("Unknown GET action");
             }
@@ -736,6 +738,56 @@ void CommAPI::sendConfig() {
     rectalObj["timestamp"] = rectalMeta.timestamp;
     rectalObj["operator"] = rectalMeta.operatorName;
     rectalObj["points"] = rectalMeta.pointCount;
+    serializeJson(doc, *serial);
+    serial->println();
+}
+
+void CommAPI::sendCalibrationTable() {
+    StaticJsonDocument<1024> doc;
+    doc["type"] = "calibration_table";
+
+    SensorCalibrationMeta plateMeta{};
+    SensorCalibrationMeta rectalMeta{};
+    eeprom.getPlateCalibrationMeta(plateMeta);
+    eeprom.getRectalCalibrationMeta(rectalMeta);
+
+    uint8_t plateCount = 0;
+    uint8_t rectalCount = 0;
+    const CalibrationPoint* plateTable = sensors.getPlateCalibrationTable(plateCount);
+    const CalibrationPoint* rectalTable = sensors.getRectalCalibrationTable(rectalCount);
+
+    JsonObject plate = doc.createNestedObject("plate");
+    JsonObject plateMetaObj = plate.createNestedObject("meta");
+    plateMetaObj["timestamp"] = plateMeta.timestamp;
+    plateMetaObj["operator"] = plateMeta.operatorName;
+    plateMetaObj["count"] = plateMeta.pointCount;
+
+    JsonArray platePoints = plate.createNestedArray("points");
+    // Bygg tabell for plate-sensor: målt verdi og referanseverdi til GUI
+    if (plateTable) {
+        for (uint8_t i = 0; i < plateCount; ++i) {
+            JsonObject p = platePoints.createNestedObject();
+            p["measured"] = plateTable[i].measured;
+            p["reference"] = plateTable[i].reference;
+        }
+    }
+
+    JsonObject rectal = doc.createNestedObject("rectal");
+    JsonObject rectalMetaObj = rectal.createNestedObject("meta");
+    rectalMetaObj["timestamp"] = rectalMeta.timestamp;
+    rectalMetaObj["operator"] = rectalMeta.operatorName;
+    rectalMetaObj["count"] = rectalMeta.pointCount;
+
+    JsonArray rectalPoints = rectal.createNestedArray("points");
+    // Bygg tabell for rektal-sensor: målt verdi og referanseverdi til GUI
+    if (rectalTable) {
+        for (uint8_t i = 0; i < rectalCount; ++i) {
+            JsonObject p = rectalPoints.createNestedObject();
+            p["measured"] = rectalTable[i].measured;
+            p["reference"] = rectalTable[i].reference;
+        }
+    }
+
     serializeJson(doc, *serial);
     serial->println();
 }

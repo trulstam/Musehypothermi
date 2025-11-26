@@ -17,6 +17,7 @@ public:
     void sendStatus(const char* key, int value);     // Overbelastet for JSON
     void sendStatus(const char* key, double value);  // Ny – støtter double
     void sendConfig();                         // Konfig (inkl. EEPROM)
+    void sendCalibrationTable();               // Komplett kalibreringstabell
     void sendResponse(const String &message);
     void sendEvent(const String &eventMessage);
     void saveAllToEEPROM();                    // Kalles ved "save_eeprom"

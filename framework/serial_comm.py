@@ -128,13 +128,22 @@ class SerialManager(QObject):
 
         if self.ser.in_waiting:
             try:
-                line = self.ser.readline().decode().strip()
+                raw_bytes = self.ser.readline()
+                self.last_data_time = time.time()
+                try:
+                    line = raw_bytes.decode().strip()
+                except UnicodeDecodeError as e:
+                    print(f"⚠️ Error decoding serial data: {e}")
+                    line = raw_bytes.decode(errors="ignore").strip()
+
+                if not line:
+                    return None
+
                 try:
                     self.raw_line_received.emit(line)
                 except Exception:
                     pass
                 print(f"⬇️ Received: {line}")
-                self.last_data_time = time.time()
                 return line
             except Exception as e:
                 print(f"⚠️ Error reading serial data: {e}")

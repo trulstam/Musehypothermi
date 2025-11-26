@@ -2335,6 +2335,10 @@ class CalibrationTab(QWidget):
         super().__init__(main_window)
         self.main_window = main_window
         self.calibration_entries: List[Dict[str, Any]] = []
+        self._last_plate_raw: Optional[float] = None
+        self._last_plate_cal: Optional[float] = None
+        self._last_rectal_raw: Optional[float] = None
+        self._last_rectal_cal: Optional[float] = None
         self._build_ui()
 
     def _build_ui(self):
@@ -2418,11 +2422,21 @@ class CalibrationTab(QWidget):
         rectal_raw: Optional[float],
         rectal_cal: Optional[float],
     ):
-        # Oppdater kalibreringsfelt basert på siste statusdata
-        self.plate_raw_field.setText(self._format_temp(plate_raw))
-        self.plate_cal_field.setText(self._format_temp(plate_cal))
-        self.rectal_raw_field.setText(self._format_temp(rectal_raw))
-        self.rectal_cal_field.setText(self._format_temp(rectal_cal))
+        """Oppdater visning, men behold forrige verdi hvis felt mangler i meldingen."""
+
+        if plate_raw is not None:
+            self._last_plate_raw = plate_raw
+        if plate_cal is not None:
+            self._last_plate_cal = plate_cal
+        if rectal_raw is not None:
+            self._last_rectal_raw = rectal_raw
+        if rectal_cal is not None:
+            self._last_rectal_cal = rectal_cal
+
+        self.plate_raw_field.setText(self._format_temp(self._last_plate_raw))
+        self.plate_cal_field.setText(self._format_temp(self._last_plate_cal))
+        self.rectal_raw_field.setText(self._format_temp(self._last_rectal_raw))
+        self.rectal_cal_field.setText(self._format_temp(self._last_rectal_cal))
 
     def _send_cmd(self, action: str, state: Any):
         if not self.main_window.connection_established:

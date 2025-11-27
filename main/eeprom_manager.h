@@ -4,20 +4,6 @@
 #include "arduino_platform.h"
 #include <EEPROM.h>
 
-struct CalibrationPoint {
-    float measured;   // Raw temperaturlest av MCU (°C)
-    float reference;  // Sann/kalibrert temperatur (°C)
-};
-
-static const uint8_t CALIB_MAX_POINTS = 8;
-
-struct SensorCalibrationMeta {
-    uint32_t timestamp;        // Unix-tid for sist commit
-    char operatorName[16];     // Null-terminert navn
-    uint8_t pointCount;        // Antall gyldige punkt i tabell
-    uint8_t reserved[3];       // Padding / fremtidig bruk
-};
-
 class EEPROMManager {
 public:
     struct PIDParams {
@@ -39,21 +25,17 @@ public:
 
     bool begin();
 
-    // Legacy single PID helpers (mirror original API)
     void savePIDParams(float kp, float ki, float kd);
     void loadPIDParams(float &kp, float &ki, float &kd) const;
 
-    // Dedicated asymmetric PID storage
     void saveHeatingPIDParams(float kp, float ki, float kd);
     void loadHeatingPIDParams(float &kp, float &ki, float &kd) const;
     void saveCoolingPIDParams(float kp, float ki, float kd);
     void loadCoolingPIDParams(float &kp, float &ki, float &kd) const;
 
-    // Temperature target
     void saveTargetTemp(float temp);
     void loadTargetTemp(float &temp) const;
 
-    // Output limits
     void saveMaxOutput(float maxOutput);
     void loadMaxOutput(float &maxOutput) const;
     void saveHeatingMaxOutput(float maxOutput);
@@ -63,11 +45,9 @@ public:
     void saveOutputLimits(const OutputLimits &limits);
     void loadOutputLimits(OutputLimits &limits) const;
 
-    // Safety configuration (asymmetric controller)
     void saveSafetySettings(const SafetySettings &settings);
     void loadSafetySettings(SafetySettings &settings) const;
 
-    // Inline convenience wrappers operating on the composite safety blob
     inline void saveCoolingRateLimit(float rate);
     inline void loadCoolingRateLimit(float &rate);
     inline void saveDeadband(float deadband);
@@ -75,38 +55,14 @@ public:
     inline void saveSafetyMargin(float margin);
     inline void loadSafetyMargin(float &margin);
 
-    // Miscellaneous
     void saveDebugLevel(int debugLevel);
     void loadDebugLevel(int &debugLevel) const;
     void saveFailsafeTimeout(int timeout);
     void loadFailsafeTimeout(int &timeout) const;
 
-    bool savePlateCalibration(const CalibrationPoint* table,
-                              uint8_t count,
-                              const char* operatorName,
-                              uint32_t timestamp);
-
-    bool saveRectalCalibration(const CalibrationPoint* table,
-                               uint8_t count,
-                               const char* operatorName,
-                               uint32_t timestamp);
-
-    void loadPlateCalibration(CalibrationPoint* table, uint8_t& count) const;
-
-    void loadRectalCalibration(CalibrationPoint* table, uint8_t& count) const;
-
-    void getPlateCalibrationMeta(SensorCalibrationMeta& meta) const;
-    void getRectalCalibrationMeta(SensorCalibrationMeta& meta) const;
-
-    void updateCalibrationMeta(const char* sensorName,
-                               const char* operatorName,
-                               uint8_t pointCount,
-                               uint32_t timestamp);
-
     bool factoryReset();
 
 private:
-    // Flat address layout (no Layout struct / namespace)
     static const int addrKp = 0;
     static const int addrKi = addrKp + sizeof(float);
     static const int addrKd = addrKi + sizeof(float);
@@ -122,11 +78,6 @@ private:
     static const int addrCoolingRateLimit = addrCoolingKd + sizeof(float);
     static const int addrDeadband        = addrCoolingRateLimit + sizeof(float);
     static const int addrSafetyMargin    = addrDeadband + sizeof(float);
-
-    static const int addrCalibPlateMeta   = addrSafetyMargin + sizeof(float);
-    static const int addrCalibPlateTable  = addrCalibPlateMeta + sizeof(SensorCalibrationMeta);
-    static const int addrCalibRectalMeta  = addrCalibPlateTable + CALIB_MAX_POINTS * sizeof(CalibrationPoint);
-    static const int addrCalibRectalTable = addrCalibRectalMeta + sizeof(SensorCalibrationMeta);
 
     static const uint32_t MAGIC_NUMBER;
 

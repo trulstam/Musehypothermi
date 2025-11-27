@@ -10,23 +10,21 @@ public:
     void begin(Stream &serialStream, bool factoryResetOccurred = false);
     void process();
 
-    void sendData();                           // Live data (plate temp, rectal, PID, pust)
-    void sendPIDParams();                      // Kp, Ki, Kd, MaxOutput
-    void sendStatus();                         // Full systemstatus
-    void sendStatus(const char* key, float value);   // Overbelastet for JSON
-    void sendStatus(const char* key, int value);     // Overbelastet for JSON
-    void sendStatus(const char* key, double value);  // Ny – støtter double
-    void sendConfig();                         // Konfig (inkl. EEPROM)
-    void sendCalibrationTable(const char* sensorFilter = nullptr); // Komplett kalibreringstabell
+    void sendData();             // Live data (plate temp, rectal temp, PID output)
+    void sendPIDParams();        // PID parameters
+    void sendStatus();           // System status snapshot
+    void sendStatus(const char* key, float value);
+    void sendStatus(const char* key, int value);
+    void sendStatus(const char* key, double value);
+    void sendConfig();           // Configuration values
     void sendResponse(const String &message);
     void sendEvent(const String &eventMessage);
-    void saveAllToEEPROM();                    // Kalles ved "save_eeprom"
+    void saveAllToEEPROM();      // Persist core parameters
 
-    void sendFailsafeStatus();                 // Eksplisitt failsafe-status
+    void sendFailsafeStatus();   // Explicit failsafe status
 
 private:
     void handleCommand(const String &jsonString);
-    void parseProfile(JsonArray arr);
 
     Stream *serial;
     String buffer;

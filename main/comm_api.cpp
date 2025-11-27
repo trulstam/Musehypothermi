@@ -75,7 +75,8 @@ void CommAPI::handleCommand(const String &jsonString) {
     // so we can parse complete profile uploads without errors. Keep the
     // document static so it lives in global memory instead of the stack; the
     // previous automatic allocation could exhaust SRAM and prevent the MCU
-    // from responding on the serial port when calibration commands were used.
+    // from responding on the serial port when calibration/profile commands
+    // were used.
     static StaticJsonDocument<3072> doc;
     doc.clear();
     DeserializationError error = deserializeJson(doc, jsonString);

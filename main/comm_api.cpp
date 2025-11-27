@@ -2,7 +2,7 @@
 // File: comm_api.cpp
 
 #include "comm_api.h"
-#include "pid_module_asymmetric.h"  // CHANGED: was "pid_module.h"
+#include "pid_module.h"
 #include "sensor_module.h"
 #include "pressure_module.h"
 #include "eeprom_manager.h"
@@ -10,8 +10,10 @@
 #include "profile_manager.h"
 
 #include <ArduinoJson.h>
+#include <math.h>
+#include <string.h>
 
-extern AsymmetricPIDModule pid;  // CHANGED: was PIDModule pid;
+extern PIDModule pid;
 extern SensorModule sensors;
 extern PressureModule pressure;
 extern EEPROMManager eeprom;
@@ -120,6 +122,54 @@ void CommAPI::handleCommand(const String &jsonString) {
         } else if (action == "heartbeat") {
             heartbeatReceived(); sendResponse("heartbeat_ack");
 
+        } else if (action == "calibration") {
+            const char* sensor = nullptr;
+            if (!params.isNull() && params.containsKey("sensor") && params["sensor"].is<const char*>()) {
+                sensor = params["sensor"].as<const char*>();
+            }
+
+            if (state == "get_table") {
+                sendCalibrationTable(sensor);
+            } else if (state == "add_point") {
+                if (!sensor || !params.containsKey("reference")) {
+                    sendResponse("Missing sensor/reference");
+                    return;
+                }
+
+                float measured = (params.containsKey("measured") && !params["measured"].isNull())
+                                     ? params["measured"].as<float>()
+                                     : NAN;
+                float reference = params["reference"].as<float>();
+                const char* operatorName = params.containsKey("operator") ? params["operator"].as<const char*>() : "";
+                uint32_t timestamp = params.containsKey("timestamp")
+                                         ? params["timestamp"].as<uint32_t>()
+                                         : static_cast<uint32_t>(millis());
+
+                if (!sensors.addCalibrationPoint(sensor, measured, reference)) {
+                    sendResponse("Calibration add failed");
+                    return;
+                }
+
+                uint8_t plateCount = 0;
+                uint8_t rectalCount = 0;
+                const CalibrationPoint* plateTable = sensors.getPlateCalibrationTable(plateCount);
+                const CalibrationPoint* rectalTable = sensors.getRectalCalibrationTable(rectalCount);
+
+                if (strcmp(sensor, "plate") == 0) {
+                    eeprom.savePlateCalibration(plateTable, plateCount, operatorName, timestamp);
+                } else if (strcmp(sensor, "rectal") == 0) {
+                    eeprom.saveRectalCalibration(rectalTable, rectalCount, operatorName, timestamp);
+                }
+                eeprom.updateCalibrationMeta(sensor, operatorName,
+                                             strcmp(sensor, "rectal") == 0 ? rectalCount : plateCount,
+                                             timestamp);
+
+                sendResponse("Calibration point added");
+                sendCalibrationTable(sensor);
+            } else {
+                sendResponse("Unknown calibration command");
+            }
+
         } else if (action == "get") {
             if (state == "pid_params") {
                 sendPIDParams();
@@ -143,29 +193,35 @@ void CommAPI::handleCommand(const String &jsonString) {
                 return;
             }
 
-            const char* sensor = params["sensor"];
-            float reference = params["reference"];
+            const char* sensor = params["sensor"].as<const char*>();
+            float measured = params.containsKey("measured") ? params["measured"].as<float>() : NAN;
+            float reference = params["reference"].as<float>();
+            const char* operatorName = params.containsKey("operator") ? params["operator"].as<const char*>() : "";
+            uint32_t timestamp = params.containsKey("timestamp")
+                                     ? params["timestamp"].as<uint32_t>()
+                                     : static_cast<uint32_t>(millis());
 
-            const char* opName = "";
-            if (params.containsKey("operator") && !params["operator"].isNull()) {
-                opName = params["operator"];
-            }
-
-            bool ok = sensors.addCalibrationPoint(sensor, reference);
-            if (!ok) {
+            if (!sensor || !sensors.addCalibrationPoint(sensor, measured, reference)) {
                 sendResponse("Calibration table full or sensor name invalid");
                 return;
             }
 
             uint8_t plateCount = 0;
             uint8_t rectalCount = 0;
-            sensors.getPlateCalibrationTable(plateCount);
-            sensors.getRectalCalibrationTable(rectalCount);
-            uint8_t pointCount = strcmp(sensor, "rectal") == 0 ? rectalCount : plateCount;
-            eeprom.updateCalibrationMeta(sensor, opName, pointCount, static_cast<uint32_t>(millis()));
+            const CalibrationPoint* plateTable = sensors.getPlateCalibrationTable(plateCount);
+            const CalibrationPoint* rectalTable = sensors.getRectalCalibrationTable(rectalCount);
+
+            if (strcmp(sensor, "plate") == 0) {
+                eeprom.savePlateCalibration(plateTable, plateCount, operatorName, timestamp);
+            } else if (strcmp(sensor, "rectal") == 0) {
+                eeprom.saveRectalCalibration(rectalTable, rectalCount, operatorName, timestamp);
+            }
+            eeprom.updateCalibrationMeta(sensor, operatorName,
+                                         strcmp(sensor, "rectal") == 0 ? rectalCount : plateCount,
+                                         timestamp);
 
             sendResponse("Calibration point added");
-            sendCalibrationTable();
+            sendCalibrationTable(sensor);
 
         } else if (action == "get_calibration_table") {
             sendCalibrationTable();
@@ -866,8 +922,11 @@ void CommAPI::sendConfig() {
     serial->println();
 }
 
-void CommAPI::sendCalibrationTable() {
-    static StaticJsonDocument<1024> doc;
+void CommAPI::sendCalibrationTable(const char* sensorFilter) {
+    // Keep this buffer generous because the table contains up to 2x8 points
+    // with metadata; using a static document avoids stack spikes when sending
+    // the full table over serial.
+    static StaticJsonDocument<2048> doc;
     doc.clear();
     doc["type"] = "calibration_table";
 
@@ -883,35 +942,40 @@ void CommAPI::sendCalibrationTable() {
     sanitizeCalibrationMeta(plateMeta, plateCount);
     sanitizeCalibrationMeta(rectalMeta, rectalCount);
 
-    JsonObject plate = doc.createNestedObject("plate");
-    JsonObject plateMetaObj = plate.createNestedObject("meta");
-    plateMetaObj["timestamp"] = plateMeta.timestamp;
-    plateMetaObj["operator"] = plateMeta.operatorName;
-    plateMetaObj["count"] = plateMeta.pointCount;
+    bool includePlate = !sensorFilter || strcmp(sensorFilter, "plate") == 0 || strcmp(sensorFilter, "both") == 0;
+    bool includeRectal = !sensorFilter || strcmp(sensorFilter, "rectal") == 0 || strcmp(sensorFilter, "both") == 0;
 
-    JsonArray platePoints = plate.createNestedArray("points");
-    // Bygg tabell for plate-sensor: målt verdi og referanseverdi til GUI
-    if (plateTable) {
-        for (uint8_t i = 0; i < plateCount; ++i) {
-            JsonObject p = platePoints.createNestedObject();
-            p["measured"] = plateTable[i].measured;
-            p["reference"] = plateTable[i].reference;
+    if (includePlate) {
+        JsonObject plate = doc.createNestedObject("plate");
+        JsonObject plateMetaObj = plate.createNestedObject("meta");
+        plateMetaObj["timestamp"] = plateMeta.timestamp;
+        plateMetaObj["operator"] = plateMeta.operatorName;
+        plateMetaObj["count"] = plateMeta.pointCount;
+
+        JsonArray platePoints = plate.createNestedArray("points");
+        if (plateTable) {
+            for (uint8_t i = 0; i < plateCount; ++i) {
+                JsonObject p = platePoints.createNestedObject();
+                p["measured"] = plateTable[i].measured;
+                p["reference"] = plateTable[i].reference;
+            }
         }
     }
 
-    JsonObject rectal = doc.createNestedObject("rectal");
-    JsonObject rectalMetaObj = rectal.createNestedObject("meta");
-    rectalMetaObj["timestamp"] = rectalMeta.timestamp;
-    rectalMetaObj["operator"] = rectalMeta.operatorName;
-    rectalMetaObj["count"] = rectalMeta.pointCount;
+    if (includeRectal) {
+        JsonObject rectal = doc.createNestedObject("rectal");
+        JsonObject rectalMetaObj = rectal.createNestedObject("meta");
+        rectalMetaObj["timestamp"] = rectalMeta.timestamp;
+        rectalMetaObj["operator"] = rectalMeta.operatorName;
+        rectalMetaObj["count"] = rectalMeta.pointCount;
 
-    JsonArray rectalPoints = rectal.createNestedArray("points");
-    // Bygg tabell for rektal-sensor: målt verdi og referanseverdi til GUI
-    if (rectalTable) {
-        for (uint8_t i = 0; i < rectalCount; ++i) {
-            JsonObject p = rectalPoints.createNestedObject();
-            p["measured"] = rectalTable[i].measured;
-            p["reference"] = rectalTable[i].reference;
+        JsonArray rectalPoints = rectal.createNestedArray("points");
+        if (rectalTable) {
+            for (uint8_t i = 0; i < rectalCount; ++i) {
+                JsonObject p = rectalPoints.createNestedObject();
+                p["measured"] = rectalTable[i].measured;
+                p["reference"] = rectalTable[i].reference;
+            }
         }
     }
 

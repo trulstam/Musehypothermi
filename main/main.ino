@@ -7,13 +7,13 @@
 
 #include "comm_api.h"
 #include "task_scheduler.h"
-#include "pid_module_asymmetric.h"
+#include "pid_module.h"
 #include "sensor_module.h"
 #include "pressure_module.h"
 #include "eeprom_manager.h"
 
 // === Eksterne moduler ===
-AsymmetricPIDModule pid;
+PIDModule pid;
 SensorModule sensors;
 PressureModule pressure;
 EEPROMManager eeprom;

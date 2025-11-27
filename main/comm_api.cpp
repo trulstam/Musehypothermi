@@ -117,6 +117,29 @@ void CommAPI::handleCommand(const String &jsonString) {
                 sendResponse("unsupported_command");
             }
 
+        } else if (action == "calibration") {
+            const char* sensor = "both";
+            if (cmd.containsKey("params")) {
+                JsonObject params = cmd["params"];
+                if (params.containsKey("sensor")) {
+                    sensor = params["sensor"];
+                }
+            }
+
+            if (state == "table") {
+                if (strcmp(sensor, "rectal") == 0) {
+                    sendCalibrationTable("rectal");
+                } else if (strcmp(sensor, "plate") == 0) {
+                    sendCalibrationTable("plate");
+                } else {
+                    sendCalibrationTable("plate");
+                    sendCalibrationTable("rectal");
+                }
+                sendResponse("calibration_table_sent");
+            } else {
+                sendResponse("unsupported_command");
+            }
+
         } else if (action == "failsafe_clear") {
             if (isFailsafeActive()) {
                 clearFailsafe();
@@ -200,6 +223,57 @@ void CommAPI::handleCommand(const String &jsonString) {
                 sendResponse("Invalid profile payload");
             } else {
                 parseProfile(value.as<JsonArray>());
+            }
+
+        } else if (variable == "calibration_point") {
+            if (!set.containsKey("value") || !set["value"].is<JsonObject>()) {
+                sendResponse("Invalid calibration payload");
+                return;
+            }
+
+            JsonObject value = set["value"];
+            if (!value.containsKey("sensor") || !value.containsKey("reference")) {
+                sendResponse("Invalid calibration payload");
+                return;
+            }
+
+            String sensor = value["sensor"].as<String>();
+            float reference = value["reference"].as<float>();
+            bool ok = sensors.addCalibrationPoint(sensor.c_str(), reference);
+            sendResponse(ok ? "Calibration point added" : "Calibration point rejected");
+
+        } else if (variable == "calibration_commit") {
+            if (!set.containsKey("value") || !set["value"].is<JsonObject>()) {
+                sendResponse("Invalid calibration payload");
+                return;
+            }
+
+            JsonObject value = set["value"];
+            String sensor = value.containsKey("sensor") ? value["sensor"].as<String>() : "both";
+            String operatorName = value.containsKey("operator") ? value["operator"].as<String>() : "";
+            uint32_t timestamp = value.containsKey("timestamp") ? value["timestamp"].as<uint32_t>() : millis();
+
+            if (operatorName.length() == 0) {
+                sendResponse("Calibration commit missing operator");
+                return;
+            }
+
+            bool plateOk = false;
+            bool rectalOk = false;
+
+            if (sensor == "plate" || sensor == "both") {
+                plateOk = sensors.commitCalibration("plate", operatorName.c_str(), timestamp, eeprom);
+            }
+            if (sensor == "rectal" || sensor == "both") {
+                rectalOk = sensors.commitCalibration("rectal", operatorName.c_str(), timestamp, eeprom);
+            }
+
+            if ((sensor == "plate" && plateOk) || (sensor == "rectal" && rectalOk) ||
+                (sensor == "both" && (plateOk || rectalOk))) {
+                sendEvent("\ud83d\udee0 Calibration committed");
+                sendResponse("Calibration commit successful");
+            } else {
+                sendResponse("Calibration commit failed");
             }
 
         } else {
@@ -331,7 +405,7 @@ void CommAPI::sendData() {
 }
 
 void CommAPI::sendStatus() {
-    static StaticJsonDocument<768> doc;
+    static StaticJsonDocument<1024> doc;
     doc.clear();
     doc["failsafe_active"] = isFailsafeActive();
     doc["failsafe_reason"] = getFailsafeReason();
@@ -371,6 +445,22 @@ void CommAPI::sendStatus() {
     doc["pid_cooling_kp"] = pid.getCoolingKp();
     doc["pid_cooling_ki"] = pid.getCoolingKi();
     doc["pid_cooling_kd"] = pid.getCoolingKd();
+
+    SensorCalibrationMeta plateMeta{};
+    SensorCalibrationMeta rectalMeta{};
+    sensors.getCalibrationMeta("plate", plateMeta);
+    sensors.getCalibrationMeta("rectal", rectalMeta);
+
+    JsonObject calibration = doc.createNestedObject("calibration");
+    JsonObject plateCal = calibration.createNestedObject("plate");
+    plateCal["timestamp"] = plateMeta.timestamp;
+    plateCal["operator"] = plateMeta.operatorName;
+    plateCal["point_count"] = plateMeta.pointCount;
+
+    JsonObject rectalCal = calibration.createNestedObject("rectal");
+    rectalCal["timestamp"] = rectalMeta.timestamp;
+    rectalCal["operator"] = rectalMeta.operatorName;
+    rectalCal["point_count"] = rectalMeta.pointCount;
     serializeJson(doc, *serial);
     serial->println();
 }
@@ -421,6 +511,37 @@ void CommAPI::sendConfig() {
     doc["cooling_rate_limit"] = pid.getCoolingRateLimit();
     doc["deadband"] = pid.getCurrentDeadband();
     doc["safety_margin"] = pid.getSafetyMargin();
+    serializeJson(doc, *serial);
+    serial->println();
+}
+
+void CommAPI::sendCalibrationTable(const char* sensorName) {
+    static StaticJsonDocument<1024> doc;
+    doc.clear();
+
+    CalibrationPoint table[CALIB_MAX_POINTS];
+    uint8_t count = 0;
+    sensors.getCalibrationTable(sensorName, table, count);
+
+    SensorCalibrationMeta meta{};
+    sensors.getCalibrationMeta(sensorName, meta);
+
+    doc["type"] = "calibration_table";
+    doc["sensor"] = sensorName;
+    doc["point_count"] = count;
+
+    JsonObject metaObj = doc.createNestedObject("meta");
+    metaObj["timestamp"] = meta.timestamp;
+    metaObj["operator"] = meta.operatorName;
+    metaObj["point_count"] = meta.pointCount;
+
+    JsonArray points = doc.createNestedArray("points");
+    for (uint8_t i = 0; i < count; ++i) {
+        JsonObject point = points.createNestedObject();
+        point["measured"] = table[i].measured;
+        point["reference"] = table[i].reference;
+    }
+
     serializeJson(doc, *serial);
     serial->println();
 }

@@ -374,8 +374,8 @@ void CommAPI::handleCommand(const String &jsonString) {
         }
     }
 
-    if (doc.containsKey("SET")) {
-        JsonObject set = doc["SET"];
+    if (commandDoc.containsKey("SET")) {
+        JsonObject set = commandDoc["SET"];
 
         // Backwards/alternative format: calibration payload provided directly
         if (!set.containsKey("variable")) {

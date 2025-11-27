@@ -2437,14 +2437,14 @@ class CalibrationTab(QWidget):
         self.rectal_raw_field.setText(self._format_temp(self._last_rectal_raw))
         self.rectal_cal_field.setText(self._format_temp(self._last_rectal_cal))
 
-    def _send_cmd(self, action: str, state: Any):
+    def _send_cmd(self, action: str, state: Any, params: Optional[Dict[str, Any]] = None):
         if not self.main_window.connection_established:
             self.main_window.log("❌ Not connected", "error")
             return False
 
-        self.main_window.serial_manager.sendCMD(action, state)
+        self.main_window.serial_manager.sendCMD(action, state, params=params)
         self.main_window.event_logger.log_event(f"CMD: {action} → {state}")
-        self.main_window.log(f"📡 CMD {action} → {state}", "command")
+        self.main_window.log(f"📡 CMD {action} → {state}" + (f" params={params}" if params else ""), "command")
         return True
 
     def _add_calibration_point(self):
@@ -2463,10 +2463,16 @@ class CalibrationTab(QWidget):
             self.main_window.log("❌ Not connected", "error")
             return
 
-        params = {"sensor": sensor, "reference": reference, "operator": operator}
-        self.main_window.serial_manager.sendCMDParams("add_calibration_point", params)
-        self.main_window.log(f"📡 CMD add_calibration_point → {params}", "command")
-        self.request_table()
+        params = {
+            "sensor": sensor,
+            "measured": None,  # measured raw value is taken from controller cache if None
+            "reference": reference,
+            "operator": operator,
+            "timestamp": int(time.time()),
+        }
+        self.main_window.serial_manager.sendCMD("calibration", "add_point", params=params)
+        self.main_window.log(f"📡 CMD calibration add_point → {params}", "command")
+        self.request_table(sensor)
 
     def _commit_calibration(self):
         sensor = self.sensor_selector.currentText()
@@ -2475,10 +2481,8 @@ class CalibrationTab(QWidget):
             QMessageBox.warning(self, "Mangler operatør", "Oppgi operatørnavn før lagring.")
             return
 
-        payload = {"sensor": sensor, "operator": operator, "timestamp": int(time.time())}
-        if self._send_cmd("commit_calibration", payload):
-            # Etter lagring henter vi tabellen på nytt slik at GUI speiler EEPROM
-            self.request_table()
+        self.main_window.log("💾 Points are saved immediately; refresh for latest table.", "info")
+        self.request_table(sensor)
 
     def _export_calibration(self):
         if not self.calibration_entries:
@@ -2513,8 +2517,9 @@ class CalibrationTab(QWidget):
         except Exception as exc:
             self.main_window.log(f"❌ Klarte ikke å eksportere kalibrering: {exc}", "error")
 
-    def request_table(self):
-        self._send_cmd("get_calibration_table", {})
+    def request_table(self, sensor: Optional[str] = None):
+        params = {"sensor": sensor} if sensor else None
+        self._send_cmd("calibration", "get_table", params)
 
     def update_table(self, payload: Dict[str, Any]):
         # Flater ut kalibreringsstrukturen fra kontrolleren til en liste pr. sensor

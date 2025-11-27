@@ -2,7 +2,7 @@
 // File: task_scheduler.cpp
 
 #include "task_scheduler.h"
-#include "pid_module_asymmetric.h"  // Changed from pid_module.h
+#include "pid_module.h"
 #include "sensor_module.h"
 #include "pressure_module.h"
 #include "profile_manager.h"
@@ -14,7 +14,7 @@
 #include "arduino_platform.h"
 
 // === Eksterne moduler ===
-extern AsymmetricPIDModule pid;  // Changed from PIDModule
+extern PIDModule pid;
 extern SensorModule sensors;
 extern PressureModule pressure;
 extern ProfileManager profileManager;

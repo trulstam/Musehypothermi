@@ -1,4 +1,4 @@
-// Musehypothermi Comm API - Stabil versjon med støtte for status-variabler
+// Musehypothermi Comm API - Recovery-style minimal command set
 // File: comm_api.cpp
 
 #include "comm_api.h"
@@ -10,7 +10,6 @@
 #include "profile_manager.h"
 
 #include <ArduinoJson.h>
-#include <math.h>
 #include <string.h>
 
 extern PIDModule pid;
@@ -21,26 +20,9 @@ extern ProfileManager profileManager;
 extern int heartbeatTimeoutMs;
 
 namespace {
-// Rens meta slik at uinitialiserte EEPROM-biter (0xFF) ikke sendes som tekst.
-void sanitizeCalibrationMeta(SensorCalibrationMeta &meta, uint8_t tableCount = 0) {
-    meta.operatorName[sizeof(meta.operatorName) - 1] = '\0';
-
-    bool invalid = (meta.timestamp == 0 || meta.timestamp == 0xFFFFFFFF ||
-                    meta.pointCount == 0 || meta.pointCount > CALIB_MAX_POINTS);
-
-    if (invalid) {
-        meta.timestamp = 0;
-        meta.pointCount = 0;
-        meta.operatorName[0] = '\0';
-    }
-
-    if (tableCount > CALIB_MAX_POINTS) {
-        tableCount = CALIB_MAX_POINTS;
-    }
-    if (tableCount > 0) {
-        meta.pointCount = tableCount;
-    }
-}
+// Keep the large command document out of the stack to avoid exhausting RAM
+// during parsing of large payloads such as profile uploads.
+static StaticJsonDocument<3072> commandDoc;
 }  // namespace
 
 CommAPI::CommAPI(Stream &serialStream) {
@@ -69,21 +51,7 @@ void CommAPI::process() {
     }
 }
 
-namespace {
-// Keep the large command document out of the stack to avoid exhausting RAM
-// during heavy calibration/profile payloads. Using a file-scope static buffer
-// avoids reallocation and ensures the document always resides in global
-// memory instead of being created on the call stack.
-static StaticJsonDocument<3072> commandDoc;
-}  // namespace
-
 void CommAPI::handleCommand(const String &jsonString) {
-    // The profile upload payload can easily exceed 1 KB when 10 steps are
-    // transferred. A too-small document caused the JSON deserialisation to
-    // fail silently, which meant the controller never received the profile
-    // (and thus ignored subsequent start commands). Clearing the static
-    // document before each parse keeps memory usage stable while protecting
-    // against stack exhaustion that previously silenced the MCU.
     commandDoc.clear();
     DeserializationError error = deserializeJson(commandDoc, jsonString);
 
@@ -95,80 +63,22 @@ void CommAPI::handleCommand(const String &jsonString) {
     if (commandDoc.containsKey("CMD")) {
         JsonObject cmd = commandDoc["CMD"];
         String action = cmd["action"];
-        String state;
-        if (cmd["state"].is<const char*>()) {
-            state = cmd["state"].as<const char*>();
-        }
-
-        JsonObject params;
-        if (cmd["params"].is<JsonObject>()) {
-            params = cmd["params"].as<JsonObject>();
-        }
+        String state = cmd["state"];
 
         if (action == "pid") {
             if (state == "start") {
                 bool started = pid.start();
                 sendResponse(started ? "PID started" : "PID blocked: panic/failsafe active");
             } else if (state == "stop") {
-                pid.stop(); sendResponse("PID stopped");
-            } else if (state == "autotune") {
-                pid.startAutotune(); sendResponse("Autotune started");
-            } else if (state == "abort_autotune") {
-                pid.abortAutotune(); sendResponse("Autotune aborted");
+                pid.stop();
+                sendResponse("PID stopped");
             } else {
-                sendResponse("Unknown PID state");
+                sendResponse("unsupported_command");
             }
 
         } else if (action == "heartbeat") {
-            heartbeatReceived(); sendResponse("heartbeat_ack");
-
-        } else if (action == "calibration") {
-            const char* sensor = nullptr;
-            if (!params.isNull() && params.containsKey("sensor") && params["sensor"].is<const char*>()) {
-                sensor = params["sensor"].as<const char*>();
-            }
-
-            if (state == "get_table") {
-                sendCalibrationTable(sensor);
-            } else if (state == "add_point") {
-                if (!sensor || !params.containsKey("reference")) {
-                    sendResponse("Missing sensor/reference");
-                    return;
-                }
-
-                float measured = (params.containsKey("measured") && !params["measured"].isNull())
-                                     ? params["measured"].as<float>()
-                                     : NAN;  // NaN triggers fallback to last raw sample in SensorModule
-                float reference = params["reference"].as<float>();
-                const char* operatorName = params.containsKey("operator") ? params["operator"].as<const char*>() : "";
-                uint32_t timestamp = params.containsKey("timestamp")
-                                         ? params["timestamp"].as<uint32_t>()
-                                         : static_cast<uint32_t>(millis());
-
-                if (!sensors.addCalibrationPoint(sensor, measured, reference)) {
-                    sendResponse("Calibration add failed");
-                    return;
-                }
-
-                uint8_t plateCount = 0;
-                uint8_t rectalCount = 0;
-                const CalibrationPoint* plateTable = sensors.getPlateCalibrationTable(plateCount);
-                const CalibrationPoint* rectalTable = sensors.getRectalCalibrationTable(rectalCount);
-
-                if (strcmp(sensor, "plate") == 0) {
-                    eeprom.savePlateCalibration(plateTable, plateCount, operatorName, timestamp);
-                } else if (strcmp(sensor, "rectal") == 0) {
-                    eeprom.saveRectalCalibration(rectalTable, rectalCount, operatorName, timestamp);
-                }
-                eeprom.updateCalibrationMeta(sensor, operatorName,
-                                             strcmp(sensor, "rectal") == 0 ? rectalCount : plateCount,
-                                             timestamp);
-
-                sendResponse("Calibration point added");
-                sendCalibrationTable(sensor);
-            } else {
-                sendResponse("Unknown calibration command");
-            }
+            heartbeatReceived();
+            sendResponse("heartbeat_ack");
 
         } else if (action == "get") {
             if (state == "pid_params") {
@@ -179,80 +89,8 @@ void CommAPI::handleCommand(const String &jsonString) {
                 sendStatus();
             } else if (state == "config") {
                 sendConfig();
-            } else if (state == "calibration_table") {
-                sendCalibrationTable();
-            } else if (state == "get_calibration_table") {
-                sendCalibrationTable();
             } else {
-                sendResponse("Unknown GET action");
-            }
-
-        } else if (action == "add_calibration_point") {
-            if (params.isNull() || !params.containsKey("sensor") || !params.containsKey("reference")) {
-                sendResponse("Missing sensor or reference");
-                return;
-            }
-
-            const char* sensor = params["sensor"].as<const char*>();
-            float measured = (params.containsKey("measured") && !params["measured"].isNull())
-                                 ? params["measured"].as<float>()
-                                 : NAN;  // NaN triggers fallback to last raw sample in SensorModule
-            float reference = params["reference"].as<float>();
-            const char* operatorName = params.containsKey("operator") ? params["operator"].as<const char*>() : "";
-            uint32_t timestamp = params.containsKey("timestamp")
-                                     ? params["timestamp"].as<uint32_t>()
-                                     : static_cast<uint32_t>(millis());
-
-            if (!sensor || !sensors.addCalibrationPoint(sensor, measured, reference)) {
-                sendResponse("Calibration table full or sensor name invalid");
-                return;
-            }
-
-            uint8_t plateCount = 0;
-            uint8_t rectalCount = 0;
-            const CalibrationPoint* plateTable = sensors.getPlateCalibrationTable(plateCount);
-            const CalibrationPoint* rectalTable = sensors.getRectalCalibrationTable(rectalCount);
-
-            if (strcmp(sensor, "plate") == 0) {
-                eeprom.savePlateCalibration(plateTable, plateCount, operatorName, timestamp);
-            } else if (strcmp(sensor, "rectal") == 0) {
-                eeprom.saveRectalCalibration(rectalTable, rectalCount, operatorName, timestamp);
-            }
-            eeprom.updateCalibrationMeta(sensor, operatorName,
-                                         strcmp(sensor, "rectal") == 0 ? rectalCount : plateCount,
-                                         timestamp);
-
-            sendResponse("Calibration point added");
-            sendCalibrationTable(sensor);
-
-        } else if (action == "get_calibration_table") {
-            sendCalibrationTable();
-
-        } else if (action == "commit_calibration") {
-            JsonVariant obj = cmd["state"];
-            if (!obj.is<JsonObject>()) {
-                sendResponse("Invalid calibration commit payload");
-            } else {
-                JsonObject payload = obj.as<JsonObject>();
-                const char* sensor = payload["sensor"] | nullptr;
-                const char* operatorName = payload["operator"] | "";
-                uint32_t timestamp = static_cast<uint32_t>(millis());
-
-                if (!sensor) {
-                    sendResponse("Missing sensor for calibration commit");
-                } else {
-                    bool ok = sensors.commitCalibration(sensor, operatorName, timestamp);
-                    if (ok) {
-                        String msg = "Calibration committed for ";
-                        msg += sensor;
-                        msg += " by ";
-                        msg += operatorName;
-                        sendEvent(msg);  // Norsk: logg at kalibrering ble lagret
-                        sendResponse("Calibration committed");
-                    } else {
-                        sendResponse("Calibration commit failed");
-                    }
-                }
+                sendResponse("unsupported_command");
             }
 
         } else if (action == "profile") {
@@ -276,26 +114,10 @@ void CommAPI::handleCommand(const String &jsonString) {
                 sendResponse("Profile stopped");
                 sendEvent("Profile stopped");
             } else {
-                sendResponse("Unknown profile state");
-            }
-
-        } else if (action == "failsafe") {
-            if (state == "clear") {
-                if (isFailsafeActive()) {
-                    clearFailsafe();
-                    sendResponse("Failsafe cleared");
-                    sendEvent("\u2705 Failsafe manually cleared via GUI");
-                } else {
-                    sendResponse("Failsafe not active");
-                }
-            } else if (state == "status") {
-                sendFailsafeStatus();
-            } else {
-                sendResponse("Unknown failsafe command");
+                sendResponse("unsupported_command");
             }
 
         } else if (action == "failsafe_clear") {
-            // Legacy compatibility
             if (isFailsafeActive()) {
                 clearFailsafe();
                 sendResponse("Failsafe cleared");
@@ -309,13 +131,9 @@ void CommAPI::handleCommand(const String &jsonString) {
             sendEvent("Panic triggered: gui_panic_triggered");
             sendResponse("GUI panic triggered");
 
-        } else if (action == "clear_panic") {
-            clearPanic();
-            sendEvent("Panic cleared by GUI");
-            sendResponse("Panic cleared");
-
         } else if (action == "save_eeprom") {
-            saveAllToEEPROM(); sendResponse("EEPROM save complete");
+            saveAllToEEPROM();
+            sendResponse("EEPROM save complete");
 
         } else if (action == "reset_config") {
             if (eeprom.factoryReset()) {
@@ -324,353 +142,68 @@ void CommAPI::handleCommand(const String &jsonString) {
             } else {
                 sendResponse("\u274c EEPROM factory reset failed");
             }
-        } else if (action == "set_cooling_pid") {
-            JsonObject params = cmd["params"];
-            if (!params.isNull() && params.containsKey("kp") &&
-                params.containsKey("ki") && params.containsKey("kd")) {
-                float kp = params["kp"];
-                float ki = params["ki"];
-                float kd = params["kd"];
-                pid.setCoolingPID(kp, ki, kd);
-                sendResponse("Cooling PID updated");
-            } else {
-                sendResponse("Cooling PID parameters missing");
-            }
-
-        } else if (action == "set_heating_pid") {
-            JsonObject params = cmd["params"];
-            if (!params.isNull() && params.containsKey("kp") &&
-                params.containsKey("ki") && params.containsKey("kd")) {
-                float kp = params["kp"];
-                float ki = params["ki"];
-                float kd = params["kd"];
-                pid.setHeatingPID(kp, ki, kd);
-                sendResponse("Heating PID updated");
-            } else {
-                sendResponse("Heating PID parameters missing");
-            }
-
-        } else if (action == "emergency_stop") {
-            JsonObject params = cmd["params"];
-            bool enabled = true;
-            if (!params.isNull() && params.containsKey("enabled")) {
-                enabled = params["enabled"];
-            }
-            pid.setEmergencyStop(enabled);
-            sendResponse(enabled ? "Emergency stop enabled" : "Emergency stop cleared");
-
-        } else if (action == "set_cooling_rate_limit") {
-            JsonObject params = cmd["params"];
-            if (!params.isNull() && params.containsKey("rate")) {
-                float rate = params["rate"];
-                pid.setCoolingRateLimit(rate);
-                sendResponse("Cooling rate limit updated");
-            } else {
-                sendResponse("Cooling rate limit missing");
-            }
-
-        } else if (action == "set_safety_margin") {
-            JsonObject params = cmd["params"];
-            if (!params.isNull() && (params.containsKey("margin") || params.containsKey("deadband"))) {
-                float margin = params.containsKey("margin") ? params["margin"].as<float>() : pid.getSafetyMargin();
-                float deadband = params.containsKey("deadband") ? params["deadband"].as<float>() : pid.getCurrentDeadband();
-                pid.setSafetyParams(deadband, margin);
-                sendResponse("Safety parameters updated");
-            } else {
-                sendResponse("Safety parameters missing");
-            }
-
-        } else if (action == "set_output_limits") {
-            JsonObject params = cmd["params"];
-            if (!params.isNull() && params.containsKey("heating") && params.containsKey("cooling")) {
-                float heating = params["heating"];
-                float cooling = params["cooling"];
-                pid.setOutputLimits(cooling, heating);
-                sendResponse("Output limits updated");
-            } else {
-                sendResponse("Output limit parameters missing");
-            }
-
-        } else if (action == "start_asymmetric_autotune") {
-            bool wasActive = pid.isAutotuneActive();
-            JsonObject params = cmd["params"];
-            float stepPercent = -1.0f;
-            float targetDelta = NAN;
-            const char* directionCstr = "heating";
-            String directionBuffer;
-            if (!params.isNull()) {
-                if (params.containsKey("step_percent")) {
-                    stepPercent = params["step_percent"].as<float>();
-                }
-                if (params.containsKey("target_delta")) {
-                    targetDelta = params["target_delta"].as<float>();
-                }
-                if (params.containsKey("direction")) {
-                    directionBuffer = String(params["direction"].as<const char*>());
-                    directionCstr = directionBuffer.c_str();
-                }
-            }
-            pid.startAsymmetricAutotune(stepPercent, directionCstr, targetDelta);
-            if (!wasActive && !pid.isAutotuneActive()) {
-                sendResponse("Asymmetric autotune not started");
-            } else {
-                sendResponse("Asymmetric autotune started");
-            }
-
-        } else if (action == "abort_asymmetric_autotune") {
-            pid.abortAutotune();
-            sendResponse("Asymmetric autotune aborted");
-        } else if (action == "equilibrium") {
-            if (state == "estimate") {
-                pid.startEquilibriumEstimation();
-                sendResponse("Equilibrium estimation started");
-            } else {
-                sendResponse("Unknown equilibrium command");
-            }
         } else {
-            sendResponse("Unknown CMD action");
+            sendResponse("unsupported_command");
         }
     }
 
     if (commandDoc.containsKey("SET")) {
         JsonObject set = commandDoc["SET"];
-
-        // Backwards/alternative format: calibration payload provided directly
         if (!set.containsKey("variable")) {
-            if (set.containsKey("calibration_point")) {
-                JsonVariant value = set["calibration_point"];
-                if (!value.is<JsonObject>()) {
-                    sendResponse("Invalid calibration_point payload");
-                } else {
-                    JsonObject obj = value.as<JsonObject>();
-                    const char* sensor = obj["sensor"] | nullptr;
-                    float reference = obj["reference"] | NAN;
+            sendResponse("unsupported_command");
+            return;
+        }
 
-                    if (!sensor || isnan(reference)) {
-                        sendResponse("Missing sensor or reference for calibration_point");
-                    } else {
-                        float measured = NAN;  // Legacy path: force SensorModule to use last raw sample
-                        const char* operatorName = obj.containsKey("operator") ? obj["operator"].as<const char*>() : "";
-                        uint32_t timestamp = obj.containsKey("timestamp")
-                                                 ? obj["timestamp"].as<uint32_t>()
-                                                 : static_cast<uint32_t>(millis());
+        String variable = set["variable"];
 
-                        bool ok = sensors.addCalibrationPoint(sensor, measured, reference);
-                        if (ok) {
-                            uint8_t plateCount = 0;
-                            uint8_t rectalCount = 0;
-                            const CalibrationPoint* plateTable = sensors.getPlateCalibrationTable(plateCount);
-                            const CalibrationPoint* rectalTable = sensors.getRectalCalibrationTable(rectalCount);
+        if (variable == "target_temp") {
+            float value = set["value"];
+            pid.setTargetTemp(value);
+            eeprom.saveTargetTemp(value);
+            sendResponse("Target temperature updated");
 
-                            if (strcmp(sensor, "plate") == 0) {
-                                eeprom.savePlateCalibration(plateTable, plateCount, operatorName, timestamp);
-                            } else if (strcmp(sensor, "rectal") == 0) {
-                                eeprom.saveRectalCalibration(rectalTable, rectalCount, operatorName, timestamp);
-                            }
-                            eeprom.updateCalibrationMeta(sensor, operatorName,
-                                                         strcmp(sensor, "rectal") == 0 ? rectalCount : plateCount,
-                                                         timestamp);
-                            sendResponse("Calibration point added");
-                            sendCalibrationTable(sensor);
-                            String msg = "Added calibration point: ";
-                            msg += sensor;
-                            msg += " ref=";
-                            msg += reference;
-                            sendEvent(msg);
-                        } else {
-                            sendResponse("Calibration point rejected");
-                        }
-                    }
-                }
-            } else if (set.containsKey("calibration_commit")) {
-                JsonVariant value = set["calibration_commit"];
-                if (!value.is<JsonObject>()) {
-                    sendResponse("Invalid calibration_commit payload");
-                } else {
-                    JsonObject obj = value.as<JsonObject>();
-                    const char* sensor = obj["sensor"] | nullptr;
-                    const char* operatorName = obj["operator"] | "";
-                    uint32_t timestamp = obj["timestamp"] | 0;
+        } else if (variable == "pid_kp") {
+            float value = set["value"];
+            pid.setHeatingPID(value, pid.getHeatingKi(), pid.getHeatingKd());
+            sendResponse("Heating Kp updated");
 
-                    if (!sensor || timestamp == 0) {
-                        sendResponse("Missing sensor or timestamp for calibration_commit");
-                    } else {
-                        bool ok = sensors.commitCalibration(sensor, operatorName, timestamp);
-                        if (ok) {
-                            sendResponse("Calibration committed");
-                            String msg = "Calibration committed for ";
-                            msg += sensor;
-                            msg += " by ";
-                            msg += operatorName;
-                            sendEvent(msg);
-                        } else {
-                            sendResponse("Calibration commit failed");
-                        }
-                    }
-                }
-            }
-        } else {
-            String variable = set["variable"];
+        } else if (variable == "pid_ki") {
+            float value = set["value"];
+            pid.setHeatingPID(pid.getHeatingKp(), value, pid.getHeatingKd());
+            sendResponse("Heating Ki updated");
 
-            if (variable == "target_temp") {
-                float value = set["value"];
-                pid.setTargetTemp(value);
-                eeprom.saveTargetTemp(value);
-                sendResponse("Target temperature updated");
+        } else if (variable == "pid_kd") {
+            float value = set["value"];
+            pid.setHeatingPID(pid.getHeatingKp(), pid.getHeatingKi(), value);
+            sendResponse("Heating Kd updated");
 
-            } else if (variable == "pid_kp") {
-                float value = set["value"];
-                pid.setHeatingPID(value, pid.getHeatingKi(), pid.getHeatingKd());
-                sendResponse("Heating Kp updated");
+        } else if (variable == "pid_max_output") {
+            float value = set["value"];
+            pid.setMaxOutputPercent(value);
+            sendResponse("Max output limit updated");
 
-            } else if (variable == "pid_ki") {
-                float value = set["value"];
-                pid.setHeatingPID(pid.getHeatingKp(), value, pid.getHeatingKd());
-                sendResponse("Heating Ki updated");
+        } else if (variable == "debug_level") {
+            int value = set["value"];
+            pid.enableDebug(value > 0);
+            eeprom.saveDebugLevel(value);
+            sendResponse("Debug level updated");
 
-            } else if (variable == "pid_kd") {
-                float value = set["value"];
-                pid.setHeatingPID(pid.getHeatingKp(), pid.getHeatingKi(), value);
-                sendResponse("Heating Kd updated");
+        } else if (variable == "failsafe_timeout") {
+            int value = set["value"];
+            heartbeatTimeoutMs = value;
+            eeprom.saveFailsafeTimeout(value);
+            sendResponse("Failsafe timeout updated");
 
-            } else if (variable == "pid_max_output") {
-                float value = set["value"];
-                pid.setMaxOutputPercent(value);
-                sendResponse("Max output limit updated");
-
-            } else if (variable == "pid_heating_limit") {
-                float value = set["value"];
-                pid.setOutputLimits(pid.getCoolingOutputLimit(), value);
-                sendResponse("Heating output limit updated");
-
-            } else if (variable == "pid_cooling_limit") {
-                float value = set["value"];
-                pid.setOutputLimits(value, pid.getHeatingOutputLimit());
-                sendResponse("Cooling output limit updated");
-
-            } else if (variable == "calibration_point") {
-                JsonVariant value = set["value"];
-                if (!value.is<JsonObject>()) {
-                    sendResponse("Invalid calibration_point payload");
-                } else {
-                    JsonObject obj = value.as<JsonObject>();
-                    const char* sensor = obj["sensor"] | nullptr;
-                    float reference = obj["reference"] | NAN;
-
-                    if (!sensor || isnan(reference)) {
-                        sendResponse("Missing sensor or reference for calibration_point");
-                    } else {
-                        float measured = NAN;  // Legacy path: force SensorModule to use last raw sample
-                        const char* operatorName = obj.containsKey("operator") ? obj["operator"].as<const char*>() : "";
-                        uint32_t timestamp = obj.containsKey("timestamp")
-                                                 ? obj["timestamp"].as<uint32_t>()
-                                                 : static_cast<uint32_t>(millis());
-
-                        bool ok = sensors.addCalibrationPoint(sensor, measured, reference);
-                        if (ok) {
-                            uint8_t plateCount = 0;
-                            uint8_t rectalCount = 0;
-                            const CalibrationPoint* plateTable = sensors.getPlateCalibrationTable(plateCount);
-                            const CalibrationPoint* rectalTable = sensors.getRectalCalibrationTable(rectalCount);
-
-                            if (strcmp(sensor, "plate") == 0) {
-                                eeprom.savePlateCalibration(plateTable, plateCount, operatorName, timestamp);
-                            } else if (strcmp(sensor, "rectal") == 0) {
-                                eeprom.saveRectalCalibration(rectalTable, rectalCount, operatorName, timestamp);
-                            }
-                            eeprom.updateCalibrationMeta(sensor, operatorName,
-                                                         strcmp(sensor, "rectal") == 0 ? rectalCount : plateCount,
-                                                         timestamp);
-                            sendResponse("Calibration point added");
-                            sendCalibrationTable(sensor);
-                            String msg = "Added calibration point: ";
-                            msg += sensor;
-                            msg += " ref=";
-                            msg += reference;
-                            sendEvent(msg);
-                        } else {
-                            sendResponse("Calibration point rejected");
-                        }
-                    }
-                }
-
-            } else if (variable == "pid_cooling_kp") {
-                float value = set["value"];
-                pid.setCoolingPID(value, pid.getCoolingKi(), pid.getCoolingKd());
-                sendResponse("Cooling Kp updated");
-
-            } else if (variable == "pid_cooling_ki") {
-                float value = set["value"];
-                pid.setCoolingPID(pid.getCoolingKp(), value, pid.getCoolingKd());
-                sendResponse("Cooling Ki updated");
-
-            } else if (variable == "pid_cooling_kd") {
-                float value = set["value"];
-                pid.setCoolingPID(pid.getCoolingKp(), pid.getCoolingKi(), value);
-                sendResponse("Cooling Kd updated");
-
-            } else if (variable == "calibration_commit") {
-                JsonVariant value = set["value"];
-                if (!value.is<JsonObject>()) {
-                    sendResponse("Invalid calibration_commit payload");
-                } else {
-                    JsonObject obj = value.as<JsonObject>();
-                    const char* sensor = obj["sensor"] | nullptr;
-                    const char* operatorName = obj["operator"] | "";
-                    uint32_t timestamp = obj["timestamp"] | 0;
-
-                    if (!sensor || timestamp == 0) {
-                        sendResponse("Missing sensor or timestamp for calibration_commit");
-                    } else {
-                        bool ok = sensors.commitCalibration(sensor, operatorName, timestamp);
-                        if (ok) {
-                            sendResponse("Calibration committed");
-                            String msg = "Calibration committed for ";
-                            msg += sensor;
-                            msg += " by ";
-                            msg += operatorName;
-                            sendEvent(msg);
-                        } else {
-                            sendResponse("Calibration commit failed");
-                        }
-                    }
-                }
-
-            } else if (variable == "debug_level") {
-                int value = set["value"];
-                pid.enableDebug(value > 0);
-                eeprom.saveDebugLevel(value);
-                sendResponse("Debug level updated");
-
-            } else if (variable == "failsafe_timeout") {
-                int value = set["value"];
-                heartbeatTimeoutMs = value;
-                eeprom.saveFailsafeTimeout(value);
-                sendResponse("Failsafe timeout updated");
-
-            } else if (variable == "profile_data") {
-                JsonVariant value = set["value"];
-                if (!value.is<JsonArray>()) {
-                    sendResponse("Invalid profile payload");
-                } else {
-                    parseProfile(value.as<JsonArray>());
-                }
-
-            } else if (variable == "equilibrium_compensation") {
-                bool enable = set["value"];
-                pid.setUseEquilibriumCompensation(enable);
-                sendResponse(enable ? "Equilibrium compensation enabled" :
-                                  "Equilibrium compensation disabled");
-
-            } else if (variable == "breath_check_enabled") {
-                bool enable = set["value"];
-                setBreathCheckEnabled(enable);
-                sendResponse(enable ? "Breath-stop check enabled" :
-                                  "Breath-stop check disabled");
-
+        } else if (variable == "profile_data") {
+            JsonVariant value = set["value"];
+            if (!value.is<JsonArray>()) {
+                sendResponse("Invalid profile payload");
             } else {
-                sendResponse("Unknown SET variable");
+                parseProfile(value.as<JsonArray>());
             }
+
+        } else {
+            sendResponse("unsupported_command");
         }
     }
 }
@@ -749,6 +282,26 @@ void CommAPI::sendEvent(const String &eventMessage) {
     serial->println();
 }
 
+void CommAPI::sendPIDParams() {
+    static StaticJsonDocument<256> doc;
+    doc.clear();
+    doc["pid_kp"] = pid.getHeatingKp();
+    doc["pid_ki"] = pid.getHeatingKi();
+    doc["pid_kd"] = pid.getHeatingKd();
+    doc["pid_heating_kp"] = pid.getHeatingKp();
+    doc["pid_heating_ki"] = pid.getHeatingKi();
+    doc["pid_heating_kd"] = pid.getHeatingKd();
+    doc["pid_cooling_kp"] = pid.getCoolingKp();
+    doc["pid_cooling_ki"] = pid.getCoolingKi();
+    doc["pid_cooling_kd"] = pid.getCoolingKd();
+    doc["pid_max_output"] = pid.getMaxOutputPercent();
+    doc["pid_heating_limit"] = pid.getHeatingOutputLimit();
+    doc["pid_cooling_limit"] = pid.getCoolingOutputLimit();
+    doc["pid_mode"] = pid.isCooling() ? "cooling" : "heating";
+    serializeJson(doc, *serial);
+    serial->println();
+}
+
 void CommAPI::sendData() {
     static StaticJsonDocument<1024> doc;
     doc.clear();
@@ -773,22 +326,6 @@ void CommAPI::sendData() {
     doc["pid_cooling_kp"] = pid.getCoolingKp();
     doc["pid_cooling_ki"] = pid.getCoolingKi();
     doc["pid_cooling_kd"] = pid.getCoolingKd();
-    doc["equilibrium_temp"] = pid.getEquilibriumTemp();
-    doc["equilibrium_valid"] = pid.isEquilibriumValid();
-    doc["equilibrium_estimating"] = pid.isEquilibriumEstimating();
-    doc["equilibrium_compensation_active"] = pid.isEquilibriumCompensationEnabled();
-    serializeJson(doc, *serial);
-    serial->println();
-}
-
-void CommAPI::sendFailsafeStatus() {
-    static StaticJsonDocument<256> doc;
-    doc.clear();
-    doc["failsafe_active"] = isFailsafeActive();
-    doc["failsafe_reason"] = getFailsafeReason();
-    doc["breath_check_enabled"] = isBreathCheckEnabled();
-    doc["panic_active"] = isPanicActive();
-    doc["panic_reason"] = getPanicReason();
     serializeJson(doc, *serial);
     serial->println();
 }
@@ -804,16 +341,16 @@ void CommAPI::sendStatus() {
     double plateTemp = sensors.getCoolingPlateTemp();
     double rectalTemp = sensors.getRectalTemp();
 
-    doc["cooling_plate_temp"] = plateTemp;  // Kalibrert verdi
-    doc["rectal_temp"] = rectalTemp;        // Kalibrert verdi
-    doc["anal_probe_temp"] = rectalTemp;    // Legacy alias
+    doc["cooling_plate_temp"] = plateTemp;
+    doc["rectal_temp"] = rectalTemp;
+    doc["anal_probe_temp"] = rectalTemp;
 
     double plateRaw = sensors.getCoolingPlateRawTemp();
     double rectalRaw = sensors.getRectalRawTemp();
     doc["cooling_plate_raw"] = plateRaw;
     doc["rectal_raw"] = rectalRaw;
-    doc["cooling_plate_temp_raw"] = plateRaw;  // Legacy alias
-    doc["anal_probe_temp_raw"] = rectalRaw;    // Legacy alias
+    doc["cooling_plate_temp_raw"] = plateRaw;
+    doc["anal_probe_temp_raw"] = rectalRaw;
     doc["pid_output"] = pid.getOutput();
     doc["breath_freq_bpm"] = pressure.getBreathRate();
     doc["plate_target_active"] = pid.getActivePlateTarget();
@@ -821,17 +358,10 @@ void CommAPI::sendStatus() {
     doc["profile_paused"] = profileManager.isPaused();
     doc["profile_step_index"] = profileManager.getCurrentStep();
     doc["profile_remaining_time"] = profileManager.getRemainingTime();
-    doc["autotune_active"] = pid.isAutotuneActive();
-    doc["autotune_status"] = pid.getAutotuneStatus();
     doc["cooling_mode"] = pid.isCooling();
     doc["pid_mode"] = pid.isCooling() ? "cooling" : "heating";
     doc["emergency_stop"] = pid.isEmergencyStop();
     doc["temperature_rate"] = pid.getTemperatureRate();
-    doc["asymmetric_autotune_active"] = pid.isAutotuneActive();
-    doc["equilibrium_temp"] = pid.getEquilibriumTemp();
-    doc["equilibrium_valid"] = pid.isEquilibriumValid();
-    doc["equilibrium_estimating"] = pid.isEquilibriumEstimating();
-    doc["equilibrium_compensation_active"] = pid.isEquilibriumCompensationEnabled();
     doc["pid_max_output"] = pid.getMaxOutputPercent();
     doc["pid_heating_limit"] = pid.getHeatingOutputLimit();
     doc["pid_cooling_limit"] = pid.getCoolingOutputLimit();
@@ -841,32 +371,6 @@ void CommAPI::sendStatus() {
     doc["pid_cooling_kp"] = pid.getCoolingKp();
     doc["pid_cooling_ki"] = pid.getCoolingKi();
     doc["pid_cooling_kd"] = pid.getCoolingKd();
-    doc["cooling_rate_limit"] = pid.getCoolingRateLimit();
-    doc["deadband"] = pid.getCurrentDeadband();
-    doc["safety_margin"] = pid.getSafetyMargin();
-
-    SensorCalibrationMeta plateMeta{};
-    SensorCalibrationMeta rectalMeta{};
-    eeprom.getPlateCalibrationMeta(plateMeta);
-    eeprom.getRectalCalibrationMeta(rectalMeta);
-    uint8_t plateCount = 0;
-    uint8_t rectalCount = 0;
-    sensors.getPlateCalibrationTable(plateCount);
-    sensors.getRectalCalibrationTable(rectalCount);
-    sanitizeCalibrationMeta(plateMeta, plateCount);
-    sanitizeCalibrationMeta(rectalMeta, rectalCount);
-
-    JsonObject cal = doc.createNestedObject("calibration");
-    JsonObject plateObj = cal.createNestedObject("plate");
-    plateObj["timestamp"] = plateMeta.timestamp;
-    plateObj["operator"] = plateMeta.operatorName;
-    plateObj["points"] = plateMeta.pointCount;
-
-    JsonObject rectalObj = cal.createNestedObject("rectal");
-    rectalObj["timestamp"] = rectalMeta.timestamp;
-    rectalObj["operator"] = rectalMeta.operatorName;
-    rectalObj["points"] = rectalMeta.pointCount;
-
     serializeJson(doc, *serial);
     serial->println();
 }
@@ -882,7 +386,7 @@ void CommAPI::sendStatus(const char* key, float value) {
 void CommAPI::sendStatus(const char* key, int value) {
     static StaticJsonDocument<128> doc;
     doc.clear();
-    doc[key] = value;
+    doc[key] = static_cast<int>(value);
     serializeJson(doc, *serial);
     serial->println();
 }
@@ -890,33 +394,13 @@ void CommAPI::sendStatus(const char* key, int value) {
 void CommAPI::sendStatus(const char* key, double value) {
     static StaticJsonDocument<128> doc;
     doc.clear();
-    doc[key] = static_cast<float>(value);
-    serializeJson(doc, *serial);
-    serial->println();
-}
-
-void CommAPI::sendPIDParams() {
-    static StaticJsonDocument<256> doc;
-    doc.clear();
-    doc["pid_kp"] = pid.getHeatingKp();
-    doc["pid_ki"] = pid.getHeatingKi();
-    doc["pid_kd"] = pid.getHeatingKd();
-    doc["pid_heating_kp"] = pid.getHeatingKp();
-    doc["pid_heating_ki"] = pid.getHeatingKi();
-    doc["pid_heating_kd"] = pid.getHeatingKd();
-    doc["pid_cooling_kp"] = pid.getCoolingKp();
-    doc["pid_cooling_ki"] = pid.getCoolingKi();
-    doc["pid_cooling_kd"] = pid.getCoolingKd();
-    doc["pid_max_output"] = pid.getMaxOutputPercent();
-    doc["pid_heating_limit"] = pid.getHeatingOutputLimit();
-    doc["pid_cooling_limit"] = pid.getCoolingOutputLimit();
-    doc["pid_mode"] = pid.isCooling() ? "cooling" : "heating";
+    doc[key] = static_cast<double>(value);
     serializeJson(doc, *serial);
     serial->println();
 }
 
 void CommAPI::sendConfig() {
-    static StaticJsonDocument<768> doc;
+    static StaticJsonDocument<512> doc;
     doc.clear();
     doc["pid_kp"] = pid.getHeatingKp();
     doc["pid_ki"] = pid.getHeatingKi();
@@ -937,90 +421,6 @@ void CommAPI::sendConfig() {
     doc["cooling_rate_limit"] = pid.getCoolingRateLimit();
     doc["deadband"] = pid.getCurrentDeadband();
     doc["safety_margin"] = pid.getSafetyMargin();
-    doc["equilibrium_compensation_active"] = pid.isEquilibriumCompensationEnabled();
-
-    SensorCalibrationMeta plateMeta{};
-    SensorCalibrationMeta rectalMeta{};
-    eeprom.getPlateCalibrationMeta(plateMeta);
-    eeprom.getRectalCalibrationMeta(rectalMeta);
-    uint8_t plateCount = 0;
-    uint8_t rectalCount = 0;
-    sensors.getPlateCalibrationTable(plateCount);
-    sensors.getRectalCalibrationTable(rectalCount);
-    sanitizeCalibrationMeta(plateMeta, plateCount);
-    sanitizeCalibrationMeta(rectalMeta, rectalCount);
-
-    JsonObject cal = doc.createNestedObject("calibration");
-    JsonObject plateObj = cal.createNestedObject("plate");
-    plateObj["timestamp"] = plateMeta.timestamp;
-    plateObj["operator"] = plateMeta.operatorName;
-    plateObj["points"] = plateMeta.pointCount;
-
-    JsonObject rectalObj = cal.createNestedObject("rectal");
-    rectalObj["timestamp"] = rectalMeta.timestamp;
-    rectalObj["operator"] = rectalMeta.operatorName;
-    rectalObj["points"] = rectalMeta.pointCount;
-    serializeJson(doc, *serial);
-    serial->println();
-}
-
-void CommAPI::sendCalibrationTable(const char* sensorFilter) {
-    // Keep this buffer generous because the table contains up to 2x8 points
-    // with metadata; using a static document avoids stack spikes when sending
-    // the full table over serial.
-    static StaticJsonDocument<2048> doc;
-    doc.clear();
-    doc["type"] = "calibration_table";
-
-    SensorCalibrationMeta plateMeta{};
-    SensorCalibrationMeta rectalMeta{};
-    eeprom.getPlateCalibrationMeta(plateMeta);
-    eeprom.getRectalCalibrationMeta(rectalMeta);
-
-    uint8_t plateCount = 0;
-    uint8_t rectalCount = 0;
-    const CalibrationPoint* plateTable = sensors.getPlateCalibrationTable(plateCount);
-    const CalibrationPoint* rectalTable = sensors.getRectalCalibrationTable(rectalCount);
-    sanitizeCalibrationMeta(plateMeta, plateCount);
-    sanitizeCalibrationMeta(rectalMeta, rectalCount);
-
-    bool includePlate = !sensorFilter || strcmp(sensorFilter, "plate") == 0 || strcmp(sensorFilter, "both") == 0;
-    bool includeRectal = !sensorFilter || strcmp(sensorFilter, "rectal") == 0 || strcmp(sensorFilter, "both") == 0;
-
-    if (includePlate) {
-        JsonObject plate = doc.createNestedObject("plate");
-        JsonObject plateMetaObj = plate.createNestedObject("meta");
-        plateMetaObj["timestamp"] = plateMeta.timestamp;
-        plateMetaObj["operator"] = plateMeta.operatorName;
-        plateMetaObj["count"] = plateMeta.pointCount;
-
-        JsonArray platePoints = plate.createNestedArray("points");
-        if (plateTable) {
-            for (uint8_t i = 0; i < plateCount; ++i) {
-                JsonObject p = platePoints.createNestedObject();
-                p["measured"] = plateTable[i].measured;
-                p["reference"] = plateTable[i].reference;
-            }
-        }
-    }
-
-    if (includeRectal) {
-        JsonObject rectal = doc.createNestedObject("rectal");
-        JsonObject rectalMetaObj = rectal.createNestedObject("meta");
-        rectalMetaObj["timestamp"] = rectalMeta.timestamp;
-        rectalMetaObj["operator"] = rectalMeta.operatorName;
-        rectalMetaObj["count"] = rectalMeta.pointCount;
-
-        JsonArray rectalPoints = rectal.createNestedArray("points");
-        if (rectalTable) {
-            for (uint8_t i = 0; i < rectalCount; ++i) {
-                JsonObject p = rectalPoints.createNestedObject();
-                p["measured"] = rectalTable[i].measured;
-                p["reference"] = rectalTable[i].reference;
-            }
-        }
-    }
-
     serializeJson(doc, *serial);
     serial->println();
 }
@@ -1042,7 +442,8 @@ void CommAPI::saveAllToEEPROM() {
         pid.getSafetyMargin(),
     };
     eeprom.saveSafetySettings(safety);
-    int debugLevel = pid.isDebugEnabled() ? 1 : 0;
-    eeprom.saveDebugLevel(debugLevel);
+
+    eeprom.saveMaxOutput(pid.getMaxOutputPercent());
+    eeprom.saveDebugLevel(pid.isDebugEnabled() ? 1 : 0);
     eeprom.saveFailsafeTimeout(heartbeatTimeoutMs);
 }

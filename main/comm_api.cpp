@@ -67,27 +67,31 @@ void CommAPI::process() {
     }
 }
 
+namespace {
+// Keep the large command document out of the stack to avoid exhausting RAM
+// during heavy calibration/profile payloads. Using a file-scope static buffer
+// avoids reallocation and ensures the document always resides in global
+// memory instead of being created on the call stack.
+static StaticJsonDocument<3072> commandDoc;
+}  // namespace
+
 void CommAPI::handleCommand(const String &jsonString) {
     // The profile upload payload can easily exceed 1 KB when 10 steps are
     // transferred. A too-small document caused the JSON deserialisation to
     // fail silently, which meant the controller never received the profile
-    // (and thus ignored subsequent start commands). Allocate a larger buffer
-    // so we can parse complete profile uploads without errors. Keep the
-    // document static so it lives in global memory instead of the stack; the
-    // previous automatic allocation could exhaust SRAM and prevent the MCU
-    // from responding on the serial port when calibration/profile commands
-    // were used.
-    static StaticJsonDocument<3072> doc;
-    doc.clear();
-    DeserializationError error = deserializeJson(doc, jsonString);
+    // (and thus ignored subsequent start commands). Clearing the static
+    // document before each parse keeps memory usage stable while protecting
+    // against stack exhaustion that previously silenced the MCU.
+    commandDoc.clear();
+    DeserializationError error = deserializeJson(commandDoc, jsonString);
 
     if (error) {
         sendResponse("JSON parse error");
         return;
     }
 
-    if (doc.containsKey("CMD")) {
-        JsonObject cmd = doc["CMD"];
+    if (commandDoc.containsKey("CMD")) {
+        JsonObject cmd = commandDoc["CMD"];
         String action = cmd["action"];
         String state;
         if (cmd["state"].is<const char*>()) {

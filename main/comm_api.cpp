@@ -72,8 +72,13 @@ void CommAPI::handleCommand(const String &jsonString) {
     // transferred. A too-small document caused the JSON deserialisation to
     // fail silently, which meant the controller never received the profile
     // (and thus ignored subsequent start commands). Allocate a larger buffer
-    // so we can parse complete profile uploads without errors.
-    StaticJsonDocument<3072> doc;
+    // so we can parse complete profile uploads without errors. Keep the
+    // document static so it lives in global memory instead of the stack; the
+    // previous automatic allocation could exhaust SRAM and prevent the MCU
+    // from responding on the serial port when calibration/profile commands
+    // were used.
+    static StaticJsonDocument<3072> doc;
+    doc.clear();
     DeserializationError error = deserializeJson(doc, jsonString);
 
     if (error) {
@@ -627,21 +632,24 @@ void CommAPI::parseProfile(JsonArray arr) {
 }
 
 void CommAPI::sendResponse(const String &message) {
-    StaticJsonDocument<256> doc;
+    static StaticJsonDocument<256> doc;
+    doc.clear();
     doc["response"] = message;
     serializeJson(doc, *serial);
     serial->println();
 }
 
 void CommAPI::sendEvent(const String &eventMessage) {
-    StaticJsonDocument<256> doc;
+    static StaticJsonDocument<256> doc;
+    doc.clear();
     doc["event"] = eventMessage;
     serializeJson(doc, *serial);
     serial->println();
 }
 
 void CommAPI::sendData() {
-    StaticJsonDocument<1024> doc;
+    static StaticJsonDocument<1024> doc;
+    doc.clear();
     doc["cooling_plate_temp"] = sensors.getCoolingPlateTemp();
     doc["anal_probe_temp"] = sensors.getRectalTemp();
     doc["pid_output"] = pid.getOutput();
@@ -672,7 +680,8 @@ void CommAPI::sendData() {
 }
 
 void CommAPI::sendFailsafeStatus() {
-    StaticJsonDocument<256> doc;
+    static StaticJsonDocument<256> doc;
+    doc.clear();
     doc["failsafe_active"] = isFailsafeActive();
     doc["failsafe_reason"] = getFailsafeReason();
     doc["breath_check_enabled"] = isBreathCheckEnabled();
@@ -683,7 +692,8 @@ void CommAPI::sendFailsafeStatus() {
 }
 
 void CommAPI::sendStatus() {
-    StaticJsonDocument<768> doc;
+    static StaticJsonDocument<768> doc;
+    doc.clear();
     doc["failsafe_active"] = isFailsafeActive();
     doc["failsafe_reason"] = getFailsafeReason();
     doc["breath_check_enabled"] = isBreathCheckEnabled();
@@ -760,28 +770,32 @@ void CommAPI::sendStatus() {
 }
 
 void CommAPI::sendStatus(const char* key, float value) {
-    StaticJsonDocument<128> doc;
+    static StaticJsonDocument<128> doc;
+    doc.clear();
     doc[key] = static_cast<float>(value);
     serializeJson(doc, *serial);
     serial->println();
 }
 
 void CommAPI::sendStatus(const char* key, int value) {
-    StaticJsonDocument<128> doc;
+    static StaticJsonDocument<128> doc;
+    doc.clear();
     doc[key] = value;
     serializeJson(doc, *serial);
     serial->println();
 }
 
 void CommAPI::sendStatus(const char* key, double value) {
-    StaticJsonDocument<128> doc;
+    static StaticJsonDocument<128> doc;
+    doc.clear();
     doc[key] = static_cast<float>(value);
     serializeJson(doc, *serial);
     serial->println();
 }
 
 void CommAPI::sendPIDParams() {
-    StaticJsonDocument<256> doc;
+    static StaticJsonDocument<256> doc;
+    doc.clear();
     doc["pid_kp"] = pid.getHeatingKp();
     doc["pid_ki"] = pid.getHeatingKi();
     doc["pid_kd"] = pid.getHeatingKd();
@@ -800,7 +814,8 @@ void CommAPI::sendPIDParams() {
 }
 
 void CommAPI::sendConfig() {
-    StaticJsonDocument<768> doc;
+    static StaticJsonDocument<768> doc;
+    doc.clear();
     doc["pid_kp"] = pid.getHeatingKp();
     doc["pid_ki"] = pid.getHeatingKi();
     doc["pid_kd"] = pid.getHeatingKd();
@@ -848,7 +863,8 @@ void CommAPI::sendConfig() {
 }
 
 void CommAPI::sendCalibrationTable() {
-    StaticJsonDocument<1024> doc;
+    static StaticJsonDocument<1024> doc;
+    doc.clear();
     doc["type"] = "calibration_table";
 
     SensorCalibrationMeta plateMeta{};

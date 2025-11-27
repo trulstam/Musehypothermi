@@ -42,8 +42,11 @@ class FakeSerialManager(QObject):
         except Exception:
             pass
 
-    def sendCMD(self, action, state):
-        self.send(json.dumps({"CMD": {"action": action, "state": state}}))
+    def sendCMD(self, action, state, params=None):
+        payload = {"CMD": {"action": action, "state": state}}
+        if params is not None:
+            payload["CMD"]["params"] = params
+        self.send(json.dumps(payload))
 
     def sendSET(self, variable, value):
         self.send(json.dumps({"SET": {"variable": variable, "value": value}}))

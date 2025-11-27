@@ -769,28 +769,32 @@ void CommAPI::sendStatus() {
 }
 
 void CommAPI::sendStatus(const char* key, float value) {
-    StaticJsonDocument<128> doc;
+    static StaticJsonDocument<128> doc;
+    doc.clear();
     doc[key] = static_cast<float>(value);
     serializeJson(doc, *serial);
     serial->println();
 }
 
 void CommAPI::sendStatus(const char* key, int value) {
-    StaticJsonDocument<128> doc;
+    static StaticJsonDocument<128> doc;
+    doc.clear();
     doc[key] = value;
     serializeJson(doc, *serial);
     serial->println();
 }
 
 void CommAPI::sendStatus(const char* key, double value) {
-    StaticJsonDocument<128> doc;
+    static StaticJsonDocument<128> doc;
+    doc.clear();
     doc[key] = static_cast<float>(value);
     serializeJson(doc, *serial);
     serial->println();
 }
 
 void CommAPI::sendPIDParams() {
-    StaticJsonDocument<256> doc;
+    static StaticJsonDocument<256> doc;
+    doc.clear();
     doc["pid_kp"] = pid.getHeatingKp();
     doc["pid_ki"] = pid.getHeatingKi();
     doc["pid_kd"] = pid.getHeatingKd();
@@ -809,7 +813,8 @@ void CommAPI::sendPIDParams() {
 }
 
 void CommAPI::sendConfig() {
-    StaticJsonDocument<768> doc;
+    static StaticJsonDocument<768> doc;
+    doc.clear();
     doc["pid_kp"] = pid.getHeatingKp();
     doc["pid_ki"] = pid.getHeatingKi();
     doc["pid_kd"] = pid.getHeatingKd();

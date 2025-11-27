@@ -1,5 +1,5 @@
 #include "profile_manager.h"
-#include "pid_module_asymmetric.h"
+#include "pid_module.h"
 #include "sensor_module.h"
 #include "task_scheduler.h"
 #include "comm_api.h"
@@ -7,7 +7,7 @@
 // 👉🏻 Opprett den globale instansen av ProfileManager
 ProfileManager profileManager;
 
-extern AsymmetricPIDModule pid;
+extern PIDModule pid;
 extern SensorModule sensors;
 extern CommAPI comm;
 

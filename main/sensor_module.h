@@ -28,7 +28,9 @@ class SensorModule {
     const CalibrationPoint* getRectalCalibrationTable(uint8_t& count) const;
 
     // Kalibrerings-API (kalles fra CommAPI)
-    bool addCalibrationPoint(const char* sensorName, float referenceTemp);
+    bool addCalibrationPoint(const char* sensorName,
+                             float measuredTemp,
+                             float referenceTemp);
     bool commitCalibration(const char* sensorName, const char* operatorName, uint32_t timestamp);
 
   private:

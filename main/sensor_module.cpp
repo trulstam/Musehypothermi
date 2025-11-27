@@ -5,9 +5,9 @@
 #include <math.h>
 #include <string.h>
 #include "eeprom_manager.h"
-#include "pid_module_asymmetric.h"
+#include "pid_module.h"
 
-extern AsymmetricPIDModule pid;
+extern PIDModule pid;
 extern EEPROMManager eeprom;
 
 #if SIMULATION_MODE
@@ -145,21 +145,27 @@ const CalibrationPoint* SensorModule::getRectalCalibrationTable(uint8_t& count) 
   return rectalCalTable;
 }
 
-bool SensorModule::addCalibrationPoint(const char* sensorName, float referenceTemp) {
+bool SensorModule::addCalibrationPoint(const char* sensorName,
+                                       float measuredTemp,
+                                       float referenceTemp) {
   if (!sensorName) return false;
 
   CalibrationPoint* table = nullptr;
   uint8_t* countPtr = nullptr;
-  double measured = 0.0;
+  double measured = static_cast<double>(measuredTemp);
 
   if (strcmp(sensorName, "plate") == 0) {
     table = plateCalTable;
     countPtr = &plateCalCount;
-    measured = lastRawCoolingPlateTemp;
+    if (isnan(measured)) {
+      measured = lastRawCoolingPlateTemp;  // Fall back to latest raw sample
+    }
   } else if (strcmp(sensorName, "rectal") == 0) {
     table = rectalCalTable;
     countPtr = &rectalCalCount;
-    measured = lastRawRectalTemp;
+    if (isnan(measured)) {
+      measured = lastRawRectalTemp;  // Fall back to latest raw sample
+    }
   } else {
     return false;
   }

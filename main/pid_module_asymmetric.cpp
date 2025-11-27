@@ -1591,6 +1591,10 @@ bool AsymmetricPIDModule::start() {
         return false;
     }
 
+    // Clear any lingering emergency-stop latch from previous safety trips so
+    // a new PID session can actually drive the outputs again.
+    emergencyStop = false;
+
     clearFailsafe();
     active = true;
     equilibriumEstimating = false;

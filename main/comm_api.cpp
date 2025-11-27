@@ -138,7 +138,7 @@ void CommAPI::handleCommand(const String &jsonString) {
 
                 float measured = (params.containsKey("measured") && !params["measured"].isNull())
                                      ? params["measured"].as<float>()
-                                     : NAN;
+                                     : NAN;  // NaN triggers fallback to last raw sample in SensorModule
                 float reference = params["reference"].as<float>();
                 const char* operatorName = params.containsKey("operator") ? params["operator"].as<const char*>() : "";
                 uint32_t timestamp = params.containsKey("timestamp")
@@ -194,7 +194,9 @@ void CommAPI::handleCommand(const String &jsonString) {
             }
 
             const char* sensor = params["sensor"].as<const char*>();
-            float measured = params.containsKey("measured") ? params["measured"].as<float>() : NAN;
+            float measured = (params.containsKey("measured") && !params["measured"].isNull())
+                                 ? params["measured"].as<float>()
+                                 : NAN;  // NaN triggers fallback to last raw sample in SensorModule
             float reference = params["reference"].as<float>();
             const char* operatorName = params.containsKey("operator") ? params["operator"].as<const char*>() : "";
             uint32_t timestamp = params.containsKey("timestamp")
@@ -447,9 +449,29 @@ void CommAPI::handleCommand(const String &jsonString) {
                     if (!sensor || isnan(reference)) {
                         sendResponse("Missing sensor or reference for calibration_point");
                     } else {
-                        bool ok = sensors.addCalibrationPoint(sensor, reference);
+                        float measured = NAN;  // Legacy path: force SensorModule to use last raw sample
+                        const char* operatorName = obj.containsKey("operator") ? obj["operator"].as<const char*>() : "";
+                        uint32_t timestamp = obj.containsKey("timestamp")
+                                                 ? obj["timestamp"].as<uint32_t>()
+                                                 : static_cast<uint32_t>(millis());
+
+                        bool ok = sensors.addCalibrationPoint(sensor, measured, reference);
                         if (ok) {
+                            uint8_t plateCount = 0;
+                            uint8_t rectalCount = 0;
+                            const CalibrationPoint* plateTable = sensors.getPlateCalibrationTable(plateCount);
+                            const CalibrationPoint* rectalTable = sensors.getRectalCalibrationTable(rectalCount);
+
+                            if (strcmp(sensor, "plate") == 0) {
+                                eeprom.savePlateCalibration(plateTable, plateCount, operatorName, timestamp);
+                            } else if (strcmp(sensor, "rectal") == 0) {
+                                eeprom.saveRectalCalibration(rectalTable, rectalCount, operatorName, timestamp);
+                            }
+                            eeprom.updateCalibrationMeta(sensor, operatorName,
+                                                         strcmp(sensor, "rectal") == 0 ? rectalCount : plateCount,
+                                                         timestamp);
                             sendResponse("Calibration point added");
+                            sendCalibrationTable(sensor);
                             String msg = "Added calibration point: ";
                             msg += sensor;
                             msg += " ref=";
@@ -538,9 +560,29 @@ void CommAPI::handleCommand(const String &jsonString) {
                     if (!sensor || isnan(reference)) {
                         sendResponse("Missing sensor or reference for calibration_point");
                     } else {
-                        bool ok = sensors.addCalibrationPoint(sensor, reference);
+                        float measured = NAN;  // Legacy path: force SensorModule to use last raw sample
+                        const char* operatorName = obj.containsKey("operator") ? obj["operator"].as<const char*>() : "";
+                        uint32_t timestamp = obj.containsKey("timestamp")
+                                                 ? obj["timestamp"].as<uint32_t>()
+                                                 : static_cast<uint32_t>(millis());
+
+                        bool ok = sensors.addCalibrationPoint(sensor, measured, reference);
                         if (ok) {
+                            uint8_t plateCount = 0;
+                            uint8_t rectalCount = 0;
+                            const CalibrationPoint* plateTable = sensors.getPlateCalibrationTable(plateCount);
+                            const CalibrationPoint* rectalTable = sensors.getRectalCalibrationTable(rectalCount);
+
+                            if (strcmp(sensor, "plate") == 0) {
+                                eeprom.savePlateCalibration(plateTable, plateCount, operatorName, timestamp);
+                            } else if (strcmp(sensor, "rectal") == 0) {
+                                eeprom.saveRectalCalibration(rectalTable, rectalCount, operatorName, timestamp);
+                            }
+                            eeprom.updateCalibrationMeta(sensor, operatorName,
+                                                         strcmp(sensor, "rectal") == 0 ? rectalCount : plateCount,
+                                                         timestamp);
                             sendResponse("Calibration point added");
+                            sendCalibrationTable(sensor);
                             String msg = "Added calibration point: ";
                             msg += sensor;
                             msg += " ref=";

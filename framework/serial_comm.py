@@ -1,36 +1,55 @@
-import serial
-import serial.tools.list_ports
 import json
 import threading
 import time
+from typing import Any, Dict, List, Optional
 
+import serial
+import serial.tools.list_ports
 from PySide6.QtCore import QObject, Signal
 
 
 class SerialManager(QObject):
+    """Qt-friendly serial manager with resilient threads and logging.
+
+    The class emits signals for every raw line sent/received and for parsed
+    JSON payloads. All worker loops are exception-safe so the GUI keeps
+    running even if the device sends malformed data or the port glitches.
+    """
+
     data_received = Signal(dict)
-    raw_line_received = Signal(str)
     raw_line_sent = Signal(str)
+    raw_line_received = Signal(str)
     failsafe_triggered = Signal()
 
-    def __init__(self, port=None, baud=115200, heartbeat_interval=2, failsafe_timeout=5):
+    def __init__(
+        self,
+        port: Optional[str] = None,
+        baud: int = 115200,
+        heartbeat_interval: float = 2.0,
+        failsafe_timeout: float = 5.0,
+    ) -> None:
         super().__init__()
         self.port = port
         self.baud = baud
         self.heartbeat_interval = heartbeat_interval
         self.failsafe_timeout = failsafe_timeout
 
-        self.ser = None
-
-        # States
+        self.ser: Optional[serial.Serial] = None
         self.keep_running = False
-        self.last_heartbeat_time = time.time()
-        self.last_data_time = None
+        self.last_rx_time: float = 0.0
         self.failsafe_triggered_flag = False
-        self.watchdog_armed = False
-        self.latest_data = None
-        self._on_data_received = None
+        self.latest_data: Optional[Dict[str, Any]] = None
 
+        self._on_data_received = None
+        self._read_thread: Optional[threading.Thread] = None
+        self._heartbeat_thread: Optional[threading.Thread] = None
+        self._failsafe_thread: Optional[threading.Thread] = None
+        self._ser_lock = threading.Lock()
+
+    # ------------------------------------------------------------------
+    # Optional callback helper retained for compatibility with legacy code
+    # that used ``serial_manager.on_data_received = ...``.
+    # ------------------------------------------------------------------
     @property
     def on_data_received(self):
         return self._on_data_received
@@ -49,193 +68,193 @@ class SerialManager(QObject):
             except TypeError as exc:
                 print(f"⚠️ Failed to connect on_data_received callback: {exc}")
 
-    def connect(self, port):
+    # ------------------------------------------------------------------
+    # Connection lifecycle
+    # ------------------------------------------------------------------
+    def list_ports(self) -> List[str]:
+        return [p.device for p in serial.tools.list_ports.comports()]
+
+    def connect(self, port: str) -> bool:
         self.port = port
         try:
-            self.ser = serial.Serial(self.port, self.baud, timeout=1)
-            print(f"✅ Connected to {self.port} at {self.baud} baud.")
+            self.ser = serial.Serial(self.port, self.baud, timeout=0.1)
+            print(f"✅ Connected to {self.port} at {self.baud} baud")
             try:
-                # Clear any stale bytes and release/reset DTR so Arduino can reboot cleanly.
                 self.ser.reset_input_buffer()
                 self.ser.reset_output_buffer()
                 try:
+                    # Toggle DTR to ensure Arduino reboot/bootloader reset where supported
                     self.ser.dtr = False
                     time.sleep(0.05)
                     self.ser.dtr = True
                 except Exception:
-                    # Not all adapters expose DTR; continue with a clean buffer flush.
                     pass
             except Exception as exc:
-                print(f"⚠️ Unable to prime serial port buffers: {exc}")
-        except serial.SerialException as e:
-            print(f"❌ Error opening serial port: {e}")
+                print(f"⚠️ Unable to prime serial buffers: {exc}")
+        except serial.SerialException as exc:
+            print(f"❌ Error opening serial port: {exc}")
             self.ser = None
             return False
 
-        # Start threads
         self.keep_running = True
-        # Reset watchdog timers so we don't immediately trigger failsafe
-        now = time.time()
-        self.last_heartbeat_time = now
-        self.last_data_time = None
+        self.last_rx_time = time.time()
         self.failsafe_triggered_flag = False
-        self.watchdog_armed = False
-        self.latest_data = None
 
-        # Allow the Arduino reboot time after opening the port before we start
-        # spamming it with heartbeats and status requests.
-        time.sleep(2)
+        self._read_thread = threading.Thread(
+            target=self._read_loop, name="SerialReadThread", daemon=True
+        )
+        self._heartbeat_thread = threading.Thread(
+            target=self._heartbeat_loop, name="HeartbeatThread", daemon=True
+        )
+        self._failsafe_thread = threading.Thread(
+            target=self._failsafe_monitor_loop, name="FailsafeThread", daemon=True
+        )
 
-        self.read_thread = threading.Thread(target=self.read_serial_loop, daemon=True)
-        self.heartbeat_thread = threading.Thread(target=self.send_heartbeat_loop, daemon=True)
-        self.read_thread.start()
-        self.heartbeat_thread.start()
-
-        # Kick off a status poll immediately to wake the firmware and prove link health.
-        self.sendCMD("get", "status")
+        self._read_thread.start()
+        self._heartbeat_thread.start()
+        self._failsafe_thread.start()
 
         return True
 
-    def disconnect(self):
+    def disconnect(self) -> None:
         self.keep_running = False
-        print("🛑 Disconnecting SerialManager...")
+        print("🛑 Disconnecting SerialManager…")
 
-        if hasattr(self, 'read_thread') and self.read_thread.is_alive():
-            self.read_thread.join(timeout=1)
-        if hasattr(self, 'heartbeat_thread') and self.heartbeat_thread.is_alive():
-            self.heartbeat_thread.join(timeout=1)
+        for thread in (self._read_thread, self._heartbeat_thread, self._failsafe_thread):
+            if thread and thread.is_alive():
+                thread.join(timeout=1)
 
         if self.ser and self.ser.is_open:
-            self.ser.close()
-            print("✅ Disconnected.")
-
-    def is_connected(self):
-        return self.ser is not None and self.ser.is_open
-
-    def list_ports(self):
-        ports = serial.tools.list_ports.comports()
-        return [port.device for port in ports]
-
-    def send(self, message):
-        if not self.is_connected():
-            print("❌ Serial port not available.")
-            return
-        try:
-            json_cmd = message + "\n"
             try:
-                self.raw_line_sent.emit(json_cmd.strip())
+                self.ser.close()
+            except Exception as exc:
+                print(f"⚠️ Error closing serial port: {exc}")
+        self.ser = None
+        print("✅ Disconnected")
+
+    def is_connected(self) -> bool:
+        return bool(self.ser and self.ser.is_open)
+
+    # ------------------------------------------------------------------
+    # Transmission helpers
+    # ------------------------------------------------------------------
+    def _write_line(self, line_str: str) -> None:
+        if not self.is_connected():
+            print("❌ Serial port not available")
+            return
+
+        # Ensure a single trailing newline
+        if not line_str.endswith("\n"):
+            line_to_send = line_str + "\n"
+        else:
+            line_to_send = line_str
+
+        try:
+            with self._ser_lock:
+                self.ser.write(line_to_send.encode("utf-8", errors="replace"))
+            try:
+                self.raw_line_sent.emit(line_to_send.rstrip("\n"))
             except Exception:
                 pass
-            self.ser.write(json_cmd.encode())
-            print(f"➡️ Sent: {json_cmd.strip()}")
-        except Exception as e:
-            print(f"⚠️ Failed to send: {e}")
+            print(f"➡️ Sent: {line_to_send.rstrip()}")
+        except Exception as exc:
+            print(f"⚠️ Failed to send line: {exc}")
 
-    def sendCMD(self, action, state):
-        cmd = {"CMD": {"action": action, "state": state}}
+    def send(self, message: str) -> None:
+        """Send a pre-formatted JSON string over the serial link."""
+        self._write_line(message)
 
-        # Any explicit failsafe clear command should reset the local watchdog flag
-        # so the UI reflects that all failsafe triggers have been cleared.
-        if (action == "failsafe" and state == "clear") or action == "failsafe_clear":
-            self.failsafe_triggered_flag = False
+    def sendCMD(self, action: str, state: Any, params: Optional[Dict[str, Any]] = None) -> None:
+        cmd: Dict[str, Any] = {"CMD": {"action": action, "state": state}}
+        if params is not None:
+            cmd["CMD"]["params"] = params
+        json_cmd = json.dumps(cmd, ensure_ascii=False)
+        self._write_line(json_cmd)
 
-        if action in {"add_calibration_point", "get_calibration_table", "calibration_point"}:
-            print(f"LOG: 📡 CMD {action} → {state}")
-        self.send(json.dumps(cmd))
-
-    def sendCMDParams(self, action: str, params: dict):
-        """Send CMD med params-felt (ikke state-streng)."""
-        cmd = {"CMD": {"action": action, "params": params}}
-        if action in {"add_calibration_point", "get_calibration_table", "calibration_point"}:
-            print(f"LOG: 📡 CMD {action} → {params}")
-        self.send(json.dumps(cmd))
-
-    def sendSET(self, variable, value):
+    def sendSET(self, variable: str, value: Any) -> None:
         cmd = {"SET": {"variable": variable, "value": value}}
-        self.send(json.dumps(cmd))
+        json_cmd = json.dumps(cmd, ensure_ascii=False)
+        self._write_line(json_cmd)
 
-    def read(self):
-        if not self.is_connected():
-            return None
-
-        if self.ser.in_waiting:
+    # ------------------------------------------------------------------
+    # Worker loops
+    # ------------------------------------------------------------------
+    def _read_loop(self) -> None:
+        while self.keep_running:
             try:
+                if not self.is_connected():
+                    time.sleep(0.1)
+                    continue
+
                 raw_bytes = self.ser.readline()
-                self.last_data_time = time.time()
-                try:
-                    line = raw_bytes.decode().strip()
-                except UnicodeDecodeError as e:
-                    print(f"⚠️ Error decoding serial data: {e}")
-                    line = raw_bytes.decode(errors="ignore").strip()
+                if not raw_bytes:
+                    continue
 
+                line = raw_bytes.decode("utf-8", errors="replace").strip()
                 if not line:
-                    return None
+                    continue
 
+                # Emit every raw line regardless of JSON validity
                 try:
                     self.raw_line_received.emit(line)
                 except Exception:
                     pass
-                print(f"⬇️ Received: {line}")
-                return line
-            except Exception as e:
-                print(f"⚠️ Error reading serial data: {e}")
-        return None
 
-    def read_serial_loop(self):
-        while self.keep_running:
-            line = self.read()
-            if line:
+                self.last_rx_time = time.time()
+                if self.failsafe_triggered_flag:
+                    print("ℹ️ RX resumed after timeout")
+                    self.failsafe_triggered_flag = False
+
                 try:
-                    data = json.loads(line)
-                    self.latest_data = data
-                    self._queue_payload(data)
-                except json.JSONDecodeError as e:
-                    print(f"⚠️ JSON decode error: {e} → Line: {line}")
+                    payload = json.loads(line)
+                    if isinstance(payload, dict):
+                        self.latest_data = payload
+                        self.data_received.emit(payload)
+                    else:
+                        print(f"⚠️ Ignoring non-dict JSON payload: {payload}")
+                except json.JSONDecodeError as exc:
+                    print(f"⚠️ JSON decode error: {exc}: {line}")
+                except Exception as exc:
+                    print(f"⚠️ Unexpected parse error: {exc}")
+            except Exception as exc:
+                print(f"⚠️ Serial read loop error: {exc}")
+                time.sleep(0.1)
 
-            now = time.time()
-
-            if (self.watchdog_armed and self.last_data_time is not None and
-                    now - self.last_data_time > self.failsafe_timeout and
-                    not self.failsafe_triggered_flag):
-                self.trigger_failsafe()
-
-            time.sleep(0.05)
-
-    def send_heartbeat_loop(self):
+    def _heartbeat_loop(self) -> None:
         while self.keep_running:
-            if self.is_connected():
-                self.sendCMD("heartbeat", "ping")
+            try:
+                if self.is_connected():
+                    self.sendCMD("heartbeat", "ping")
+            except Exception as exc:
+                print(f"⚠️ Heartbeat error: {exc}")
             time.sleep(self.heartbeat_interval)
 
-    def trigger_failsafe(self):
-        self.failsafe_triggered_flag = True
-        print("🚨 Failsafe triggered! No data received in timeout period.")
-        try:
-            self.failsafe_triggered.emit()
-        except Exception:
-            pass
-        self._queue_payload(
-            {
-                "event": "Failsafe triggered (PC watchdog timeout)",
-                "failsafe_active": True,
-                "failsafe_reason": "pc_watchdog",
-            },
-            reset_failsafe=False,
-        )
+    def _failsafe_monitor_loop(self) -> None:
+        while self.keep_running:
+            try:
+                now = time.time()
+                if (
+                    self.is_connected()
+                    and not self.failsafe_triggered_flag
+                    and (now - self.last_rx_time) > self.failsafe_timeout
+                ):
+                    self.failsafe_triggered_flag = True
+                    print("🚨 Failsafe triggered! No data received in timeout period.")
+                    try:
+                        self.failsafe_triggered.emit()
+                    except Exception:
+                        pass
+            except Exception as exc:
+                print(f"⚠️ Failsafe monitor error: {exc}")
+            time.sleep(0.25)
 
+    # ------------------------------------------------------------------
+    # Convenience helpers
+    # ------------------------------------------------------------------
     def readData(self):
+        """Retained for compatibility with older code paths."""
         return self.latest_data
 
-    def close(self):
+    def close(self) -> None:
         self.disconnect()
-        print("✅ SerialManager closed.")
-
-    def _queue_payload(self, payload, *, reset_failsafe=True):
-        if not isinstance(payload, dict):
-            print("⚠️ Ignoring non-dict payload")
-            return
-        self.last_data_time = time.time()
-        self.watchdog_armed = True
-        if reset_failsafe:
-            self.failsafe_triggered_flag = False
-        self.data_received.emit(dict(payload))
+        print("✅ SerialManager closed")

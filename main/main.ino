@@ -29,6 +29,7 @@ void setup() {
 
     // Start Sensorer, Pustemonitor, PID-regulering
     sensors.begin();
+    sensors.loadCalibration(eeprom);
     pressure.begin();
     pid.begin(eeprom);
 

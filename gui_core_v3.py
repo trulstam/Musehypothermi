@@ -2330,7 +2330,7 @@ class MatplotlibGraphWidget(QWidget):
 
 
 class CalibrationTab(QWidget):
-    """Tab for managing sensor calibration."""
+    """Calibration is disabled in the recovery configuration."""
 
     def __init__(self, main_window: "MainWindow"):
         super().__init__(main_window)
@@ -2346,73 +2346,15 @@ class CalibrationTab(QWidget):
         layout = QVBoxLayout()
         layout.setSpacing(12)
 
-        # Top: raw vs calibrated readouts
-        top_group = QGroupBox("📊 Sensorverdier")
-        top_form = QFormLayout()
-
-        self.plate_raw_field = QLineEdit("–")
-        self.plate_raw_field.setReadOnly(True)
-        self.plate_cal_field = QLineEdit("–")
-        self.plate_cal_field.setReadOnly(True)
-        self.rectal_raw_field = QLineEdit("–")
-        self.rectal_raw_field.setReadOnly(True)
-        self.rectal_cal_field = QLineEdit("–")
-        self.rectal_cal_field.setReadOnly(True)
-
-        top_form.addRow("Plate (rå):", self.plate_raw_field)
-        top_form.addRow("Plate (kalibrert):", self.plate_cal_field)
-        top_form.addRow("Rektal (rå):", self.rectal_raw_field)
-        top_form.addRow("Rektal (kalibrert):", self.rectal_cal_field)
-        top_group.setLayout(top_form)
-        layout.addWidget(top_group)
-
-        # Middle: calibration table
-        self.table = QTableWidget(0, 3)
-        self.table.setHorizontalHeaderLabels(["Sensor", "Measured °C", "Reference °C"])
-        self.table.horizontalHeader().setStretchLastSection(True)
-        layout.addWidget(self.table)
-
-        # Bottom controls
-        bottom_group = QGroupBox("⚙️ Kalibrering")
-        bottom_form = QFormLayout()
-
-        self.sensor_selector = QComboBox()
-        self.sensor_selector.addItems(["plate", "rectal"])
-        self.reference_input = QLineEdit()
-        self.reference_input.setPlaceholderText("22.75 eller 22,75")
-        self.operator_input = QLineEdit()
-
-        buttons_row = QHBoxLayout()
-        self.add_point_btn = QPushButton("Add Calibration Point")
-        self.commit_btn = QPushButton("Commit Calibration")
-        self.refresh_btn = QPushButton("Refresh Table")
-        self.export_btn = QPushButton("Export Calibration…")
-
-        buttons_row.addWidget(self.add_point_btn)
-        buttons_row.addWidget(self.commit_btn)
-        buttons_row.addWidget(self.refresh_btn)
-        buttons_row.addWidget(self.export_btn)
-
-        self.add_point_btn.clicked.connect(self._add_calibration_point)
-        self.commit_btn.clicked.connect(self._commit_calibration)
-        self.refresh_btn.clicked.connect(self.request_table)
-        self.export_btn.clicked.connect(self._export_calibration)
-
-        bottom_form.addRow("Sensor:", self.sensor_selector)
-        bottom_form.addRow("Reference (°C):", self.reference_input)
-        bottom_form.addRow("Operatør:", self.operator_input)
-        bottom_form.addRow(buttons_row)
-        bottom_group.setLayout(bottom_form)
-        layout.addWidget(bottom_group)
+        notice = QLabel(
+            "Kalibrering er deaktivert i denne stabile versjonen. "
+            "Sensorene bruker råmålinger med enkle offset-verdier, og GUI-en "
+            "sender derfor ingen kalibreringskommandoer."
+        )
+        notice.setWordWrap(True)
+        layout.addWidget(notice)
 
         self.setLayout(layout)
-
-    @staticmethod
-    def _format_temp(value: Any) -> str:
-        try:
-            return f"{float(value):.2f} °C"
-        except (TypeError, ValueError):
-            return "n/a"
 
     def update_raw_values(
         self,
@@ -2421,8 +2363,7 @@ class CalibrationTab(QWidget):
         rectal_raw: Optional[float],
         rectal_cal: Optional[float],
     ):
-        """Oppdater visning, men behold forrige verdi hvis felt mangler i meldingen."""
-
+        # Preserve latest readings for potential future display/logging
         if plate_raw is not None:
             self._last_plate_raw = plate_raw
         if plate_cal is not None:
@@ -2432,127 +2373,36 @@ class CalibrationTab(QWidget):
         if rectal_cal is not None:
             self._last_rectal_cal = rectal_cal
 
-        self.plate_raw_field.setText(self._format_temp(self._last_plate_raw))
-        self.plate_cal_field.setText(self._format_temp(self._last_plate_cal))
-        self.rectal_raw_field.setText(self._format_temp(self._last_rectal_raw))
-        self.rectal_cal_field.setText(self._format_temp(self._last_rectal_cal))
-
-    def _send_cmd(self, action: str, state: Any, params: Optional[Dict[str, Any]] = None):
-        if not self.main_window.connection_established:
-            self.main_window.log("❌ Not connected", "error")
-            return False
-
-        self.main_window.serial_manager.sendCMD(action, state, params=params)
-        self.main_window.event_logger.log_event(f"CMD: {action} → {state}")
-        self.main_window.log(f"📡 CMD {action} → {state}" + (f" params={params}" if params else ""), "command")
-        return True
-
     def _add_calibration_point(self):
-        sensor = self.sensor_selector.currentText()
-        raw_txt = self.reference_input.text().strip()
-        txt = raw_txt.replace(",", ".")
-        try:
-            reference = float(txt)
-        except ValueError:
-            self.main_window.log(f"❗ Ugyldig referansetemperatur: {raw_txt!r}", "error")
-            return
-
-        operator = self.operator_input.text().strip()
-
-        if not self.main_window.connection_established:
-            self.main_window.log("❌ Not connected", "error")
-            return
-
-        params = {
-            "sensor": sensor,
-            "measured": None,  # measured raw value is taken from controller cache if None
-            "reference": reference,
-            "operator": operator,
-            "timestamp": int(time.time()),
-        }
-        self.main_window.serial_manager.sendCMD("calibration", "add_point", params=params)
-        self.main_window.log(f"📡 CMD calibration add_point → {params}", "command")
-        self.request_table(sensor)
+        self.main_window.log(
+            "⚠️ Kalibrering er deaktivert i denne builden; ignorere forespørsel om å legge til punkt.",
+            "warning",
+        )
 
     def _commit_calibration(self):
-        sensor = self.sensor_selector.currentText()
-        operator = self.operator_input.text().strip()
-        if not operator:
-            QMessageBox.warning(self, "Mangler operatør", "Oppgi operatørnavn før lagring.")
-            return
-
-        self.main_window.log("💾 Points are saved immediately; refresh for latest table.", "info")
-        self.request_table(sensor)
+        self.main_window.log(
+            "⚠️ Kalibrering er deaktivert; ingen data å lagre.",
+            "warning",
+        )
 
     def _export_calibration(self):
-        if not self.calibration_entries:
-            QMessageBox.information(self, "Ingen data", "Ingen kalibreringspunkter å eksportere.")
-            return
-
-        filename, _ = QFileDialog.getSaveFileName(
-            self,
-            "Eksporter kalibrering",
-            "calibration.csv",
-            "CSV Files (*.csv)",
+        self.main_window.log(
+            "⚠️ Kalibrering er deaktivert; ingen data å eksportere.",
+            "warning",
         )
-        if not filename:
-            return
-
-        # Eksporter tabellen til CSV med semikolon-separator
-        try:
-            with open(filename, "w", newline="", encoding="utf-8") as csvfile:
-                writer = csv.writer(csvfile, delimiter=";")
-                writer.writerow(["sensor", "measured_C", "reference_C", "timestamp", "operator"])
-                for entry in self.calibration_entries:
-                    writer.writerow(
-                        [
-                            entry.get("sensor", ""),
-                            entry.get("measured_C", ""),
-                            entry.get("reference_C", ""),
-                            entry.get("timestamp", ""),
-                            entry.get("operator", ""),
-                        ]
-                    )
-            self.main_window.log(f"💾 Eksportert kalibrering til {os.path.basename(filename)}", "success")
-        except Exception as exc:
-            self.main_window.log(f"❌ Klarte ikke å eksportere kalibrering: {exc}", "error")
 
     def request_table(self, sensor: Optional[str] = None):
-        params = {"sensor": sensor} if sensor else None
-        self._send_cmd("calibration", "get_table", params)
+        self.main_window.log(
+            "ℹ️ Kalibreringstabeller støttes ikke i denne stabile versjonen.",
+            "info",
+        )
 
     def update_table(self, payload: Dict[str, Any]):
-        # Flater ut kalibreringsstrukturen fra kontrolleren til en liste pr. sensor
-        table_rows: List[Dict[str, Any]] = []
-        for sensor_name in ("plate", "rectal"):
-            sensor_data = payload.get(sensor_name, {})
-            meta = sensor_data.get("meta", {}) if isinstance(sensor_data, dict) else {}
-            timestamp = meta.get("timestamp")
-            operator = meta.get("operator")
-            points = sensor_data.get("points", []) if isinstance(sensor_data, dict) else []
-
-            for point in points:
-                table_rows.append(
-                    {
-                        "sensor": sensor_name,
-                        "measured_C": point.get("measured"),
-                        "reference_C": point.get("reference"),
-                        "timestamp": timestamp,
-                        "operator": operator,
-                    }
-                )
-
-        self.calibration_entries = table_rows
-        self.table.setRowCount(0)
-        self.table.setRowCount(len(table_rows))
-        for row, entry in enumerate(table_rows):
-            measured = entry.get("measured_C")
-            reference = entry.get("reference_C")
-            measured_str = "" if measured is None else f"{float(measured):.2f}"
-            reference_str = "" if reference is None else f"{float(reference):.2f}"
-            self.table.setItem(row, 0, QTableWidgetItem(str(entry.get("sensor", ""))))
-            self.table.setItem(row, 1, QTableWidgetItem(measured_str))
-            self.table.setItem(row, 2, QTableWidgetItem(reference_str))
+        self.calibration_entries = []
+        self.main_window.log(
+            "ℹ️ Ignorerer mottatt kalibreringsdata fordi funksjonen er deaktivert.",
+            "info",
+        )
 
 class MainWindow(QMainWindow):
     """Main application window"""

@@ -270,7 +270,8 @@ void CommAPI::handleCommand(const String &jsonString) {
 
             if ((sensor == "plate" && plateOk) || (sensor == "rectal" && rectalOk) ||
                 (sensor == "both" && (plateOk || rectalOk))) {
-                sendEvent("\ud83d\udee0 Calibration committed");
+                // Plain-text event to avoid non-ASCII characters that break compilation on some toolchains
+                sendEvent("Calibration committed");
                 sendResponse("Calibration commit successful");
             } else {
                 sendResponse("Calibration commit failed");

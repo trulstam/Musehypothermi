@@ -9,6 +9,9 @@
 #include "task_scheduler.h"
 #include "profile_manager.h"
 
+#include <math.h>
+#include <string.h>
+
 #include <ArduinoJson.h>
 
 extern AsymmetricPIDModule pid;  // CHANGED: was PIDModule pid;
@@ -265,6 +268,24 @@ void CommAPI::handleCommand(const String &jsonString) {
             } else {
                 sendResponse("Unknown equilibrium command");
             }
+        } else if (action == "calibration") {
+            if (state == "get_table_rectal") {
+                sendCalibrationTable(EEPROMManager::CALIB_SENSOR_RECTAL, "rectal");
+            } else if (state == "get_table_plate") {
+                sendCalibrationTable(EEPROMManager::CALIB_SENSOR_PLATE, "plate");
+            } else if (state == "clear_rectal") {
+                EEPROMManager::CalibrationData empty{};
+                eeprom.saveCalibrationData(EEPROMManager::CALIB_SENSOR_RECTAL, empty);
+                sensors.updateCalibrationData(EEPROMManager::CALIB_SENSOR_RECTAL, empty);
+                sendResponse("Rectal calibration cleared");
+            } else if (state == "clear_plate") {
+                EEPROMManager::CalibrationData empty{};
+                eeprom.saveCalibrationData(EEPROMManager::CALIB_SENSOR_PLATE, empty);
+                sensors.updateCalibrationData(EEPROMManager::CALIB_SENSOR_PLATE, empty);
+                sendResponse("Cooling plate calibration cleared");
+            } else {
+                sendResponse("Unknown calibration command");
+            }
         } else {
             sendResponse("Unknown CMD action");
         }
@@ -357,10 +378,86 @@ void CommAPI::handleCommand(const String &jsonString) {
             sendResponse(enable ? "Breath-stop check enabled" :
                                   "Breath-stop check disabled");
 
+        } else if (variable == "calibration_point") {
+            JsonObject value = set["value"];
+            if (value.isNull() || !value.containsKey("sensor") ||
+                !value.containsKey("raw") || !value.containsKey("ref") ||
+                !value.containsKey("user") || !value.containsKey("timestamp")) {
+                sendResponse("Invalid calibration payload");
+                return;
+            }
+
+            const char *sensorStr = value["sensor"];
+            float raw = value["raw"].as<float>();
+            float ref = value["ref"].as<float>();
+            const char *user = value["user"];
+            const char *timestamp = value["timestamp"];
+
+            uint8_t sensorId = EEPROMManager::CALIB_SENSOR_RECTAL;
+            if (strcmp(sensorStr, "plate") == 0 || strcmp(sensorStr, "cooling") == 0 ||
+                strcmp(sensorStr, "cooling_plate") == 0) {
+                sensorId = EEPROMManager::CALIB_SENSOR_PLATE;
+            }
+
+            EEPROMManager::CalibrationData data{};
+            eeprom.loadCalibrationData(sensorId, data);
+            if (data.pointCount > 5) {
+                data.pointCount = 0;
+            }
+
+            bool updatedExisting = false;
+            for (uint8_t i = 0; i < data.pointCount; ++i) {
+                if (fabs(data.points[i].rawValue - raw) <= 0.01f) {
+                    data.points[i].rawValue = roundf(raw * 100.0f) / 100.0f;
+                    data.points[i].refValue = roundf(ref * 100.0f) / 100.0f;
+                    updatedExisting = true;
+                    break;
+                }
+            }
+
+            if (!updatedExisting) {
+                if (data.pointCount >= 5) {
+                    sendResponse("Calibration table full");
+                    return;
+                }
+                data.points[data.pointCount].rawValue = roundf(raw * 100.0f) / 100.0f;
+                data.points[data.pointCount].refValue = roundf(ref * 100.0f) / 100.0f;
+                data.pointCount++;
+            }
+
+            strncpy(data.lastCalUser, user, sizeof(data.lastCalUser) - 1);
+            data.lastCalUser[sizeof(data.lastCalUser) - 1] = '\0';
+            strncpy(data.lastCalTimestamp, timestamp, sizeof(data.lastCalTimestamp) - 1);
+            data.lastCalTimestamp[sizeof(data.lastCalTimestamp) - 1] = '\0';
+
+            eeprom.saveCalibrationData(sensorId, data);
+            sensors.updateCalibrationData(sensorId, data);
+            sendResponse("Calibration point stored");
+
         } else {
             sendResponse("Unknown SET variable");
         }
     }
+}
+
+void CommAPI::sendCalibrationTable(uint8_t sensorId, const char *sensorName) {
+    StaticJsonDocument<1024> doc;
+    EEPROMManager::CalibrationData data{};
+    eeprom.loadCalibrationData(sensorId, data);
+
+    doc["calibration_sensor"] = sensorName;
+    doc["point_count"] = data.pointCount;
+    JsonArray arr = doc.createNestedArray("points");
+    for (uint8_t i = 0; i < data.pointCount && i < 5; ++i) {
+        JsonObject p = arr.createNestedObject();
+        p["raw"] = data.points[i].rawValue;
+        p["ref"] = data.points[i].refValue;
+    }
+    doc["last_cal_user"] = data.lastCalUser;
+    doc["last_cal_timestamp"] = data.lastCalTimestamp;
+
+    serializeJson(doc, *serial);
+    serial->println();
 }
 
 void CommAPI::parseProfile(JsonArray arr) {
@@ -438,7 +535,9 @@ void CommAPI::sendEvent(const String &eventMessage) {
 void CommAPI::sendData() {
     StaticJsonDocument<1024> doc;
     doc["cooling_plate_temp"] = sensors.getCoolingPlateTemp();
+    doc["cooling_plate_temp_raw"] = sensors.getRawCoolingPlateTemp();
     doc["anal_probe_temp"] = sensors.getRectalTemp();
+    doc["rectal_temp_raw"] = sensors.getRawRectalTemp();
     doc["pid_output"] = pid.getOutput();
     doc["breath_freq_bpm"] = pressure.getBreathRate();
     doc["failsafe_active"] = isFailsafeActive();
@@ -478,14 +577,16 @@ void CommAPI::sendFailsafeStatus() {
 }
 
 void CommAPI::sendStatus() {
-    StaticJsonDocument<512> doc;
+    StaticJsonDocument<768> doc;
     doc["failsafe_active"] = isFailsafeActive();
     doc["failsafe_reason"] = getFailsafeReason();
     doc["breath_check_enabled"] = isBreathCheckEnabled();
     doc["panic_active"] = isPanicActive();
     doc["panic_reason"] = getPanicReason();
     doc["cooling_plate_temp"] = sensors.getCoolingPlateTemp();
+    doc["cooling_plate_temp_raw"] = sensors.getRawCoolingPlateTemp();
     doc["anal_probe_temp"] = sensors.getRectalTemp();
+    doc["rectal_temp_raw"] = sensors.getRawRectalTemp();
     doc["pid_output"] = pid.getOutput();
     doc["breath_freq_bpm"] = pressure.getBreathRate();
     doc["plate_target_active"] = pid.getActivePlateTarget();

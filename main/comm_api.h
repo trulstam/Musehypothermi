@@ -4,6 +4,8 @@
 #include "arduino_platform.h"
 #include <ArduinoJson.h>
 
+#include "eeprom_manager.h"
+
 class CommAPI {
 public:
     CommAPI(Stream &serialStream);
@@ -26,6 +28,7 @@ public:
 private:
     void handleCommand(const String &jsonString);
     void parseProfile(JsonArray arr);
+    void sendCalibrationTable(uint8_t sensorId, const char *sensorName);
 
     Stream *serial;
     String buffer;

@@ -1,5 +1,7 @@
 #include "eeprom_manager.h"
 
+#include <string.h>
+
 namespace {
 constexpr float kDefaultHeatingKp = 2.0f;
 constexpr float kDefaultHeatingKi = 0.5f;
@@ -16,7 +18,7 @@ constexpr float kDefaultDeadband = 0.5f;
 constexpr float kDefaultSafetyMargin = 2.0f;
 constexpr int kDefaultDebugLevel = 0;
 constexpr int kDefaultFailsafeTimeout = 5000;
-}  // namespace
+}
 
 const uint32_t EEPROMManager::MAGIC_NUMBER = 0xDEADBEEF;
 
@@ -114,6 +116,38 @@ void EEPROMManager::loadSafetySettings(SafetySettings &settings) const {
     EEPROM.get(addrSafetyMargin, settings.safetyMargin);
 }
 
+void EEPROMManager::saveCalibrationData(uint8_t sensorId, const CalibrationData &data) {
+    int addr = (sensorId == CALIB_SENSOR_PLATE) ? addrPlateCalibration : addrRectalCalibration;
+    EEPROM.put(addr, data);
+}
+
+void EEPROMManager::loadCalibrationData(uint8_t sensorId, CalibrationData &data) const {
+    CalibrationData tmp{};
+    int addr = (sensorId == CALIB_SENSOR_PLATE) ? addrPlateCalibration : addrRectalCalibration;
+    EEPROM.get(addr, tmp);
+
+    // Basic validation: limit pointCount and ensure null-termination
+    if (tmp.pointCount > 5) {
+        tmp.pointCount = 0;
+    }
+    tmp.lastCalUser[15] = '\0';
+    tmp.lastCalTimestamp[19] = '\0';
+    data = tmp;
+}
+
+void EEPROMManager::factoryResetCalibration() {
+    CalibrationData empty{};
+    empty.pointCount = 0;
+    empty.lastCalUser[0] = '\0';
+    empty.lastCalTimestamp[0] = '\0';
+    for (uint8_t i = 0; i < 5; ++i) {
+        empty.points[i].rawValue = 0.0f;
+        empty.points[i].refValue = 0.0f;
+    }
+    saveCalibrationData(CALIB_SENSOR_RECTAL, empty);
+    saveCalibrationData(CALIB_SENSOR_PLATE, empty);
+}
+
 void EEPROMManager::saveDebugLevel(int debugLevel) {
     EEPROM.put(addrDebugLevel, debugLevel);
 }
@@ -145,6 +179,7 @@ bool EEPROMManager::factoryReset() {
 
     saveDebugLevel(kDefaultDebugLevel);
     saveFailsafeTimeout(kDefaultFailsafeTimeout);
+    factoryResetCalibration();
 
     saveMagicNumber();
     return true;

@@ -23,6 +23,23 @@ public:
         float safetyMargin;
     };
 
+    struct CalibrationPoint {
+        float rawValue;
+        float refValue;
+    };
+
+    struct CalibrationData {
+        uint8_t pointCount;
+        CalibrationPoint points[5];
+        char lastCalUser[16];
+        char lastCalTimestamp[20];
+    };
+
+    enum CalibrationSensorId : uint8_t {
+        CALIB_SENSOR_RECTAL = 0,
+        CALIB_SENSOR_PLATE = 1,
+    };
+
     bool begin();
 
     // Legacy single PID helpers (mirror original API)
@@ -52,6 +69,11 @@ public:
     // Safety configuration (asymmetric controller)
     void saveSafetySettings(const SafetySettings &settings);
     void loadSafetySettings(SafetySettings &settings) const;
+
+    // Calibration data
+    void saveCalibrationData(uint8_t sensorId, const CalibrationData &data);
+    void loadCalibrationData(uint8_t sensorId, CalibrationData &data) const;
+    void factoryResetCalibration();
 
     // Inline convenience wrappers operating on the composite safety blob
     inline void saveCoolingRateLimit(float rate);
@@ -86,6 +108,8 @@ private:
     static const int addrCoolingRateLimit = addrCoolingKd + sizeof(float);
     static const int addrDeadband = addrCoolingRateLimit + sizeof(float);
     static const int addrSafetyMargin = addrDeadband + sizeof(float);
+    static const int addrRectalCalibration = addrSafetyMargin + sizeof(float);
+    static const int addrPlateCalibration = addrRectalCalibration + sizeof(CalibrationData);
 
     static const uint32_t MAGIC_NUMBER;
 

@@ -172,9 +172,22 @@ float SensorModule::applyCalibration(float rawTemp, const EEPROMManager::Calibra
 }
 
 void SensorModule::updateCalibrationData(uint8_t sensorId, const EEPROMManager::CalibrationData &data) {
+  EEPROMManager::CalibrationData sorted = data;
+  if (sorted.pointCount > 1 && sorted.pointCount <= 5) {
+    for (uint8_t i = 1; i < sorted.pointCount; ++i) {
+      EEPROMManager::CalibrationPoint key = sorted.points[i];
+      int j = i - 1;
+      while (j >= 0 && sorted.points[j].rawValue > key.rawValue) {
+        sorted.points[j + 1] = sorted.points[j];
+        --j;
+      }
+      sorted.points[j + 1] = key;
+    }
+  }
+
   if (sensorId == EEPROMManager::CALIB_SENSOR_PLATE) {
-    plateCalibration = data;
+    plateCalibration = sorted;
   } else {
-    rectalCalibration = data;
+    rectalCalibration = sorted;
   }
 }

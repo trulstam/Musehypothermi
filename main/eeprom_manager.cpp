@@ -116,9 +116,32 @@ void EEPROMManager::loadSafetySettings(SafetySettings &settings) const {
     EEPROM.get(addrSafetyMargin, settings.safetyMargin);
 }
 
+namespace {
+void sortCalibrationPoints(EEPROMManager::CalibrationData &data) {
+    if (data.pointCount <= 1 || data.pointCount > 5) {
+        return;
+    }
+
+    for (uint8_t i = 1; i < data.pointCount; ++i) {
+        EEPROMManager::CalibrationPoint key = data.points[i];
+        int j = i - 1;
+        while (j >= 0 && data.points[j].rawValue > key.rawValue) {
+            data.points[j + 1] = data.points[j];
+            --j;
+        }
+        data.points[j + 1] = key;
+    }
+}
+}
+
 void EEPROMManager::saveCalibrationData(uint8_t sensorId, const CalibrationData &data) {
+    CalibrationData sorted = data;
+    if (sorted.pointCount > 5) {
+        sorted.pointCount = 5;
+    }
+    sortCalibrationPoints(sorted);
     int addr = (sensorId == CALIB_SENSOR_PLATE) ? addrPlateCalibration : addrRectalCalibration;
-    EEPROM.put(addr, data);
+    EEPROM.put(addr, sorted);
 }
 
 void EEPROMManager::loadCalibrationData(uint8_t sensorId, CalibrationData &data) const {
@@ -132,6 +155,7 @@ void EEPROMManager::loadCalibrationData(uint8_t sensorId, CalibrationData &data)
     }
     tmp.lastCalUser[15] = '\0';
     tmp.lastCalTimestamp[19] = '\0';
+    sortCalibrationPoints(tmp);
     data = tmp;
 }
 

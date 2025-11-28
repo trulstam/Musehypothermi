@@ -28,7 +28,7 @@ void setup() {
     bool resetOccurred = eeprom.begin();
 
     // Start Sensorer, Pustemonitor, PID-regulering
-    sensors.begin();
+    sensors.begin(eeprom);
     pressure.begin();
     pid.begin(eeprom);
 

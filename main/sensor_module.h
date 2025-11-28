@@ -19,8 +19,6 @@ class SensorModule {
     double getRawCoolingPlateTemp();
     double getRawRectalTemp();
 
-    void setCoolingCalibration(double offset);
-    void setRectalCalibration(double offset);
     void setSimulatedTemps(double plate, double rectal);
     void updateCalibrationData(uint8_t sensorId, const EEPROMManager::CalibrationData &data);
 
@@ -30,9 +28,6 @@ class SensorModule {
 
     EEPROMManager::CalibrationData rectalCalibration;
     EEPROMManager::CalibrationData plateCalibration;
-
-    double calibrationOffsetCooling;
-    double calibrationOffsetRectal;
 
     double cachedCoolingPlateTemp;
     double cachedRectalTemp;

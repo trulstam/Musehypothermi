@@ -22,8 +22,7 @@ const double rectalCoupling = 0.02;
 #endif
 
 SensorModule::SensorModule()
-  : rectalCalibration{}, plateCalibration{}, calibrationOffsetCooling(0.0),
-    calibrationOffsetRectal(0.0), cachedCoolingPlateTemp(0.0),
+  : rectalCalibration{}, plateCalibration{}, cachedCoolingPlateTemp(0.0),
     cachedRectalTemp(0.0), cachedRawCoolingPlateTemp(0.0),
     cachedRawRectalTemp(0.0) {}
 
@@ -67,14 +66,18 @@ void SensorModule::update() {
   cachedRawCoolingPlateTemp = coolingPlateTemp + noise;
   cachedRawRectalTemp = rectalTemp + noise;
 #else
-  cachedRawCoolingPlateTemp = convertRawToTemp(analogRead(COOLING_PLATE_PIN));
-  cachedRawRectalTemp = convertRawToTemp(analogRead(RECTAL_PROBE_PIN));
+  int rawCooling = analogRead(COOLING_PLATE_PIN);
+  int rawRectal = analogRead(RECTAL_PROBE_PIN);
+
+  double rawCoolingTemp = convertRawToTemp(rawCooling);
+  double rawRectalTemp = convertRawToTemp(rawRectal);
+
+  cachedRawCoolingPlateTemp = rawCoolingTemp;
+  cachedRawRectalTemp = rawRectalTemp;
 #endif
 
-  cachedCoolingPlateTemp = applyCalibration(cachedRawCoolingPlateTemp + calibrationOffsetCooling,
-                                            plateCalibration);
-  cachedRectalTemp = applyCalibration(cachedRawRectalTemp + calibrationOffsetRectal,
-                                      rectalCalibration);
+  cachedCoolingPlateTemp = applyCalibration(cachedRawCoolingPlateTemp, plateCalibration);
+  cachedRectalTemp = applyCalibration(cachedRawRectalTemp, rectalCalibration);
 }
 
 double SensorModule::getCoolingPlateTemp() {
@@ -91,14 +94,6 @@ double SensorModule::getRawCoolingPlateTemp() {
 
 double SensorModule::getRawRectalTemp() {
   return cachedRawRectalTemp;
-}
-
-void SensorModule::setCoolingCalibration(double offset) {
-  calibrationOffsetCooling = offset;
-}
-
-void SensorModule::setRectalCalibration(double offset) {
-  calibrationOffsetRectal = offset;
 }
 
 void SensorModule::setSimulatedTemps(double plate, double rectal) {

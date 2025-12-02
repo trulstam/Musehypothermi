@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
     QProgressBar, QCheckBox, QSpinBox, QGridLayout,
     QTabWidget, QScrollArea, QFrame, QDialog,
     QDialogButtonBox, QDoubleSpinBox, QStackedWidget,
-    QListWidget
+    QListWidget, QTableWidget, QTableWidgetItem
 )
 from PySide6.QtCore import QTimer, Qt, Signal, QSignalBlocker
 from PySide6.QtGui import QFont, QPalette, QColor, QTextCursor
@@ -2405,6 +2405,11 @@ class MainWindow(QMainWindow):
         self.serial_monitor_max_lines = 500
         self.disable_breath_check: bool = False
         self.breath_suppression_notified: bool = False
+        self.calibration_tables = {"rectal": [], "plate": []}
+        self.calibration_raw_values = {"rectal": None, "plate": None}
+        self.calibration_calibrated_values = {"rectal": None, "plate": None}
+        self.calibration_poll_timer: Optional[QTimer] = None
+        self.operator_name: str = os.getenv("USER", "GUI")
 
         print("✅ Data structures initialized")
 
@@ -2419,6 +2424,7 @@ class MainWindow(QMainWindow):
             
             # Tab widget
             self.tab_widget = QTabWidget()
+            self.tab_widget.currentChanged.connect(self.on_tab_changed)
             main_layout.addWidget(self.tab_widget)
             
             # Create tabs
@@ -2426,6 +2432,7 @@ class MainWindow(QMainWindow):
             self.create_monitoring_tab()
             self.create_autotune_tab()
             self.create_profile_tab()
+            self.create_calibration_tab()
             self.create_serial_monitor_tab()
             
             # ============================================================================
@@ -3047,6 +3054,294 @@ class MainWindow(QMainWindow):
         self.tab_widget.addTab(profile_widget, "📄 Profile")
         self._update_profile_button_states()
 
+    def create_calibration_tab(self):
+        """Create calibration tab for sensor temperature calibration."""
+
+        calibration_widget = QWidget()
+        layout = QVBoxLayout()
+        calibration_widget.setLayout(layout)
+
+        control_group = QGroupBox("Temperaturkalibrering")
+        control_layout = QGridLayout()
+
+        self.calibrationSensorSelector = QComboBox()
+        self.calibrationSensorSelector.addItem("", None)
+        self.calibrationSensorSelector.addItem("rektal", "rectal")
+        self.calibrationSensorSelector.addItem("plate", "plate")
+        self.calibrationSensorSelector.currentIndexChanged.connect(
+            self.on_calibration_sensor_changed
+        )
+
+        self.calibrationRawValue = QLabel("–")
+        self.calibrationRawValue.setStyleSheet("font-weight: bold;")
+        self.calibrationCalibratedValue = QLabel("–")
+        self.calibrationCalibratedValue.setStyleSheet("font-weight: bold;")
+
+        self.calibrationReferenceInput = QDoubleSpinBox()
+        self.calibrationReferenceInput.setRange(15.0, 45.0)
+        self.calibrationReferenceInput.setDecimals(2)
+        self.calibrationReferenceInput.setSingleStep(0.1)
+        self.calibrationReferenceInput.setSuffix(" °C")
+
+        self.addCalibrationPointButton = QPushButton("➕ Legg til punkt")
+        self.addCalibrationPointButton.clicked.connect(self.add_calibration_point)
+
+        self.clearCalibrationPointsButton = QPushButton("🧹 Slett punkter")
+        self.clearCalibrationPointsButton.clicked.connect(
+            self.clear_calibration_points
+        )
+
+        self.exportCalibrationButton = QPushButton("📤 Eksporter rapport")
+        self.exportCalibrationButton.clicked.connect(self.export_calibration_csv)
+
+        control_layout.addWidget(QLabel("Sensor"), 0, 0)
+        control_layout.addWidget(self.calibrationSensorSelector, 0, 1)
+        control_layout.addWidget(QLabel("Råverdi"), 1, 0)
+        control_layout.addWidget(self.calibrationRawValue, 1, 1)
+        control_layout.addWidget(QLabel("Kalibrert"), 2, 0)
+        control_layout.addWidget(self.calibrationCalibratedValue, 2, 1)
+        control_layout.addWidget(QLabel("Referanse"), 3, 0)
+        control_layout.addWidget(self.calibrationReferenceInput, 3, 1)
+        control_layout.addWidget(self.addCalibrationPointButton, 4, 0, 1, 2)
+        control_layout.addWidget(self.clearCalibrationPointsButton, 5, 0, 1, 2)
+        control_layout.addWidget(self.exportCalibrationButton, 6, 0, 1, 2)
+
+        control_layout.setColumnStretch(1, 1)
+        control_group.setLayout(control_layout)
+
+        self.calibrationTable = QTableWidget()
+        self.calibrationTable.setColumnCount(3)
+        self.calibrationTable.setHorizontalHeaderLabels(["#", "Raw", "Referanse"])
+        self.calibrationTable.horizontalHeader().setStretchLastSection(True)
+        self.calibrationTable.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.calibrationTable.setSelectionBehavior(QTableWidget.SelectRows)
+
+        layout.addWidget(control_group)
+        layout.addWidget(self.calibrationTable)
+        layout.addStretch()
+
+        self.calibration_tab_index = self.tab_widget.addTab(
+            calibration_widget, "🌡️ Temperaturkalibrering"
+        )
+
+        # Poll calibration status only when the tab is active
+        self.calibration_poll_timer = QTimer()
+        self.calibration_poll_timer.setInterval(5000)
+        self.calibration_poll_timer.timeout.connect(self.poll_calibration_status)
+
+    def get_selected_calibration_sensor(self) -> Optional[str]:
+        return self.calibrationSensorSelector.currentData()
+
+    def on_calibration_sensor_changed(self):
+        self.refresh_calibration_table()
+        self.poll_calibration_status()
+        self.update_calibration_polling()
+
+    def on_tab_changed(self, index: int):
+        self.update_calibration_polling()
+        if index == getattr(self, "calibration_tab_index", -1):
+            self.poll_calibration_status()
+
+    def poll_calibration_status(self):
+        try:
+            if not self.serial_manager.is_connected():
+                return
+
+            cmd = {"CMD": {"action": "get", "state": "calibration"}}
+            sensor = self.get_selected_calibration_sensor()
+            if sensor:
+                cmd["CMD"]["sensor"] = sensor
+
+            self.serial_manager.send(json.dumps(cmd))
+        except Exception as exc:
+            self.log(f"⚠️ Kalibreringsspørring feilet: {exc}", "warning")
+            self.statusBar().showMessage(str(exc))
+
+    def update_calibration_polling(self):
+        if not self.calibration_poll_timer:
+            return
+
+        should_poll = (
+            self.connection_established
+            and self.tab_widget.currentIndex() == getattr(self, "calibration_tab_index", -1)
+        )
+
+        if should_poll and not self.calibration_poll_timer.isActive():
+            self.calibration_poll_timer.start()
+        elif not should_poll and self.calibration_poll_timer.isActive():
+            self.calibration_poll_timer.stop()
+
+    def add_calibration_point(self):
+        sensor = self.get_selected_calibration_sensor()
+        if not sensor:
+            self.log("❌ Velg sensor før du legger til et punkt", "error")
+            self.statusBar().showMessage("Sensor ikke valgt")
+            return
+
+        if not self.connection_established:
+            self.log("❌ Ikke tilkoblet", "error")
+            self.statusBar().showMessage("Ingen serielt forbindelse")
+            return
+
+        actual = float(self.calibrationReferenceInput.value())
+        if actual < 15 or actual > 45:
+            self.log("⚠️ Referanseverdi må være mellom 15 og 45 °C", "warning")
+            self.statusBar().showMessage("Ugyldig referanse")
+            return
+
+        try:
+            self.serial_manager.send_calibration_command(
+                sensor=sensor, action="add_point", actual=actual
+            )
+            self.log(
+                f"📡 Ber om nytt kalibreringspunkt for {sensor} @ {actual:.2f} °C",
+                "command",
+            )
+        except Exception as exc:
+            self.log(f"❌ Kunne ikke sende kalibreringskommando: {exc}", "error")
+            self.statusBar().showMessage(str(exc))
+
+    def clear_calibration_points(self):
+        sensor = self.get_selected_calibration_sensor()
+        if not sensor:
+            self.log("❌ Velg sensor før du sletter punkter", "error")
+            self.statusBar().showMessage("Sensor ikke valgt")
+            return
+
+        if not self.connection_established:
+            self.log("❌ Ikke tilkoblet", "error")
+            self.statusBar().showMessage("Ingen serielt forbindelse")
+            return
+
+        confirm = QMessageBox.question(
+            self,
+            "Bekreft sletting",
+            "Vil du slette alle kalibreringspunkter for valgt sensor?",
+        )
+        if confirm != QMessageBox.Yes:
+            return
+
+        try:
+            self.serial_manager.send_calibration_command(
+                sensor=sensor, action="clear"
+            )
+            self.log(f"📡 Ber om sletting av punkter for {sensor}", "command")
+        except Exception as exc:
+            self.log(f"❌ Kunne ikke slette punkter: {exc}", "error")
+            self.statusBar().showMessage(str(exc))
+
+    def export_calibration_csv(self):
+        sensor = self.get_selected_calibration_sensor()
+        if not sensor:
+            self.log("❌ Velg sensor før eksport", "error")
+            self.statusBar().showMessage("Sensor ikke valgt")
+            return
+
+        points = self.calibration_tables.get(sensor) or []
+        if not points:
+            self.log("⚠️ Ingen punkter å eksportere", "warning")
+            self.statusBar().showMessage("Ingen punkter")
+            return
+
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        os.makedirs("logs", exist_ok=True)
+        filename = f"logs/calibration_{sensor}_{timestamp}.csv"
+
+        try:
+            with open(filename, "w", newline="") as csvfile:
+                writer = csv.writer(csvfile)
+                writer.writerow(["#", "Raw", "Referanse"])
+                for idx, point in enumerate(points, start=1):
+                    writer.writerow([idx, point.get("raw", ""), point.get("actual", "")])
+
+            self.log(f"✅ Rapport eksportert: {filename}", "success")
+            self.statusBar().showMessage(f"Eksportert til {filename}")
+        except Exception as exc:
+            self.log(f"❌ Klarte ikke å eksportere rapport: {exc}", "error")
+            self.statusBar().showMessage(str(exc))
+
+    def refresh_calibration_table(self):
+        sensor = self.get_selected_calibration_sensor()
+        points = self.calibration_tables.get(sensor, []) if sensor else []
+        self.calibrationTable.setRowCount(len(points))
+        for row, point in enumerate(points):
+            self.calibrationTable.setItem(row, 0, QTableWidgetItem(str(row + 1)))
+            self.calibrationTable.setItem(
+                row, 1, QTableWidgetItem(f"{float(point.get('raw', 0.0)):.2f}")
+            )
+            self.calibrationTable.setItem(
+                row,
+                2,
+                QTableWidgetItem(f"{float(point.get('actual', 0.0)):.2f}"),
+            )
+
+    def update_calibration_values(self, sensor: str, raw: Optional[float], calibrated: Optional[float]):
+        if sensor not in self.calibration_raw_values:
+            return
+
+        self.calibration_raw_values[sensor] = raw
+        self.calibration_calibrated_values[sensor] = calibrated
+
+        if sensor == self.get_selected_calibration_sensor():
+            self.calibrationRawValue.setText("–" if raw is None else f"{raw:.2f}")
+            if calibrated is None:
+                self.calibrationCalibratedValue.setText("–")
+            else:
+                self.calibrationCalibratedValue.setText(f"{calibrated:.2f} °C")
+
+    def handle_calibration_payload(self, data: Dict[str, Any]):
+        response = data.get("response")
+        sensor = data.get("sensor") or self.get_selected_calibration_sensor()
+
+        if sensor not in {"rectal", "plate"}:
+            sensor = None
+
+        target_sensor = sensor or self.get_selected_calibration_sensor()
+        if target_sensor not in {"rectal", "plate"}:
+            target_sensor = None
+
+        sensor_label = sensor or target_sensor or "unknown"
+
+        if target_sensor and ("raw" in data or "calibrated" in data):
+            self.update_calibration_values(
+                target_sensor, data.get("raw"), data.get("calibrated")
+            )
+
+        if response == "calibration_point_added":
+            raw_val = data.get("raw")
+            actual_val = data.get("actual")
+            effective_sensor = sensor or target_sensor
+            if effective_sensor:
+                if raw_val is not None and actual_val is not None:
+                    self.calibration_tables.setdefault(effective_sensor, []).append(
+                        {"raw": raw_val, "actual": actual_val}
+                    )
+                    self.refresh_calibration_table()
+            timestamp = time.strftime("%Y-%m-%d %H:%M")
+            self.event_logger.log_event(
+                f"CALIBRATION: {sensor_label} → raw={raw_val}, ref={actual_val} by {self.operator_name} at {timestamp}"
+            )
+            self.log("✅ Kalibreringspunkt lagt til", "success")
+
+        elif response == "calibration_cleared":
+            effective_sensor = sensor or target_sensor
+            if effective_sensor:
+                self.calibration_tables[effective_sensor] = []
+                self.refresh_calibration_table()
+            timestamp = time.strftime("%Y-%m-%d %H:%M")
+            self.event_logger.log_event(
+                f"CALIBRATION CLEARED: {sensor_label} by {self.operator_name} at {timestamp}"
+            )
+            self.log("🧹 Kalibreringspunkter slettet", "info")
+
+        elif response == "calibration_table":
+            points = data.get("points") or data.get("table") or []
+            effective_sensor = sensor or target_sensor
+            if effective_sensor:
+                self.calibration_tables[effective_sensor] = points
+                self.refresh_calibration_table()
+
+
     def create_serial_monitor_tab(self):
         """Create serial monitor tab to display raw TX/RX lines."""
 
@@ -3307,6 +3602,8 @@ class MainWindow(QMainWindow):
             # ============================================================================
             if hasattr(self, 'asymmetric_controls'):
                 self.asymmetric_controls.update_status(data)
+
+            self.handle_calibration_payload(data)
 
             if hasattr(self, 'autotune_wizard'):
                 self.autotune_wizard.receive_data(data)
@@ -4791,6 +5088,7 @@ class MainWindow(QMainWindow):
 
                 self.log("🔌 Disconnected", "info")
                 self.event_logger.log_event("Disconnected")
+                self.update_calibration_polling()
 
             else:
                 # Connect
@@ -4807,6 +5105,7 @@ class MainWindow(QMainWindow):
 
                     self.log(f"🔌 Connected to {port}", "success")
                     self.event_logger.log_event(f"Connected to {port}")
+                    self.update_calibration_polling()
 
                     if self.disable_breath_check:
                         try:
@@ -4916,7 +5215,9 @@ class MainWindow(QMainWindow):
                 self.status_timer.stop()
             if hasattr(self, 'sync_timer'):
                 self.sync_timer.stop()
-            
+            if self.calibration_poll_timer:
+                self.calibration_poll_timer.stop()
+
             # Disconnect serial
             if self.serial_manager.is_connected():
                 self.serial_manager.disconnect()

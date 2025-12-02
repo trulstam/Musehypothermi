@@ -3,6 +3,7 @@ import serial.tools.list_ports
 import json
 import threading
 import time
+from typing import Optional
 
 from PySide6.QtCore import QObject, Signal
 
@@ -117,6 +118,17 @@ class SerialManager(QObject):
             self.failsafe_triggered_flag = False
 
         self.send(json.dumps(cmd))
+
+    def send_calibration_command(
+        self, sensor: str, action: str, actual: Optional[float] = None
+    ):
+        """Send calibration-related commands following the serial protocol."""
+
+        payload = {"CMD": {"action": "calibrate", "state": action, "sensor": sensor}}
+        if actual is not None:
+            payload["CMD"]["actual"] = actual
+
+        self.send(json.dumps(payload))
 
     def sendSET(self, variable, value):
         cmd = {"SET": {"variable": variable, "value": value}}

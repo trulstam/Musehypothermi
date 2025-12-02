@@ -27,6 +27,7 @@ public:
 
 private:
     void handleCommand(const String &jsonString);
+    void handleCalibrationCommand(JsonObject cmd);
     void parseProfile(JsonArray arr);
     void sendCalibrationTable(uint8_t sensorId, const char *sensorName);
     bool parseSensor(const String &sensorValue, EEPROMManager::SensorType &sensorType,

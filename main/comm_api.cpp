@@ -276,12 +276,14 @@ void CommAPI::handleCommand(const String &jsonString) {
             } else if (state == "clear_rectal") {
                 EEPROMManager::CalibrationData empty{};
                 eeprom.saveCalibrationData(EEPROMManager::CALIB_SENSOR_RECTAL, empty);
-                sensors.updateCalibrationData(EEPROMManager::CALIB_SENSOR_RECTAL, empty);
+                sensors.updateCalibrationData(EEPROMManager::SensorType::Rectal, nullptr,
+                                             nullptr, 0);
                 sendResponse("Rectal calibration cleared");
             } else if (state == "clear_plate") {
                 EEPROMManager::CalibrationData empty{};
                 eeprom.saveCalibrationData(EEPROMManager::CALIB_SENSOR_PLATE, empty);
-                sensors.updateCalibrationData(EEPROMManager::CALIB_SENSOR_PLATE, empty);
+                sensors.updateCalibrationData(EEPROMManager::SensorType::Plate, nullptr,
+                                             nullptr, 0);
                 sendResponse("Cooling plate calibration cleared");
             } else {
                 sendResponse("Unknown calibration command");
@@ -431,7 +433,18 @@ void CommAPI::handleCommand(const String &jsonString) {
             data.lastCalTimestamp[sizeof(data.lastCalTimestamp) - 1] = '\0';
 
             eeprom.saveCalibrationData(sensorId, data);
-            sensors.updateCalibrationData(sensorId, data);
+            float rawPoints[5] = {};
+            float refPoints[5] = {};
+            for (uint8_t i = 0; i < data.pointCount && i < 5; ++i) {
+                rawPoints[i] = data.points[i].rawValue;
+                refPoints[i] = data.points[i].refValue;
+            }
+
+            sensors.updateCalibrationData(
+                sensorId == EEPROMManager::CALIB_SENSOR_PLATE
+                    ? EEPROMManager::SensorType::Plate
+                    : EEPROMManager::SensorType::Rectal,
+                rawPoints, refPoints, data.pointCount);
             sendResponse("Calibration point stored");
 
         } else {

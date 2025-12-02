@@ -22,15 +22,23 @@ const double rectalCoupling = 0.02;
 #endif
 
 SensorModule::SensorModule()
-  : rectalCalibration{}, plateCalibration{}, cachedCoolingPlateTemp(0.0),
-    cachedRectalTemp(0.0), cachedRawCoolingPlateTemp(0.0),
-    cachedRawRectalTemp(0.0) {}
+  : cachedCoolingPlateTemp(0.0), cachedRectalTemp(0.0),
+    cachedRawCoolingPlateTemp(0.0), cachedRawRectalTemp(0.0) {}
 
 void SensorModule::begin(EEPROMManager &eepromManager) {
   analogReadResolution(14);
   analogReference(AR_EXTERNAL);  // Bruk AR_DEFAULT hvis ingen ekstern referanse
-  eepromManager.loadCalibrationData(EEPROMManager::CALIB_SENSOR_PLATE, plateCalibration);
-  eepromManager.loadCalibrationData(EEPROMManager::CALIB_SENSOR_RECTAL, rectalCalibration);
+  float raw[5] = {};
+  float actual[5] = {};
+  int count = 0;
+
+  eepromManager.loadCalibrationPoints(EEPROMManager::SensorType::Plate, raw, actual,
+                                      count);
+  updateCalibrationData(EEPROMManager::SensorType::Plate, raw, actual, count);
+
+  eepromManager.loadCalibrationPoints(EEPROMManager::SensorType::Rectal, raw, actual,
+                                      count);
+  updateCalibrationData(EEPROMManager::SensorType::Rectal, raw, actual, count);
 }
 
 void SensorModule::update() {
@@ -76,8 +84,8 @@ void SensorModule::update() {
   cachedRawRectalTemp = rawRectalTemp;
 #endif
 
-  cachedCoolingPlateTemp = applyCalibration(cachedRawCoolingPlateTemp, plateCalibration);
-  cachedRectalTemp = applyCalibration(cachedRawRectalTemp, rectalCalibration);
+  cachedCoolingPlateTemp = applyCalibration(plateTable, cachedRawCoolingPlateTemp);
+  cachedRectalTemp = applyCalibration(rectalTable, cachedRawRectalTemp);
 }
 
 double SensorModule::getCoolingPlateTemp() {
@@ -115,79 +123,95 @@ double SensorModule::convertRawToTemp(int raw) {
   return tempK - 273.15;  // Kelvin to Celsius
 }
 
-float SensorModule::applyCalibration(float rawTemp, const EEPROMManager::CalibrationData &data) {
-  if (data.pointCount == 0) {
-    return rawTemp;
+float SensorModule::applyCalibration(const CalibrationTable &table, float rawValue) {
+  if (table.count == 0) {
+    return rawValue;
   }
 
-  if (data.pointCount == 1) {
-    float delta = data.points[0].refValue - data.points[0].rawValue;
-    return rawTemp + delta;
+  if (table.count == 1) {
+    float offset = table.actual[0] - table.raw[0];
+    return rawValue + offset;
   }
 
-  EEPROMManager::CalibrationPoint sortedPoints[5];
-  for (uint8_t i = 0; i < data.pointCount && i < 5; ++i) {
-    sortedPoints[i] = data.points[i];
-  }
-
-  // Simple insertion sort by rawValue
-  for (uint8_t i = 1; i < data.pointCount; ++i) {
-    EEPROMManager::CalibrationPoint key = sortedPoints[i];
-    int j = i - 1;
-    while (j >= 0 && sortedPoints[j].rawValue > key.rawValue) {
-      sortedPoints[j + 1] = sortedPoints[j];
-      --j;
-    }
-    sortedPoints[j + 1] = key;
-  }
-
-  auto interpolate = [](float raw, const EEPROMManager::CalibrationPoint &p1,
-                        const EEPROMManager::CalibrationPoint &p2) {
-    float denom = (p2.rawValue - p1.rawValue);
+  auto interpolate = [](float raw, float x1, float y1, float x2, float y2) {
+    float denom = (x2 - x1);
     if (denom == 0.0f) {
-      return p1.refValue;  // Avoid divide by zero
+      return y1;
     }
-    float t = (raw - p1.rawValue) / denom;
-    return p1.refValue + t * (p2.refValue - p1.refValue);
+    float t = (raw - x1) / denom;
+    return y1 + t * (y2 - y1);
   };
 
-  if (rawTemp <= sortedPoints[0].rawValue) {
-    return interpolate(rawTemp, sortedPoints[0], sortedPoints[1]);
+  if (rawValue <= table.raw[0]) {
+    return interpolate(rawValue, table.raw[0], table.actual[0], table.raw[1],
+                      table.actual[1]);
   }
 
-  if (rawTemp >= sortedPoints[data.pointCount - 1].rawValue) {
-    return interpolate(rawTemp, sortedPoints[data.pointCount - 2],
-                       sortedPoints[data.pointCount - 1]);
+  if (rawValue >= table.raw[table.count - 1]) {
+    return interpolate(rawValue, table.raw[table.count - 2],
+                      table.actual[table.count - 2], table.raw[table.count - 1],
+                      table.actual[table.count - 1]);
   }
 
-  for (uint8_t i = 0; i < data.pointCount - 1; ++i) {
-    const EEPROMManager::CalibrationPoint &p1 = sortedPoints[i];
-    const EEPROMManager::CalibrationPoint &p2 = sortedPoints[i + 1];
-    if (rawTemp >= p1.rawValue && rawTemp <= p2.rawValue) {
-      return interpolate(rawTemp, p1, p2);
+  for (int i = 0; i < table.count - 1; ++i) {
+    if (rawValue >= table.raw[i] && rawValue <= table.raw[i + 1]) {
+      return interpolate(rawValue, table.raw[i], table.actual[i], table.raw[i + 1],
+                        table.actual[i + 1]);
     }
   }
 
-  return rawTemp;
+  return rawValue;
 }
 
-void SensorModule::updateCalibrationData(uint8_t sensorId, const EEPROMManager::CalibrationData &data) {
-  EEPROMManager::CalibrationData sorted = data;
-  if (sorted.pointCount > 1 && sorted.pointCount <= 5) {
-    for (uint8_t i = 1; i < sorted.pointCount; ++i) {
-      EEPROMManager::CalibrationPoint key = sorted.points[i];
-      int j = i - 1;
-      while (j >= 0 && sorted.points[j].rawValue > key.rawValue) {
-        sorted.points[j + 1] = sorted.points[j];
-        --j;
-      }
-      sorted.points[j + 1] = key;
-    }
+void SensorModule::updateCalibrationData(EEPROMManager::SensorType sensor, const float *raw,
+                                         const float *actual, int count) {
+  CalibrationTable &table = (sensor == EEPROMManager::SensorType::Rectal) ? rectalTable
+                                                                           : plateTable;
+
+  if (count <= 0) {
+    table.count = 0;
+    return;
   }
 
-  if (sensorId == EEPROMManager::CALIB_SENSOR_PLATE) {
-    plateCalibration = sorted;
-  } else {
-    rectalCalibration = sorted;
+  const int clampedCount = count > 5 ? 5 : count;
+
+  struct Point {
+    float rawValue;
+    float actualValue;
+  } points[5];
+
+  for (int i = 0; i < clampedCount; ++i) {
+    points[i].rawValue = raw[i];
+    points[i].actualValue = actual[i];
+  }
+
+  for (int i = 1; i < clampedCount; ++i) {
+    Point key = points[i];
+    int j = i - 1;
+    while (j >= 0 && points[j].rawValue > key.rawValue) {
+      points[j + 1] = points[j];
+      --j;
+    }
+    points[j + 1] = key;
+  }
+
+  for (int i = 0; i < clampedCount; ++i) {
+    table.raw[i] = points[i].rawValue;
+    table.actual[i] = points[i].actualValue;
+  }
+  table.count = clampedCount;
+}
+
+void SensorModule::printCalibration(EEPROMManager::SensorType sensor) {
+  const CalibrationTable &table =
+      (sensor == EEPROMManager::SensorType::Rectal) ? rectalTable : plateTable;
+  Serial.print("Calibration (");
+  Serial.print((sensor == EEPROMManager::SensorType::Rectal) ? "Rectal" : "Plate");
+  Serial.println("):");
+  for (int i = 0; i < table.count; ++i) {
+    Serial.print("  Raw: ");
+    Serial.print(table.raw[i]);
+    Serial.print(" → Actual: ");
+    Serial.println(table.actual[i]);
   }
 }

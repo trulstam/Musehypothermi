@@ -118,19 +118,15 @@ void EEPROMManager::loadSafetySettings(SafetySettings &settings) const {
 
 namespace {
 constexpr int kCalibrationPointCapacity = 5;
-
-int calibrationCountAddress(EEPROMManager::SensorType sensor) {
-    return sensor == EEPROMManager::SensorType::Rectal
-               ? EEPROMManager::addrCalCountRectal
-               : EEPROMManager::addrCalCountPlate;
-}
-
-int calibrationPointsAddress(EEPROMManager::SensorType sensor) {
-    return sensor == EEPROMManager::SensorType::Rectal
-               ? EEPROMManager::addrCalPointsRectal
-               : EEPROMManager::addrCalPointsPlate;
-}
 } // namespace
+
+int EEPROMManager::calibrationCountAddress(SensorType sensor) {
+    return sensor == SensorType::Rectal ? addrCalCountRectal : addrCalCountPlate;
+}
+
+int EEPROMManager::calibrationPointsAddress(SensorType sensor) {
+    return sensor == SensorType::Rectal ? addrCalPointsRectal : addrCalPointsPlate;
+}
 
 void EEPROMManager::saveCalibrationPoint(SensorType sensor, int index, float raw,
                                          float actual) {

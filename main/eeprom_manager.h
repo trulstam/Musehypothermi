@@ -128,6 +128,9 @@ private:
     static const int addrRectalCalibration = addrSafetyMargin + sizeof(float);
     static const int addrPlateCalibration = addrRectalCalibration + sizeof(CalibrationData);
 
+    static int calibrationCountAddress(SensorType sensor);
+    static int calibrationPointsAddress(SensorType sensor);
+
     static const uint32_t MAGIC_NUMBER;
 
     void saveMagicNumber();

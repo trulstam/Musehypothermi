@@ -117,6 +117,77 @@ void EEPROMManager::loadSafetySettings(SafetySettings &settings) const {
 }
 
 namespace {
+constexpr int kCalibrationPointCapacity = 5;
+} // namespace
+
+int EEPROMManager::calibrationCountAddress(SensorType sensor) {
+    return sensor == SensorType::Rectal ? addrCalCountRectal : addrCalCountPlate;
+}
+
+int EEPROMManager::calibrationPointsAddress(SensorType sensor) {
+    return sensor == SensorType::Rectal ? addrCalPointsRectal : addrCalPointsPlate;
+}
+
+void EEPROMManager::saveCalibrationPoint(SensorType sensor, int index, float raw,
+                                         float actual) {
+    if (index < 0 || index >= kCalibrationPointCapacity) {
+        return;
+    }
+
+    const int countAddr = calibrationCountAddress(sensor);
+    const int basePointAddr = calibrationPointsAddress(sensor);
+    const int pointAddr = basePointAddr + index * 2 * sizeof(float);
+
+    EEPROM.put(pointAddr, raw);
+    EEPROM.put(pointAddr + sizeof(float), actual);
+
+    uint16_t storedCount = 0;
+    EEPROM.get(countAddr, storedCount);
+    if (storedCount > kCalibrationPointCapacity) {
+        storedCount = 0;
+    }
+
+    if (static_cast<int>(storedCount) <= index) {
+        storedCount = static_cast<uint16_t>(index + 1);
+        EEPROM.put(countAddr, storedCount);
+    }
+}
+
+void EEPROMManager::loadCalibrationPoints(SensorType sensor, float *rawOut,
+                                          float *actualOut, int &countOut) {
+    const int countAddr = calibrationCountAddress(sensor);
+    const int basePointAddr = calibrationPointsAddress(sensor);
+
+    uint16_t storedCount = 0;
+    EEPROM.get(countAddr, storedCount);
+    if (storedCount > kCalibrationPointCapacity) {
+        storedCount = 0;
+    }
+
+    countOut = static_cast<int>(storedCount);
+    for (int i = 0; i < countOut; ++i) {
+        const int pointAddr = basePointAddr + i * 2 * sizeof(float);
+        EEPROM.get(pointAddr, rawOut[i]);
+        EEPROM.get(pointAddr + sizeof(float), actualOut[i]);
+    }
+}
+
+void EEPROMManager::clearCalibration(SensorType sensor) {
+    const int countAddr = calibrationCountAddress(sensor);
+    const int basePointAddr = calibrationPointsAddress(sensor);
+
+    uint16_t zeroCount = 0;
+    EEPROM.put(countAddr, zeroCount);
+
+    const float zero = 0.0f;
+    for (int i = 0; i < kCalibrationPointCapacity; ++i) {
+        const int pointAddr = basePointAddr + i * 2 * sizeof(float);
+        EEPROM.put(pointAddr, zero);
+        EEPROM.put(pointAddr + sizeof(float), zero);
+    }
+}
+
+namespace {
 void sortCalibrationPoints(EEPROMManager::CalibrationData &data) {
     if (data.pointCount <= 1 || data.pointCount > 5) {
         return;
@@ -168,6 +239,8 @@ void EEPROMManager::factoryResetCalibration() {
         empty.points[i].rawValue = 0.0f;
         empty.points[i].refValue = 0.0f;
     }
+    clearCalibration(SensorType::Rectal);
+    clearCalibration(SensorType::Plate);
     saveCalibrationData(CALIB_SENSOR_RECTAL, empty);
     saveCalibrationData(CALIB_SENSOR_PLATE, empty);
 }

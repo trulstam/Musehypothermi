@@ -296,6 +296,8 @@ void CommAPI::handleCommand(const String &jsonString) {
             } else {
                 sendResponse("Unknown equilibrium command");
             }
+        } else if (action == "calibrate") {
+            handleCalibrationCommand(cmd);
         } else if (action == "calibration") {
             if (state == "add_point") {
                 if (!cmd.containsKey("sensor") || !cmd.containsKey("actual")) {
@@ -551,6 +553,96 @@ void CommAPI::handleCommand(const String &jsonString) {
     }
 }
 
+void CommAPI::handleCalibrationCommand(JsonObject cmd) {
+    String state = cmd["state"];
+
+    if (state == "add_point") {
+        if (!cmd.containsKey("sensor") || !cmd.containsKey("actual")) {
+            sendResponse("Calibration fields missing");
+            return;
+        }
+
+        String sensorStr = cmd["sensor"];
+        EEPROMManager::SensorType sensorType;
+        const char *sensorName = nullptr;
+        if (!parseSensor(sensorStr, sensorType, sensorName)) {
+            StaticJsonDocument<128> errorDoc;
+            errorDoc["error"] = "invalid_sensor";
+            serializeJson(errorDoc, *serial);
+            serial->println();
+            return;
+        }
+
+        float actual = cmd["actual"];
+        float raw = (sensorType == EEPROMManager::SensorType::Rectal)
+                        ? sensors.getRawRectalTemp()
+                        : sensors.getRawCoolingPlateTemp();
+
+        float rawPoints[5] = {};
+        float actualPoints[5] = {};
+        int pointCount = 0;
+        eeprom.loadCalibrationPoints(sensorType, rawPoints, actualPoints, pointCount);
+
+        if (pointCount >= 5) {
+            StaticJsonDocument<128> fullDoc;
+            fullDoc["response"] = "calibration_table_full";
+            fullDoc["sensor"] = sensorName;
+            serializeJson(fullDoc, *serial);
+            serial->println();
+            return;
+        }
+
+        rawPoints[pointCount] = raw;
+        actualPoints[pointCount] = actual;
+
+        eeprom.saveCalibrationPoint(sensorType, pointCount, raw, actual);
+        sensors.updateCalibrationData(sensorType, rawPoints, actualPoints, pointCount + 1);
+
+        Serial.print("[CAL] Added point for ");
+        Serial.print(sensorType == EEPROMManager::SensorType::Rectal ? "RECTAL" : "PLATE");
+        Serial.print(": raw=");
+        Serial.print(raw);
+        Serial.print(", ref=");
+        Serial.println(actual);
+
+        StaticJsonDocument<128> response;
+        response["response"] = "calibration_point_added";
+        response["sensor"] = sensorName;
+        serializeJson(response, *serial);
+        serial->println();
+    } else if (state == "clear") {
+        if (!cmd.containsKey("sensor")) {
+            sendResponse("Calibration fields missing");
+            return;
+        }
+
+        String sensorStr = cmd["sensor"];
+        EEPROMManager::SensorType sensorType;
+        const char *sensorName = nullptr;
+        if (!parseSensor(sensorStr, sensorType, sensorName)) {
+            StaticJsonDocument<128> errorDoc;
+            errorDoc["error"] = "invalid_sensor";
+            serializeJson(errorDoc, *serial);
+            serial->println();
+            return;
+        }
+
+        eeprom.clearCalibration(sensorType);
+        sensors.updateCalibrationData(sensorType, nullptr, nullptr, 0);
+
+        Serial.print("[CAL] Table cleared for ");
+        Serial.println(sensorType == EEPROMManager::SensorType::Rectal ? "RECTAL" : "PLATE");
+
+        StaticJsonDocument<128> response;
+        response["response"] = "calibration_cleared";
+        response["sensor"] = sensorName;
+        serializeJson(response, *serial);
+        serial->println();
+    } else {
+        sendResponse("Unknown calibration command");
+    }
+}
+
 void CommAPI::sendCalibrationTable(uint8_t sensorId, const char *sensorName) {
     StaticJsonDocument<1024> doc;
     EEPROMManager::CalibrationData data{};
@@ -710,6 +802,7 @@ void CommAPI::sendStatus() {
     doc["cooling_mode"] = pid.isCooling();
     doc["pid_mode"] = pid.isCooling() ? "cooling" : "heating";
     doc["emergency_stop"] = pid.isEmergencyStop();
+    doc["emergency_stop_active"] = pid.isEmergencyStop();
     doc["temperature_rate"] = pid.getTemperatureRate();
     doc["asymmetric_autotune_active"] = pid.isAutotuneActive();
     doc["equilibrium_temp"] = pid.getEquilibriumTemp();

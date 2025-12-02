@@ -29,6 +29,9 @@ private:
     void handleCommand(const String &jsonString);
     void parseProfile(JsonArray arr);
     void sendCalibrationTable(uint8_t sensorId, const char *sensorName);
+    bool parseSensor(const String &sensorValue, EEPROMManager::SensorType &sensorType,
+                     const char *&sensorName);
+    int getCalibrationPointCount(EEPROMManager::SensorType sensorType);
 
     Stream *serial;
     String buffer;

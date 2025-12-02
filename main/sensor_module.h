@@ -20,14 +20,22 @@ class SensorModule {
     double getRawRectalTemp();
 
     void setSimulatedTemps(double plate, double rectal);
-    void updateCalibrationData(uint8_t sensorId, const EEPROMManager::CalibrationData &data);
+    void updateCalibrationData(EEPROMManager::SensorType sensor, const float *raw,
+                               const float *actual, int count);
+    void printCalibration(EEPROMManager::SensorType sensor);
 
   private:
-    double convertRawToTemp(int raw);
-    float applyCalibration(float rawTemp, const EEPROMManager::CalibrationData &data);
+    struct CalibrationTable {
+        float raw[5];
+        float actual[5];
+        int count = 0;
+    };
 
-    EEPROMManager::CalibrationData rectalCalibration;
-    EEPROMManager::CalibrationData plateCalibration;
+    double convertRawToTemp(int raw);
+    float applyCalibration(const CalibrationTable &table, float rawValue);
+
+    CalibrationTable rectalTable;
+    CalibrationTable plateTable;
 
     double cachedCoolingPlateTemp;
     double cachedRectalTemp;

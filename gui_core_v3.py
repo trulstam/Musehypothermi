@@ -3371,10 +3371,34 @@ class MainWindow(QMainWindow):
 
         elif response == "calibration_table":
             points = data.get("points") or data.get("table") or []
-            effective_sensor = sensor or target_sensor
-            if effective_sensor:
-                self.calibration_tables[effective_sensor] = points
-                self.refresh_calibration_table()
+
+            if points:
+                effective_sensor = sensor or target_sensor
+                if effective_sensor:
+                    self.calibration_tables[effective_sensor] = points
+            else:
+                # Firmware returns both sensor tables under separate keys
+                for sensor_key in ("rectal", "plate"):
+                    sensor_points = data.get(sensor_key)
+                    if sensor_points is None:
+                        continue
+
+                    normalized_points = []
+                    for point in sensor_points:
+                        raw_val = point.get("raw")
+                        actual_val = point.get("actual")
+                        if raw_val is None or actual_val is None:
+                            continue
+                        try:
+                            normalized_points.append(
+                                {"raw": float(raw_val), "actual": float(actual_val)}
+                            )
+                        except (TypeError, ValueError):
+                            continue
+
+                    self.calibration_tables[sensor_key] = normalized_points
+
+            self.refresh_calibration_table()
 
 
     def create_serial_monitor_tab(self):

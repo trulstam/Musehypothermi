@@ -106,6 +106,7 @@ class AsymmetricPIDControls(QWidget):
             if parent and hasattr(parent, "emergency_event_history")
             else []
         )
+        self.emergency_stop_active: bool = False
         self.setup_ui()
         
     def setup_ui(self):
@@ -413,8 +414,11 @@ class AsymmetricPIDControls(QWidget):
                 )
 
             # Update emergency status
-            if "emergency_stop" in data:
-                emergency_active = bool(data["emergency_stop"])
+            emergency_flag = data.get(
+                "emergency_stop_active", data.get("emergency_stop")
+            )
+            if emergency_flag is not None:
+                emergency_active = bool(emergency_flag)
                 state_changed = emergency_active != self.emergency_stop_active
 
                 if emergency_active:
@@ -3572,6 +3576,15 @@ class MainWindow(QMainWindow):
                 data["failsafe_active"] = False
             else:
                 self.breath_suppression_notified = False
+
+            emergency_flag = data.get(
+                "emergency_stop_active", data.get("emergency_stop")
+            )
+            if emergency_flag is not None:
+                if "emergency_stop_active" not in data:
+                    data = dict(data)
+                    data["emergency_stop_active"] = emergency_flag
+                self.emergency_stop_active = bool(emergency_flag)
 
             if "failsafe_active" in data:
                 self._apply_failsafe_state(

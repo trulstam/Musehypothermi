@@ -4,6 +4,7 @@
 import csv
 import os
 import json
+import time
 from datetime import datetime
 
 # All auto-generated timestamps use this canonical format.
@@ -16,7 +17,13 @@ def _now_ts():
     return datetime.now().strftime(TIMESTAMP_FORMAT)
 
 class Logger:
-    def __init__(self, filename_prefix="experiment", metadata=None):
+    def __init__(
+        self,
+        filename_prefix="experiment",
+        metadata=None,
+        flush_every_n: int = 20,
+        flush_interval_seconds: float = 5.0,
+    ):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         directory = "logs"
         if not os.path.exists(directory):
@@ -44,6 +51,12 @@ class Logger:
         }
         self.flush_json()  # Oppretter filen første gang
 
+        # Flush policy
+        self.flush_every_n = max(1, flush_every_n)
+        self.flush_interval_seconds = max(0.1, float(flush_interval_seconds))
+        self._pending_rows = 0
+        self._last_flush = time.monotonic()
+
         print(f"✅ JSON logging to {self.filename_json}")
 
     def log_data(self, data):
@@ -60,7 +73,7 @@ class Logger:
 
         # CSV log
         self.csv_writer.writerow(row)
-        self.csv_file.flush()
+        self._pending_rows += 1
 
         # JSON log
         self.json_content["data"].append({
@@ -72,13 +85,14 @@ class Logger:
         })
 
         print(f"📥 Logged data at {timestamp}")
+        self._maybe_flush()
 
     def log_comment(self, comment):
         now = _now_ts()
         row = [now, "", "", "", "", comment]
 
         self.csv_writer.writerow(row)
-        self.csv_file.flush()
+        self._pending_rows += 1
 
         self.json_content["comments"].append({
             "timestamp": now,
@@ -86,13 +100,14 @@ class Logger:
         })
 
         print(f"💬 Logged comment: {comment}")
+        self._maybe_flush()
 
     def log_event(self, event):
         now = _now_ts()
         message = f"EVENT: {event}"
 
         self.csv_writer.writerow([now, "", "", "", "", message])
-        self.csv_file.flush()
+        self._pending_rows += 1
 
         self.json_content["events"].append({
             "timestamp": now,
@@ -100,6 +115,20 @@ class Logger:
         })
 
         print(f"⚡ Logged event: {event}")
+        self._maybe_flush()
+
+    def _maybe_flush(self):
+        now = time.monotonic()
+        if self._pending_rows >= self.flush_every_n or (now - self._last_flush) >= self.flush_interval_seconds:
+            self.flush()
+
+    def flush(self):
+        if self._pending_rows == 0:
+            return
+        self.csv_file.flush()
+        self.flush_json()
+        self._pending_rows = 0
+        self._last_flush = time.monotonic()
 
     def flush_json(self):
         with open(self.filename_json, "w") as file:
@@ -107,7 +136,7 @@ class Logger:
 
     def close(self):
         print("📝 Closing logger and writing JSON file...")
-        self.flush_json()
+        self.flush()
 
         if self.csv_file:
             self.csv_file.close()

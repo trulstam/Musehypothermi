@@ -2373,6 +2373,7 @@ class MainWindow(QMainWindow):
 
         self.connection_established = False
         self.data_logger: Optional[Logger] = None
+        self.data_logger_flush_timer: Optional[QTimer] = None
         self.start_time = None
         self.max_graph_points = 200
         self.data_update_count = 0
@@ -3468,6 +3469,12 @@ class MainWindow(QMainWindow):
             self.status_timer.timeout.connect(self.request_status)
             # Faster cadence for queue control; actual sends are rate-limited.
             self.status_timer.start(200)
+
+            # Data logger flush timer to offload disk I/O from data callbacks
+            self.data_logger_flush_timer = QTimer()
+            self.data_logger_flush_timer.setInterval(5000)
+            self.data_logger_flush_timer.timeout.connect(self._flush_data_logger)
+            self.data_logger_flush_timer.start()
             
             # Sync timer
             self.sync_timer = QTimer()
@@ -3518,6 +3525,16 @@ class MainWindow(QMainWindow):
             self.log(f"⚠️ Error while stopping data logger: {exc}", "warning")
         finally:
             self.data_logger = None
+
+    def _flush_data_logger(self):
+        """Flush pending logger data without blocking data callbacks."""
+        if self.data_logger is None:
+            return
+
+        try:
+            self.data_logger.flush()
+        except Exception as exc:
+            self.log(f"⚠️ Logger flush error: {exc}", "warning")
 
     def _mark_command_in_flight(self, name: str):
         """Mark a command as pending with timestamp."""

@@ -2413,6 +2413,13 @@ class MainWindow(QMainWindow):
         self.calibration_raw_values = {"rectal": None, "plate": None}
         self.calibration_calibrated_values = {"rectal": None, "plate": None}
         self.calibration_poll_timer: Optional[QTimer] = None
+        self.pending_command: Optional[str] = None
+        self.pending_command_sent_at: float = 0.0
+        self.last_status_request_at: float = 0.0
+        self.last_status_received_at: float = 0.0
+        self.last_calibration_poll_at: float = 0.0
+        self.last_rate_limit_message: str = ""
+        self.last_rate_limit_message_at: float = 0.0
         self.operator_name: str = os.getenv("USER", "GUI")
 
         print("✅ Data structures initialized")
@@ -3151,12 +3158,26 @@ class MainWindow(QMainWindow):
             if not self.serial_manager.is_connected():
                 return
 
+            now = time.monotonic()
+            if self.pending_command:
+                self._log_rate_limited_drop("Kalibrering hoppet over: kommando aktiv")
+                return
+
+            if self.last_status_received_at and now - self.last_status_received_at < 0.8:
+                self._log_rate_limited_drop("Kalibrering hoppet over: nylig status")
+                return
+
+            if now - self.last_calibration_poll_at < 0.2:
+                return
+
             cmd = {"CMD": {"action": "get", "state": "calibration"}}
             sensor = self.get_selected_calibration_sensor()
             if sensor:
                 cmd["CMD"]["sensor"] = sensor
 
             self.serial_manager.send(json.dumps(cmd))
+            self.last_calibration_poll_at = now
+            self._mark_command_in_flight("calibration")
         except Exception as exc:
             self.log(f"⚠️ Kalibreringsspørring feilet: {exc}", "warning")
             self.statusBar().showMessage(str(exc))
@@ -3201,9 +3222,12 @@ class MainWindow(QMainWindow):
                 f"📡 Ber om nytt kalibreringspunkt for {sensor} @ {actual:.2f} °C",
                 "command",
             )
+            self.addCalibrationPointButton.setEnabled(False)
+            self._mark_command_in_flight("calibration_add")
         except Exception as exc:
             self.log(f"❌ Kunne ikke sende kalibreringskommando: {exc}", "error")
             self.statusBar().showMessage(str(exc))
+            self.addCalibrationPointButton.setEnabled(True)
 
     def clear_calibration_points(self):
         sensor = self.get_selected_calibration_sensor()
@@ -3296,6 +3320,12 @@ class MainWindow(QMainWindow):
     def handle_calibration_payload(self, data: Dict[str, Any]):
         response = data.get("response")
         sensor = data.get("sensor") or self.get_selected_calibration_sensor()
+
+        if self.pending_command and self.pending_command.startswith("calibration"):
+            self._clear_pending_command()
+
+        if hasattr(self, "addCalibrationPointButton"):
+            self.addCalibrationPointButton.setEnabled(True)
 
         if sensor not in {"rectal", "plate"}:
             sensor = None
@@ -3436,8 +3466,8 @@ class MainWindow(QMainWindow):
             # Status timer
             self.status_timer = QTimer()
             self.status_timer.timeout.connect(self.request_status)
-            # 1s cadence keeps graphs/data responsive without noticeable CPU load.
-            self.status_timer.start(1000)
+            # Faster cadence for queue control; actual sends are rate-limited.
+            self.status_timer.start(200)
             
             # Sync timer
             self.sync_timer = QTimer()
@@ -3489,6 +3519,34 @@ class MainWindow(QMainWindow):
         finally:
             self.data_logger = None
 
+    def _mark_command_in_flight(self, name: str):
+        """Mark a command as pending with timestamp."""
+        self.pending_command = name
+        self.pending_command_sent_at = time.monotonic()
+
+    def _clear_pending_command(self, name: Optional[str] = None):
+        """Clear pending command when it matches the provided name or any."""
+        if name is None or (
+            self.pending_command is not None
+            and (self.pending_command == name or self.pending_command.startswith(name))
+        ):
+            self.pending_command = None
+            self.pending_command_sent_at = 0.0
+
+    def _log_rate_limited_drop(self, message: str):
+        """Log and surface when a command is skipped due to throttling."""
+        now = time.monotonic()
+        if (
+            message == self.last_rate_limit_message
+            and now - self.last_rate_limit_message_at < 0.5
+        ):
+            return
+
+        self.last_rate_limit_message = message
+        self.last_rate_limit_message_at = now
+        self.log(f"⚠️ {message}", "warning")
+        self.statusBar().showMessage(message)
+
     @staticmethod
     def _has_sensor_payload(data: Dict[str, Any]) -> bool:
         sensor_keys = {"cooling_plate_temp", "anal_probe_temp", "pid_output", "breath_freq_bpm"}
@@ -3516,6 +3574,7 @@ class MainWindow(QMainWindow):
             self.serial_manager.sendCMD(action, state)
             self.event_logger.log_event(f"CMD: {action} → {state}")
             self.log(f"📡 Sent: {action} = {state}", "command")
+            self._mark_command_in_flight(f"{action}:{state}")
 
             if action == "pid" and state == "start":
                 self._start_data_logger()
@@ -3595,6 +3654,9 @@ class MainWindow(QMainWindow):
 
             has_sensor_data = self._has_sensor_payload(data)
             if has_sensor_data and self.connection_established:
+                self.last_status_received_at = time.monotonic()
+                if self.pending_command in {"status", "calibration"}:
+                    self._clear_pending_command()
                 if self.data_logger is None:
                     self._start_data_logger()
                 if self.data_logger is not None:
@@ -3627,7 +3689,10 @@ class MainWindow(QMainWindow):
             
             # Handle events
             self.handle_events(data)
-            
+
+            if self.pending_command and data.get("response"):
+                self._clear_pending_command()
+
             # Update timestamp
             self.lastUpdateLabel.setText(time.strftime("%H:%M:%S"))
                 
@@ -5174,8 +5239,24 @@ class MainWindow(QMainWindow):
     def request_status(self):
         """Request status"""
         try:
-            if self.serial_manager.is_connected():
-                self.serial_manager.sendCMD("get", "status")
+            if not self.serial_manager.is_connected():
+                return
+
+            now = time.monotonic()
+            if self.pending_command:
+                self._log_rate_limited_drop("Status skipped: command in-flight")
+                return
+
+            if now - self.last_status_request_at < 0.2:
+                return
+
+            if self.last_status_received_at and now - self.last_status_received_at < 0.8:
+                self._log_rate_limited_drop("Status skipped: last update too recent")
+                return
+
+            self.serial_manager.sendCMD("get", "status")
+            self.last_status_request_at = now
+            self._mark_command_in_flight("status")
         except Exception as e:
             pass  # Silent fail
 

@@ -63,6 +63,18 @@ void CommAPI::handleCommand(const String &jsonString) {
 
     if (doc.containsKey("CMD")) {
         JsonObject cmd = doc["CMD"];
+
+        if (!cmd.containsKey("action") || !cmd.containsKey("state")) {
+            Serial.print("[CMD] Missing action/state in payload: ");
+            Serial.println(jsonString);
+
+            StaticJsonDocument<128> errorDoc;
+            errorDoc["error"] = !cmd.containsKey("action") ? "missing_action" : "missing_state";
+            serializeJson(errorDoc, *serial);
+            serial->println();
+            return;
+        }
+
         String action = cmd["action"];
         String state = cmd["state"];
 
@@ -296,99 +308,16 @@ void CommAPI::handleCommand(const String &jsonString) {
             } else {
                 sendResponse("Unknown equilibrium command");
             }
-        } else if (action == "calibrate") {
+        } else if (action == "calibrate" || action == "calibration") {
             handleCalibrationCommand(cmd);
-        } else if (action == "calibration") {
-            if (state == "add_point") {
-                if (!cmd.containsKey("sensor") || !cmd.containsKey("actual")) {
-                    sendResponse("Calibration fields missing");
-                    return;
-                }
-
-                String sensorStr = cmd["sensor"];
-                EEPROMManager::SensorType sensorType;
-                const char *sensorName = nullptr;
-                if (!parseSensor(sensorStr, sensorType, sensorName)) {
-                    StaticJsonDocument<128> errorDoc;
-                    errorDoc["error"] = "invalid_sensor";
-                    serializeJson(errorDoc, *serial);
-                    serial->println();
-                    return;
-                }
-
-                float actual = cmd["actual"];
-                float raw = (sensorType == EEPROMManager::SensorType::Rectal)
-                                ? sensors.getRawRectalTemp()
-                                : sensors.getRawCoolingPlateTemp();
-
-                float rawPoints[5] = {};
-                float actualPoints[5] = {};
-                int pointCount = 0;
-                eeprom.loadCalibrationPoints(sensorType, rawPoints, actualPoints, pointCount);
-
-                bool updatedExisting = false;
-                for (int i = 0; i < pointCount; ++i) {
-                    if (fabs(rawPoints[i] - raw) <= 0.01f) {
-                        rawPoints[i] = raw;
-                        actualPoints[i] = actual;
-                        updatedExisting = true;
-                        break;
-                    }
-                }
-
-                if (!updatedExisting) {
-                    if (pointCount >= 5) {
-                        sendResponse("Calibration table full");
-                        return;
-                    }
-                    rawPoints[pointCount] = raw;
-                    actualPoints[pointCount] = actual;
-                    pointCount++;
-                }
-
-                eeprom.clearCalibration(sensorType);
-                for (int i = 0; i < pointCount && i < 5; ++i) {
-                    eeprom.saveCalibrationPoint(sensorType, i, rawPoints[i], actualPoints[i]);
-                }
-
-                sensors.updateCalibrationData(sensorType, rawPoints, actualPoints, pointCount);
-
-                StaticJsonDocument<128> response;
-                response["response"] = "calibration_point_added";
-                response["sensor"] = sensorName;
-                response["point_count"] = pointCount;
-                serializeJson(response, *serial);
-                serial->println();
-
-            } else if (state == "clear") {
-                if (!cmd.containsKey("sensor")) {
-                    sendResponse("Calibration fields missing");
-                    return;
-                }
-
-                String sensorStr = cmd["sensor"];
-                EEPROMManager::SensorType sensorType;
-                const char *sensorName = nullptr;
-                if (!parseSensor(sensorStr, sensorType, sensorName)) {
-                    StaticJsonDocument<128> errorDoc;
-                    errorDoc["error"] = "invalid_sensor";
-                    serializeJson(errorDoc, *serial);
-                    serial->println();
-                    return;
-                }
-
-                eeprom.clearCalibration(sensorType);
-                sensors.updateCalibrationData(sensorType, nullptr, nullptr, 0);
-
-                StaticJsonDocument<128> response;
-                response["response"] = "calibration_cleared";
-                response["sensor"] = sensorName;
-                serializeJson(response, *serial);
-                serial->println();
-            } else {
-                sendResponse("Unknown calibration command");
-            }
         } else {
+            if (cmd.containsKey("sensor") || cmd.containsKey("actual")) {
+                StaticJsonDocument<128> errorDoc;
+                errorDoc["error"] = "calibration_fields_without_action";
+                serializeJson(errorDoc, *serial);
+                serial->println();
+                return;
+            }
             sendResponse("Unknown CMD action");
         }
     }
@@ -558,7 +487,10 @@ void CommAPI::handleCalibrationCommand(JsonObject cmd) {
 
     if (state == "add_point") {
         if (!cmd.containsKey("sensor") || !cmd.containsKey("actual")) {
-            sendResponse("Calibration fields missing");
+            StaticJsonDocument<128> errorDoc;
+            errorDoc["error"] = "calibration_fields_missing";
+            serializeJson(errorDoc, *serial);
+            serial->println();
             return;
         }
 
@@ -612,7 +544,10 @@ void CommAPI::handleCalibrationCommand(JsonObject cmd) {
         serial->println();
     } else if (state == "clear") {
         if (!cmd.containsKey("sensor")) {
-            sendResponse("Calibration fields missing");
+            StaticJsonDocument<128> errorDoc;
+            errorDoc["error"] = "calibration_fields_missing";
+            serializeJson(errorDoc, *serial);
+            serial->println();
             return;
         }
 

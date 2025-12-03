@@ -3,6 +3,7 @@ import serial.tools.list_ports
 import json
 import threading
 import time
+import queue
 from typing import Optional
 
 from PySide6.QtCore import QObject, Signal
@@ -14,14 +15,24 @@ class SerialManager(QObject):
     raw_line_sent = Signal(str)
     failsafe_triggered = Signal()
 
-    def __init__(self, port=None, baud=115200, heartbeat_interval=2, failsafe_timeout=5):
+    def __init__(
+        self,
+        port=None,
+        baud=115200,
+        heartbeat_interval=2,
+        failsafe_timeout=5,
+        write_timeout: Optional[float] = None,
+    ):
         super().__init__()
         self.port = port
         self.baud = baud
         self.heartbeat_interval = heartbeat_interval
         self.failsafe_timeout = failsafe_timeout
+        self.write_timeout = write_timeout
 
         self.ser = None
+        self._write_lock = threading.Lock()
+        self._send_queue: queue.Queue[str] = queue.Queue(maxsize=10)
 
         # States
         self.keep_running = False
@@ -49,10 +60,17 @@ class SerialManager(QObject):
             except TypeError as exc:
                 print(f"⚠️ Failed to connect on_data_received callback: {exc}")
 
-    def connect(self, port):
+    def connect(self, port, write_timeout: Optional[float] = None):
         self.port = port
+        if write_timeout is not None:
+            self.write_timeout = write_timeout
         try:
-            self.ser = serial.Serial(self.port, self.baud, timeout=1)
+            self.ser = serial.Serial(
+                self.port,
+                self.baud,
+                timeout=1,
+                write_timeout=self.write_timeout,
+            )
             print(f"✅ Connected to {self.port} at {self.baud} baud.")
         except serial.SerialException as e:
             print(f"❌ Error opening serial port: {e}")
@@ -69,8 +87,10 @@ class SerialManager(QObject):
 
         self.read_thread = threading.Thread(target=self.read_serial_loop, daemon=True)
         self.heartbeat_thread = threading.Thread(target=self.send_heartbeat_loop, daemon=True)
+        self.sender_thread = threading.Thread(target=self._send_loop, daemon=True)
         self.read_thread.start()
         self.heartbeat_thread.start()
+        self.sender_thread.start()
 
         return True
 
@@ -82,6 +102,8 @@ class SerialManager(QObject):
             self.read_thread.join(timeout=1)
         if hasattr(self, 'heartbeat_thread') and self.heartbeat_thread.is_alive():
             self.heartbeat_thread.join(timeout=1)
+        if hasattr(self, 'sender_thread') and self.sender_thread.is_alive():
+            self.sender_thread.join(timeout=1)
 
         if self.ser and self.ser.is_open:
             self.ser.close()
@@ -97,17 +119,18 @@ class SerialManager(QObject):
     def send(self, message):
         if not self.is_connected():
             print("❌ Serial port not available.")
-            return
+            return False
+        json_cmd = message + "\n"
+
         try:
-            json_cmd = message + "\n"
-            try:
-                self.raw_line_sent.emit(json_cmd.strip())
-            except Exception:
-                pass
-            self.ser.write(json_cmd.encode())
-            print(f"➡️ Sent: {json_cmd.strip()}")
+            self._send_queue.put(json_cmd, timeout=0.1)
+            return True
+        except queue.Full:
+            print("⚠️ Send queue is full. Message dropped.")
+            return False
         except Exception as e:
-            print(f"⚠️ Failed to send: {e}")
+            print(f"⚠️ Failed to enqueue message: {e}")
+            return False
 
     def sendCMD(self, action, state):
         cmd = {"CMD": {"action": action, "state": state}}
@@ -117,7 +140,7 @@ class SerialManager(QObject):
         if (action == "failsafe" and state == "clear") or action == "failsafe_clear":
             self.failsafe_triggered_flag = False
 
-        self.send(json.dumps(cmd))
+        return self.send(json.dumps(cmd))
 
     def send_calibration_command(
         self, sensor: str, action: str, actual: Optional[float] = None
@@ -128,11 +151,11 @@ class SerialManager(QObject):
         if actual is not None:
             payload["CMD"]["actual"] = actual
 
-        self.send(json.dumps(payload))
+        return self.send(json.dumps(payload))
 
     def sendSET(self, variable, value):
         cmd = {"SET": {"variable": variable, "value": value}}
-        self.send(json.dumps(cmd))
+        return self.send(json.dumps(cmd))
 
     def read(self):
         if not self.is_connected():
@@ -168,6 +191,34 @@ class SerialManager(QObject):
                 self.trigger_failsafe()
 
             time.sleep(0.05)
+
+    def _send_loop(self):
+        while self.keep_running:
+            try:
+                json_cmd = self._send_queue.get(timeout=0.1)
+            except queue.Empty:
+                continue
+
+            if not self.is_connected():
+                self._send_queue.task_done()
+                continue
+
+            try:
+                try:
+                    self.raw_line_sent.emit(json_cmd.strip())
+                except Exception:
+                    pass
+
+                with self._write_lock:
+                    self.ser.write(json_cmd.encode())
+                print(f"➡️ Sent: {json_cmd.strip()}")
+            except serial.SerialTimeoutException:
+                print("⚠️ Serial write timed out. Clearing send queue to prevent blocking.")
+                self._drain_send_queue()
+            except Exception as e:
+                print(f"⚠️ Failed to send: {e}")
+            finally:
+                self._send_queue.task_done()
 
     def send_heartbeat_loop(self):
         while self.keep_running:
@@ -206,3 +257,11 @@ class SerialManager(QObject):
         if reset_failsafe:
             self.failsafe_triggered_flag = False
         self.data_received.emit(dict(payload))
+
+    def _drain_send_queue(self):
+        while not self._send_queue.empty():
+            try:
+                self._send_queue.get_nowait()
+                self._send_queue.task_done()
+            except queue.Empty:
+                break

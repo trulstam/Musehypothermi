@@ -25,6 +25,13 @@ class PressureModule {
     float getBreathRate();
     void resetBreathMonitor();
 
+    uint16_t getRawAdc() const;
+    float    getFiltered() const;
+    float    getBaseline() const;
+    float    getDeviation() const;
+    float    getMinPeakDelta() const;
+    bool     getLastBreathDetected() const;
+
   private:
     static const uint8_t PRESSURE_SENSOR_PIN = A4;
     static const unsigned long CALIBRATION_DURATION_MS = 1500;
@@ -45,8 +52,8 @@ class PressureModule {
     unsigned long breathWindowStart;
 
     // ADC/filtering state
-    int lastRaw;
-    float filtered;
+    uint16_t rawAdc;
+    float filteredValue;
     float lastFiltered;
     float lastSlope;
 
@@ -57,11 +64,13 @@ class PressureModule {
     unsigned long baselineCount;
     float calibrationMin;
     float calibrationMax;
-    float baseline;
-    float minPeakDelta;
+    float baselineValue;
+    float deviationValue;
+    float thresholdValue;
 
     // Detection
     unsigned long lastBreathTime;
+    bool lastBreathDetectedFlag;
 };
 
 #endif // PRESSURE_MODULE_H

@@ -9,6 +9,9 @@
 #include "task_scheduler.h"
 #include "profile_manager.h"
 
+#include <math.h>
+#include <string.h>
+
 #include <ArduinoJson.h>
 
 extern AsymmetricPIDModule pid;  // CHANGED: was PIDModule pid;
@@ -60,6 +63,18 @@ void CommAPI::handleCommand(const String &jsonString) {
 
     if (doc.containsKey("CMD")) {
         JsonObject cmd = doc["CMD"];
+
+        if (!cmd.containsKey("action") || !cmd.containsKey("state")) {
+            Serial.print("[CMD] Missing action/state in payload: ");
+            Serial.println(jsonString);
+
+            StaticJsonDocument<128> errorDoc;
+            errorDoc["error"] = !cmd.containsKey("action") ? "missing_action" : "missing_state";
+            serializeJson(errorDoc, *serial);
+            serial->println();
+            return;
+        }
+
         String action = cmd["action"];
         String state = cmd["state"];
 
@@ -89,6 +104,34 @@ void CommAPI::handleCommand(const String &jsonString) {
                 sendStatus();
             } else if (state == "config") {
                 sendConfig();
+            } else if (state == "calibration") {
+                StaticJsonDocument<768> response;
+                response["response"] = "calibration_table";
+
+                float raw[5] = {};
+                float actual[5] = {};
+                int count = 0;
+
+                eeprom.loadCalibrationPoints(EEPROMManager::SensorType::Rectal, raw, actual,
+                                            count);
+                JsonArray rectalArr = response.createNestedArray("rectal");
+                for (int i = 0; i < count && i < 5; ++i) {
+                    JsonObject point = rectalArr.createNestedObject();
+                    point["raw"] = raw[i];
+                    point["actual"] = actual[i];
+                }
+
+                eeprom.loadCalibrationPoints(EEPROMManager::SensorType::Plate, raw, actual,
+                                            count);
+                JsonArray plateArr = response.createNestedArray("plate");
+                for (int i = 0; i < count && i < 5; ++i) {
+                    JsonObject point = plateArr.createNestedObject();
+                    point["raw"] = raw[i];
+                    point["actual"] = actual[i];
+                }
+
+                serializeJson(response, *serial);
+                serial->println();
             } else {
                 sendResponse("Unknown GET action");
             }
@@ -265,7 +308,16 @@ void CommAPI::handleCommand(const String &jsonString) {
             } else {
                 sendResponse("Unknown equilibrium command");
             }
+        } else if (action == "calibrate" || action == "calibration") {
+            handleCalibrationCommand(cmd);
         } else {
+            if (cmd.containsKey("sensor") || cmd.containsKey("actual")) {
+                StaticJsonDocument<128> errorDoc;
+                errorDoc["error"] = "calibration_fields_without_action";
+                serializeJson(errorDoc, *serial);
+                serial->println();
+                return;
+            }
             sendResponse("Unknown CMD action");
         }
     }
@@ -357,10 +409,193 @@ void CommAPI::handleCommand(const String &jsonString) {
             sendResponse(enable ? "Breath-stop check enabled" :
                                   "Breath-stop check disabled");
 
+        } else if (variable == "calibration_point") {
+            JsonObject value = set["value"];
+            if (value.isNull() || !value.containsKey("sensor") ||
+                !value.containsKey("raw") || !value.containsKey("ref") ||
+                !value.containsKey("user") || !value.containsKey("timestamp")) {
+                sendResponse("Invalid calibration payload");
+                return;
+            }
+
+            const char *sensorStr = value["sensor"];
+            float raw = value["raw"].as<float>();
+            float ref = value["ref"].as<float>();
+            const char *user = value["user"];
+            const char *timestamp = value["timestamp"];
+
+            uint8_t sensorId = EEPROMManager::CALIB_SENSOR_RECTAL;
+            if (strcmp(sensorStr, "plate") == 0 || strcmp(sensorStr, "cooling") == 0 ||
+                strcmp(sensorStr, "cooling_plate") == 0) {
+                sensorId = EEPROMManager::CALIB_SENSOR_PLATE;
+            }
+
+            EEPROMManager::CalibrationData data{};
+            eeprom.loadCalibrationData(sensorId, data);
+            if (data.pointCount > 5) {
+                data.pointCount = 0;
+            }
+
+            bool updatedExisting = false;
+            for (uint8_t i = 0; i < data.pointCount; ++i) {
+                if (fabs(data.points[i].rawValue - raw) <= 0.01f) {
+                    data.points[i].rawValue = roundf(raw * 100.0f) / 100.0f;
+                    data.points[i].refValue = roundf(ref * 100.0f) / 100.0f;
+                    updatedExisting = true;
+                    break;
+                }
+            }
+
+            if (!updatedExisting) {
+                if (data.pointCount >= 5) {
+                    sendResponse("Calibration table full");
+                    return;
+                }
+                data.points[data.pointCount].rawValue = roundf(raw * 100.0f) / 100.0f;
+                data.points[data.pointCount].refValue = roundf(ref * 100.0f) / 100.0f;
+                data.pointCount++;
+            }
+
+            strncpy(data.lastCalUser, user, sizeof(data.lastCalUser) - 1);
+            data.lastCalUser[sizeof(data.lastCalUser) - 1] = '\0';
+            strncpy(data.lastCalTimestamp, timestamp, sizeof(data.lastCalTimestamp) - 1);
+            data.lastCalTimestamp[sizeof(data.lastCalTimestamp) - 1] = '\0';
+
+            eeprom.saveCalibrationData(sensorId, data);
+            float rawPoints[5] = {};
+            float refPoints[5] = {};
+            for (uint8_t i = 0; i < data.pointCount && i < 5; ++i) {
+                rawPoints[i] = data.points[i].rawValue;
+                refPoints[i] = data.points[i].refValue;
+            }
+
+            sensors.updateCalibrationData(
+                sensorId == EEPROMManager::CALIB_SENSOR_PLATE
+                    ? EEPROMManager::SensorType::Plate
+                    : EEPROMManager::SensorType::Rectal,
+                rawPoints, refPoints, data.pointCount);
+            sendResponse("Calibration point stored");
+
         } else {
             sendResponse("Unknown SET variable");
         }
     }
+}
+
+void CommAPI::handleCalibrationCommand(JsonObject cmd) {
+    String state = cmd["state"];
+
+    if (state == "add_point") {
+        if (!cmd.containsKey("sensor") || !cmd.containsKey("actual")) {
+            StaticJsonDocument<128> errorDoc;
+            errorDoc["error"] = "calibration_fields_missing";
+            serializeJson(errorDoc, *serial);
+            serial->println();
+            return;
+        }
+
+        String sensorStr = cmd["sensor"];
+        EEPROMManager::SensorType sensorType;
+        const char *sensorName = nullptr;
+        if (!parseSensor(sensorStr, sensorType, sensorName)) {
+            StaticJsonDocument<128> errorDoc;
+            errorDoc["error"] = "invalid_sensor";
+            serializeJson(errorDoc, *serial);
+            serial->println();
+            return;
+        }
+
+        float actual = cmd["actual"];
+        float raw = (sensorType == EEPROMManager::SensorType::Rectal)
+                        ? sensors.getRawRectalTemp()
+                        : sensors.getRawCoolingPlateTemp();
+
+        float rawPoints[5] = {};
+        float actualPoints[5] = {};
+        int pointCount = 0;
+        eeprom.loadCalibrationPoints(sensorType, rawPoints, actualPoints, pointCount);
+
+        if (pointCount >= 5) {
+            StaticJsonDocument<128> fullDoc;
+            fullDoc["response"] = "calibration_table_full";
+            fullDoc["sensor"] = sensorName;
+            serializeJson(fullDoc, *serial);
+            serial->println();
+            return;
+        }
+
+        rawPoints[pointCount] = raw;
+        actualPoints[pointCount] = actual;
+
+        eeprom.saveCalibrationPoint(sensorType, pointCount, raw, actual);
+        sensors.updateCalibrationData(sensorType, rawPoints, actualPoints, pointCount + 1);
+
+        Serial.print("[CAL] Added point for ");
+        Serial.print(sensorType == EEPROMManager::SensorType::Rectal ? "RECTAL" : "PLATE");
+        Serial.print(": raw=");
+        Serial.print(raw);
+        Serial.print(", ref=");
+        Serial.println(actual);
+
+        StaticJsonDocument<128> response;
+        response["response"] = "calibration_point_added";
+        response["sensor"] = sensorName;
+        serializeJson(response, *serial);
+        serial->println();
+    } else if (state == "clear") {
+        if (!cmd.containsKey("sensor")) {
+            StaticJsonDocument<128> errorDoc;
+            errorDoc["error"] = "calibration_fields_missing";
+            serializeJson(errorDoc, *serial);
+            serial->println();
+            return;
+        }
+
+        String sensorStr = cmd["sensor"];
+        EEPROMManager::SensorType sensorType;
+        const char *sensorName = nullptr;
+        if (!parseSensor(sensorStr, sensorType, sensorName)) {
+            StaticJsonDocument<128> errorDoc;
+            errorDoc["error"] = "invalid_sensor";
+            serializeJson(errorDoc, *serial);
+            serial->println();
+            return;
+        }
+
+        eeprom.clearCalibration(sensorType);
+        sensors.updateCalibrationData(sensorType, nullptr, nullptr, 0);
+
+        Serial.print("[CAL] Table cleared for ");
+        Serial.println(sensorType == EEPROMManager::SensorType::Rectal ? "RECTAL" : "PLATE");
+
+        StaticJsonDocument<128> response;
+        response["response"] = "calibration_cleared";
+        response["sensor"] = sensorName;
+        serializeJson(response, *serial);
+        serial->println();
+    } else {
+        sendResponse("Unknown calibration command");
+    }
+}
+
+void CommAPI::sendCalibrationTable(uint8_t sensorId, const char *sensorName) {
+    StaticJsonDocument<1024> doc;
+    EEPROMManager::CalibrationData data{};
+    eeprom.loadCalibrationData(sensorId, data);
+
+    doc["calibration_sensor"] = sensorName;
+    doc["point_count"] = data.pointCount;
+    JsonArray arr = doc.createNestedArray("points");
+    for (uint8_t i = 0; i < data.pointCount && i < 5; ++i) {
+        JsonObject p = arr.createNestedObject();
+        p["raw"] = data.points[i].rawValue;
+        p["ref"] = data.points[i].refValue;
+    }
+    doc["last_cal_user"] = data.lastCalUser;
+    doc["last_cal_timestamp"] = data.lastCalTimestamp;
+
+    serializeJson(doc, *serial);
+    serial->println();
 }
 
 void CommAPI::parseProfile(JsonArray arr) {
@@ -438,7 +673,9 @@ void CommAPI::sendEvent(const String &eventMessage) {
 void CommAPI::sendData() {
     StaticJsonDocument<1024> doc;
     doc["cooling_plate_temp"] = sensors.getCoolingPlateTemp();
+    doc["cooling_plate_temp_raw"] = sensors.getRawCoolingPlateTemp();
     doc["anal_probe_temp"] = sensors.getRectalTemp();
+    doc["rectal_temp_raw"] = sensors.getRawRectalTemp();
     doc["pid_output"] = pid.getOutput();
     doc["breath_freq_bpm"] = pressure.getBreathRate();
     doc["failsafe_active"] = isFailsafeActive();
@@ -478,14 +715,16 @@ void CommAPI::sendFailsafeStatus() {
 }
 
 void CommAPI::sendStatus() {
-    StaticJsonDocument<512> doc;
+    StaticJsonDocument<768> doc;
     doc["failsafe_active"] = isFailsafeActive();
     doc["failsafe_reason"] = getFailsafeReason();
     doc["breath_check_enabled"] = isBreathCheckEnabled();
     doc["panic_active"] = isPanicActive();
     doc["panic_reason"] = getPanicReason();
     doc["cooling_plate_temp"] = sensors.getCoolingPlateTemp();
+    doc["cooling_plate_temp_raw"] = sensors.getRawCoolingPlateTemp();
     doc["anal_probe_temp"] = sensors.getRectalTemp();
+    doc["rectal_temp_raw"] = sensors.getRawRectalTemp();
     doc["pid_output"] = pid.getOutput();
     doc["breath_freq_bpm"] = pressure.getBreathRate();
     doc["plate_target_active"] = pid.getActivePlateTarget();
@@ -498,6 +737,7 @@ void CommAPI::sendStatus() {
     doc["cooling_mode"] = pid.isCooling();
     doc["pid_mode"] = pid.isCooling() ? "cooling" : "heating";
     doc["emergency_stop"] = pid.isEmergencyStop();
+    doc["emergency_stop_active"] = pid.isEmergencyStop();
     doc["temperature_rate"] = pid.getTemperatureRate();
     doc["asymmetric_autotune_active"] = pid.isAutotuneActive();
     doc["equilibrium_temp"] = pid.getEquilibriumTemp();
@@ -516,6 +756,8 @@ void CommAPI::sendStatus() {
     doc["cooling_rate_limit"] = pid.getCoolingRateLimit();
     doc["deadband"] = pid.getCurrentDeadband();
     doc["safety_margin"] = pid.getSafetyMargin();
+    doc["rectal_calibration_points"] = getCalibrationPointCount(EEPROMManager::SensorType::Rectal);
+    doc["plate_calibration_points"] = getCalibrationPointCount(EEPROMManager::SensorType::Plate);
 
     serializeJson(doc, *serial);
     serial->println();
@@ -607,4 +849,32 @@ void CommAPI::saveAllToEEPROM() {
     int debugLevel = pid.isDebugEnabled() ? 1 : 0;
     eeprom.saveDebugLevel(debugLevel);
     eeprom.saveFailsafeTimeout(heartbeatTimeoutMs);
+}
+
+bool CommAPI::parseSensor(const String &sensorValue, EEPROMManager::SensorType &sensorType,
+                          const char *&sensorName) {
+    if (sensorValue == "rectal") {
+        sensorType = EEPROMManager::SensorType::Rectal;
+        sensorName = "rectal";
+        return true;
+    }
+    if (sensorValue == "plate") {
+        sensorType = EEPROMManager::SensorType::Plate;
+        sensorName = "plate";
+        return true;
+    }
+    return false;
+}
+
+int CommAPI::getCalibrationPointCount(EEPROMManager::SensorType sensorType) {
+    float raw[5] = {};
+    float actual[5] = {};
+    int count = 0;
+    eeprom.loadCalibrationPoints(sensorType, raw, actual, count);
+    if (count < 0) {
+        count = 0;
+    } else if (count > 5) {
+        count = 5;
+    }
+    return count;
 }

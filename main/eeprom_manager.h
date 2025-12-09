@@ -23,6 +23,28 @@ public:
         float safetyMargin;
     };
 
+    struct CalibrationPoint {
+        float rawValue;
+        float refValue;
+    };
+
+    struct CalibrationData {
+        uint8_t pointCount;
+        CalibrationPoint points[5];
+        char lastCalUser[16];
+        char lastCalTimestamp[20];
+    };
+
+    enum class SensorType : uint8_t {
+        Rectal,
+        Plate,
+    };
+
+    enum CalibrationSensorId : uint8_t {
+        CALIB_SENSOR_RECTAL = 0,
+        CALIB_SENSOR_PLATE = 1,
+    };
+
     bool begin();
 
     // Legacy single PID helpers (mirror original API)
@@ -53,6 +75,17 @@ public:
     void saveSafetySettings(const SafetySettings &settings);
     void loadSafetySettings(SafetySettings &settings) const;
 
+    // Calibration data
+    void saveCalibrationData(uint8_t sensorId, const CalibrationData &data);
+    void loadCalibrationData(uint8_t sensorId, CalibrationData &data) const;
+    void factoryResetCalibration();
+
+    void saveCalibrationPoint(SensorType sensor, int index, float raw,
+                              float actual);
+    void loadCalibrationPoints(SensorType sensor, float *rawOut, float *actualOut,
+                               int &countOut);
+    void clearCalibration(SensorType sensor);
+
     // Inline convenience wrappers operating on the composite safety blob
     inline void saveCoolingRateLimit(float rate);
     inline void loadCoolingRateLimit(float &rate);
@@ -81,11 +114,22 @@ private:
     static const int addrFailsafeTimeout = addrDebugLevel + sizeof(int);
     static const int addrMagic = addrFailsafeTimeout + sizeof(int);
     static const int addrCoolingKp = addrMagic + sizeof(uint32_t);
-    static const int addrCoolingKi = addrCoolingKp + sizeof(float);
+
+    static const int addrCalCountRectal = 40;
+    static const int addrCalPointsRectal = 42; // 5 x (float, float)
+    static const int addrCalCountPlate = 122;
+    static const int addrCalPointsPlate = 124; // 5 x (float, float)
+
+    static const int addrCoolingKi = addrCalPointsPlate + 5 * 2 * sizeof(float);
     static const int addrCoolingKd = addrCoolingKi + sizeof(float);
     static const int addrCoolingRateLimit = addrCoolingKd + sizeof(float);
     static const int addrDeadband = addrCoolingRateLimit + sizeof(float);
     static const int addrSafetyMargin = addrDeadband + sizeof(float);
+    static const int addrRectalCalibration = addrSafetyMargin + sizeof(float);
+    static const int addrPlateCalibration = addrRectalCalibration + sizeof(CalibrationData);
+
+    static int calibrationCountAddress(SensorType sensor);
+    static int calibrationPointsAddress(SensorType sensor);
 
     static const uint32_t MAGIC_NUMBER;
 

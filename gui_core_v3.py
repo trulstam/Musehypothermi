@@ -3139,6 +3139,7 @@ class MainWindow(QMainWindow):
         # Poll calibration status only when the tab is active
         self.calibration_poll_timer = QTimer()
         self.calibration_poll_timer.setInterval(5000)
+        self.calibration_poll_timer.setSingleShot(False)
         self.calibration_poll_timer.timeout.connect(self.poll_calibration_status)
 
     def get_selected_calibration_sensor(self) -> Optional[str]:
@@ -3162,10 +3163,6 @@ class MainWindow(QMainWindow):
             now = time.monotonic()
             if self.pending_command:
                 self._log_rate_limited_drop("Kalibrering hoppet over: kommando aktiv")
-                return
-
-            if self.last_status_received_at and now - self.last_status_received_at < 0.8:
-                self._log_rate_limited_drop("Kalibrering hoppet over: nylig status")
                 return
 
             if now - self.last_calibration_poll_at < 0.2:
@@ -3193,7 +3190,7 @@ class MainWindow(QMainWindow):
         )
 
         if should_poll and not self.calibration_poll_timer.isActive():
-            self.calibration_poll_timer.start()
+            self.calibration_poll_timer.start(self.calibration_poll_timer.interval())
         elif not should_poll and self.calibration_poll_timer.isActive():
             self.calibration_poll_timer.stop()
 

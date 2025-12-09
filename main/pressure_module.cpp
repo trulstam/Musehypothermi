@@ -16,7 +16,7 @@
 #include "pressure_module.h"
 
 PressureModule::PressureModule()
-    : breathCount(0), breathsPerMinute(0.0f), breathWindowStart(0),
+    : breathsPerMinute(0.0f), breathHead(0), breathTail(0),
       rawAdc(0), filteredValue(0.0f), lastFiltered(0.0f), lastSlope(0.0f),
       lastDeviation(0.0f),
       calibrationDone(false), calibrationStart(0), baselineSum(0.0f),
@@ -25,9 +25,9 @@ PressureModule::PressureModule()
       lastBreathTime(0), lastBreathDetectedFlag(false) {}
 
 void PressureModule::begin() {
-  breathCount = 0;
   breathsPerMinute = 0.0f;
-  breathWindowStart = millis();
+  breathHead = 0;
+  breathTail = 0;
   startCalibration();
 }
 
@@ -77,20 +77,35 @@ void PressureModule::sampleSensor() {
   bool spacingOk = (now - lastBreathTime) >= MIN_BREATH_INTERVAL_MS;
 
   if (zeroCross && aboveThreshold && spacingOk) {
-    breathCount++;
+    breathTimestamps[breathHead] = now;
+    uint8_t nextHead = static_cast<uint8_t>((breathHead + 1) % MAX_BREATH_EVENTS);
+    if (nextHead == breathTail) {
+      breathTail = static_cast<uint8_t>((breathTail + 1) % MAX_BREATH_EVENTS);
+    }
+    breathHead = nextHead;
     lastBreathTime = now;
     lastBreathDetectedFlag = true;
   }
 
-  unsigned long windowElapsed = now - breathWindowStart;
-  if (windowElapsed >= BREATH_WINDOW_MS) {
-    if (windowElapsed > 0) {
-      breathsPerMinute = breathCount * (60000.0f / static_cast<float>(windowElapsed));
-    } else {
-      breathsPerMinute = 0.0f;
+  while (breathTail != breathHead && (now - breathTimestamps[breathTail]) > BREATH_WINDOW_MS) {
+    breathTail = static_cast<uint8_t>((breathTail + 1) % MAX_BREATH_EVENTS);
+  }
+
+  unsigned int recentCount = 0;
+  uint8_t idx = breathTail;
+  while (idx != breathHead) {
+    unsigned long timestamp = breathTimestamps[idx];
+    if ((now - timestamp) <= BREATH_WINDOW_MS) {
+      recentCount++;
     }
-    breathCount = 0;
-    breathWindowStart = now;
+    idx = static_cast<uint8_t>((idx + 1) % MAX_BREATH_EVENTS);
+  }
+
+  if (recentCount > 0) {
+    breathsPerMinute =
+        recentCount * (60000.0f / static_cast<float>(BREATH_WINDOW_MS));
+  } else {
+    breathsPerMinute = 0.0f;
   }
 }
 
@@ -138,9 +153,9 @@ float PressureModule::getBreathRate() {
 }
 
 void PressureModule::resetBreathMonitor() {
-  breathCount = 0;
   breathsPerMinute = 0.0f;
-  breathWindowStart = millis();
+  breathHead = 0;
+  breathTail = 0;
   startCalibration();
 }
 

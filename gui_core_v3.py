@@ -5220,6 +5220,12 @@ class MainWindow(QMainWindow):
                 self.profile_paused = False
                 self._update_profile_button_states()
 
+                # Reset calibration state to avoid showing stale data when disconnected
+                self.calibration_tables = {"rectal": [], "plate": []}
+                for sensor_key in ("rectal", "plate"):
+                    self.update_calibration_values(sensor_key, None, None)
+                self.refresh_calibration_table()
+
                 self.log("🔌 Disconnected", "info")
                 self.event_logger.log_event("Disconnected")
                 self.update_calibration_polling()
@@ -5239,6 +5245,8 @@ class MainWindow(QMainWindow):
 
                     self.log(f"🔌 Connected to {port}", "success")
                     self.event_logger.log_event(f"Connected to {port}")
+                    # Immediately fetch calibration data so the table is fresh when opened
+                    self.poll_calibration_status()
                     self.update_calibration_polling()
 
                     if self.disable_breath_check:

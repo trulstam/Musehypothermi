@@ -1,14 +1,14 @@
 // pressure_module.h
 //
-// Breathing detection for Arduino Uno R4 Minima using an Ohmite FSR01BE
-// wired as a divider against a 100 kΩ pull-up to the 4.096 V LM4040AIZ
-// reference. The ADC is 14-bit (0–16383) and AREF is tied to 4.096 V, so
-// all conversions assume that reference. The algorithm is non-blocking and
-// expected to run from loop()/task scheduler with ~10–20 ms update periods:
-//   raw ADC -> exponential moving average -> slope sign change with
-//   hysteresis -> peak counting -> BPM windowing.
-// Calibration runs for ~1.5 s in begin()/reset to learn a baseline and
-// amplitude-derived threshold; after that detection is continuous.
+// Breathing detection using an Ohmite FSR01BE force sensor on Arduino Uno R4
+// Minima. The sensor forms a divider with a 100 kΩ pull-up to the 4.096 V
+// reference feeding both the ADC (14-bit, 0–16383) and the sensor. Each call to
+// update() samples A4, applies an exponential moving average, performs a short
+// automatic calibration (~1.5 s) to learn the baseline and dynamic threshold,
+// then detects breaths via slope sign changes and amplitude checks. A 10-second
+// rolling window computes breaths-per-minute (BPM). The implementation is
+// non-blocking and intended for periodic calls (e.g., from loop() or a task
+// scheduler) at roughly 10–20 ms intervals.
 
 #ifndef PRESSURE_MODULE_H
 #define PRESSURE_MODULE_H
@@ -19,58 +19,49 @@ class PressureModule {
   public:
     PressureModule();
 
-    // Initialize filter state and perform a short baseline calibration.
     void begin();
-    // Non-blocking update; sample ADC, filter, detect breaths, update BPM.
     void update();
 
-    void resetBreathMonitor();
     float getBreathRate();
-
-#if SIMULATION_MODE
-    void setSimulatedBreathRate(float bpm) { breathsPerMinute = bpm; }
-#endif
+    void resetBreathMonitor();
 
   private:
-#if !SIMULATION_MODE
-    static const uint8_t PRESSURE_SENSOR_PIN = A4;  // Divider node (FSR + 100 kΩ)
-    static const unsigned long CALIBRATION_DURATION_MS = 1500;  // ~1.5 s baseline
-    static const unsigned long MIN_BREATH_INTERVAL_MS = 250;    // reject double peaks
-    static const unsigned long BREATH_WINDOW_MS = 10000;        // BPM window length
-    static constexpr float ADC_FULL_SCALE = 16383.0f;           // 14-bit ADC range
-    static constexpr float VREF_VOLTS = 4.096f;                 // LM4040AIZ-4.1
-    static constexpr float FILTER_ALPHA = 0.90f;                // EMA smoothing
-    static constexpr float CALIBRATION_FACTOR = 0.35f;          // amplitude -> threshold
-    static constexpr float MIN_DELTA_FALLBACK = 8.0f;           // minimal peak delta
+    static const uint8_t PRESSURE_SENSOR_PIN = A4;
+    static const unsigned long CALIBRATION_DURATION_MS = 1500;
+    static const unsigned long MIN_BREATH_INTERVAL_MS = 250;
+    static const unsigned long BREATH_WINDOW_MS = 10000;
+    static constexpr float FILTER_ALPHA = 0.90f;
+    static constexpr float BASELINE_DRIFT_ALPHA = 0.999f;
+    static constexpr float MIN_PEAK_DELTA = 8.0f;
+    static constexpr float PEAK_SCALE = 0.30f;
 
-    void samplePressure();
+    void sampleSensor();
     void startCalibration();
     void completeCalibration();
-    float adcToVolts(int raw) const { return (raw * VREF_VOLTS) / ADC_FULL_SCALE; }
-#endif
 
-    // Common state
+    // Breath windowing
     unsigned int breathCount;
     float breathsPerMinute;
     unsigned long breathWindowStart;
 
-#if !SIMULATION_MODE
+    // ADC/filtering state
+    int lastRaw;
     float filtered;
     float lastFiltered;
     float lastSlope;
 
-    // Calibration / thresholds
+    // Calibration
     bool calibrationDone;
     unsigned long calibrationStart;
     float baselineSum;
     unsigned long baselineCount;
-    float baseline;
     float calibrationMin;
     float calibrationMax;
+    float baseline;
     float minPeakDelta;
 
+    // Detection
     unsigned long lastBreathTime;
-#endif
 };
 
 #endif // PRESSURE_MODULE_H

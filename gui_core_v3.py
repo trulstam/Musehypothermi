@@ -5220,6 +5220,9 @@ class MainWindow(QMainWindow):
                 self.profile_paused = False
                 self._update_profile_button_states()
 
+                # Clear any in-flight command tracking so a reconnect starts cleanly
+                self._clear_pending_command()
+
                 # Reset calibration state to avoid showing stale data when disconnected
                 self.calibration_tables = {"rectal": [], "plate": []}
                 for sensor_key in ("rectal", "plate"):

@@ -2414,6 +2414,7 @@ class MainWindow(QMainWindow):
         self.calibration_raw_values = {"rectal": None, "plate": None}
         self.calibration_calibrated_values = {"rectal": None, "plate": None}
         self.calibration_poll_timer: Optional[QTimer] = None
+        self.calibration_response_timeout: float = 8.0
         self.pending_command: Optional[str] = None
         self.pending_command_sent_at: float = 0.0
         self.last_status_request_at: float = 0.0
@@ -3162,8 +3163,25 @@ class MainWindow(QMainWindow):
 
             now = time.monotonic()
             if self.pending_command:
-                self._log_rate_limited_drop("Kalibrering hoppet over: kommando aktiv")
-                return
+                if (
+                    self.pending_command.startswith("calibration")
+                    and self.pending_command_sent_at
+                    and now - self.pending_command_sent_at
+                    > self.calibration_response_timeout
+                ):
+                    self.log(
+                        "⏱️ Ingen kalibreringsrespons innen rimelig tid – prøver på nytt",
+                        "warning",
+                    )
+                    self.event_logger.log_event("CALIBRATION: request timed out")
+                    if hasattr(self, "addCalibrationPointButton"):
+                        self.addCalibrationPointButton.setEnabled(True)
+                    self._clear_pending_command()
+                else:
+                    self._log_rate_limited_drop(
+                        "Kalibrering hoppet over: kommando aktiv"
+                    )
+                    return
 
             if now - self.last_calibration_poll_at < 0.2:
                 return

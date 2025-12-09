@@ -1,4 +1,19 @@
 // ===================== pressure_module.cpp =====================
+// Implementation details:
+// - Hardware: Ohmite FSR01BE with 100 kΩ pull-up to a 4.096 V LM4040AIZ-4.1
+//   precision reference feeding AREF and the divider. The Uno R4 Minima ADC
+//   is 14-bit (0–16383). All ADC math assumes VREF = 4.096 V.
+// - Sampling: update() is expected every 10–20 ms (no slower than 50 ms).
+//   Each call grabs one analogRead() on A4.
+// - Filtering: exponential moving average with alpha=0.90 retains stability
+//   while following typical breathing waveforms.
+// - Detection: slope zero-crossing from positive to negative with hysteresis
+//   (filtered > baseline + minPeakDelta) and a minimum spacing guard to avoid
+//   double-counting noise. BPM uses a 10 s window to limit jitter.
+// - Calibration: first ~1.5 s collects filtered samples to learn baseline and
+//   amplitude. Threshold derives from amplitude * 0.35 with an 8-count floor.
+//   After calibration the detector runs automatically without blocking.
+
 #include "pressure_module.h"
 
 #include "arduino_platform.h"
@@ -6,26 +21,26 @@
 
 extern SensorModule sensors;
 
-#if !SIMULATION_MODE
-#define PRESSURE_SENSOR_PIN A0
-static const unsigned long BREATH_WINDOW_MS = 10000;
-#endif
-
 PressureModule::PressureModule()
-  : bufferIndex(0), lastPressureSample(0),
-    breathThreshold(5), breathCount(0), breathsPerMinute(0),
-    breathWindowStart(0) {}
+    : breathCount(0), breathsPerMinute(0.0f), breathWindowStart(0)
+#if !SIMULATION_MODE
+    , filtered(0.0f), lastFiltered(0.0f), lastSlope(0.0f), calibrationDone(false),
+      calibrationStart(0), baselineSum(0.0f), baselineCount(0), baseline(0.0f),
+      calibrationMin(0.0f), calibrationMax(0.0f), minPeakDelta(MIN_DELTA_FALLBACK),
+      lastBreathTime(0)
+#endif
+{
+}
 
 void PressureModule::begin() {
+  breathCount = 0;
+  breathsPerMinute = 0.0f;
   breathWindowStart = millis();
 
 #if SIMULATION_MODE
-  breathsPerMinute = 150.0;
+  breathsPerMinute = 150.0f;
 #else
-  lastPressureSample = analogRead(PRESSURE_SENSOR_PIN);
-  bufferIndex = 0;
-  breathCount = 0;
-  breathsPerMinute = 0;
+  startCalibration();
 #endif
 }
 
@@ -75,28 +90,86 @@ void PressureModule::update() {
 }
 
 #if !SIMULATION_MODE
+void PressureModule::startCalibration() {
+  calibrationDone = false;
+  calibrationStart = millis();
+  baselineSum = 0.0f;
+  baselineCount = 0;
+  calibrationMin = 1e9f;
+  calibrationMax = -1e9f;
+  minPeakDelta = MIN_DELTA_FALLBACK;
+  lastSlope = 0.0f;
+
+  int raw = analogRead(PRESSURE_SENSOR_PIN);
+  filtered = static_cast<float>(raw);
+  lastFiltered = filtered;
+  baseline = filtered;
+  lastBreathTime = calibrationStart;
+}
+
+void PressureModule::completeCalibration() {
+  if (baselineCount == 0) {
+    baseline = filtered;
+    calibrationMin = filtered;
+    calibrationMax = filtered;
+  } else {
+    baseline = baselineSum / static_cast<float>(baselineCount);
+  }
+
+  float amplitude = calibrationMax - calibrationMin;
+  if (amplitude < 0.0f) amplitude = 0.0f;
+  float derivedDelta = amplitude * CALIBRATION_FACTOR;
+  if (derivedDelta < MIN_DELTA_FALLBACK) {
+    derivedDelta = MIN_DELTA_FALLBACK;
+  }
+  minPeakDelta = derivedDelta;
+  calibrationDone = true;
+}
+
 void PressureModule::samplePressure() {
+  unsigned long now = millis();
   int raw = analogRead(PRESSURE_SENSOR_PIN);
 
-  if (raw <= 0 || raw >= 16383) {
-    raw = 0;
+  lastFiltered = filtered;
+  filtered = (FILTER_ALPHA * filtered) + ((1.0f - FILTER_ALPHA) * static_cast<float>(raw));
+
+  if (!calibrationDone) {
+    baselineSum += filtered;
+    baselineCount++;
+    if (filtered < calibrationMin) calibrationMin = filtered;
+    if (filtered > calibrationMax) calibrationMax = filtered;
+
+    if (now - calibrationStart >= CALIBRATION_DURATION_MS) {
+      completeCalibration();
+    }
+    return;
   }
 
-  if (abs(raw - lastPressureSample) > breathThreshold) {
+  // Slow baseline drift compensation.
+  baseline = (0.999f * baseline) + (0.001f * filtered);
+
+  float slope = filtered - lastFiltered;
+  bool risingToFalling = (lastSlope > 0.0f) && (slope <= 0.0f);
+  lastSlope = slope;
+
+  bool aboveThreshold = filtered > (baseline + minPeakDelta);
+  bool intervalOk = (now - lastBreathTime) >= MIN_BREATH_INTERVAL_MS;
+
+  if (risingToFalling && aboveThreshold && intervalOk) {
     breathCount++;
-    lastPressureSample = raw;
+    lastBreathTime = now;
   }
 
-  unsigned long now = millis();
-  if (now - breathWindowStart >= BREATH_WINDOW_MS) {
-    breathsPerMinute = breathCount * 6.0f;
+  unsigned long windowElapsed = now - breathWindowStart;
+  if (windowElapsed >= BREATH_WINDOW_MS) {
+    if (windowElapsed > 0) {
+      breathsPerMinute = breathCount * (60000.0f / static_cast<float>(windowElapsed));
+    } else {
+      breathsPerMinute = 0.0f;
+    }
     breathCount = 0;
     breathWindowStart = now;
   }
-}
-
-void PressureModule::sendPressureData() {
-  // Optional serial dump disabled to keep firmware quiet on hardware
 }
 #endif
 
@@ -105,14 +178,13 @@ float PressureModule::getBreathRate() {
 }
 
 void PressureModule::resetBreathMonitor() {
+  breathCount = 0;
+  breathsPerMinute = 0.0f;
   breathWindowStart = millis();
 
 #if SIMULATION_MODE
-  breathCount = 0;
-  breathsPerMinute = 150.0;
+  breathsPerMinute = 150.0f;
 #else
-  lastPressureSample = analogRead(PRESSURE_SENSOR_PIN);
-  breathCount = 0;
-  breathsPerMinute = 0;
+  startCalibration();
 #endif
 }

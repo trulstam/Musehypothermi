@@ -37,6 +37,7 @@ class PressureModule {
     static const unsigned long CALIBRATION_DURATION_MS = 1500;
     static const unsigned long MIN_BREATH_INTERVAL_MS = 250;
     static const unsigned long BREATH_WINDOW_MS = 10000;
+    static const uint8_t MAX_BREATH_EVENTS = 32;
     static constexpr float FILTER_ALPHA = 0.90f;
     static constexpr float BASELINE_DRIFT_ALPHA = 0.999f;
     static constexpr float MIN_PEAK_DELTA = 8.0f;
@@ -47,9 +48,10 @@ class PressureModule {
     void completeCalibration();
 
     // Breath windowing
-    unsigned int breathCount;
     float breathsPerMinute;
-    unsigned long breathWindowStart;
+    unsigned long breathTimestamps[MAX_BREATH_EVENTS];
+    uint8_t breathHead;
+    uint8_t breathTail;
 
     // ADC/filtering state
     uint16_t rawAdc;

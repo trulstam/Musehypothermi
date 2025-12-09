@@ -56,6 +56,7 @@ class PressureModule {
     float filteredValue;
     float lastFiltered;
     float lastSlope;
+    float lastDeviation;
 
     // Calibration
     bool calibrationDone;

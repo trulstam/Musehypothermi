@@ -18,6 +18,7 @@
 PressureModule::PressureModule()
     : breathCount(0), breathsPerMinute(0.0f), breathWindowStart(0),
       rawAdc(0), filteredValue(0.0f), lastFiltered(0.0f), lastSlope(0.0f),
+      lastDeviation(0.0f),
       calibrationDone(false), calibrationStart(0), baselineSum(0.0f),
       baselineCount(0), calibrationMin(0.0f), calibrationMax(0.0f),
       baselineValue(0.0f), deviationValue(0.0f), thresholdValue(MIN_PEAK_DELTA),
@@ -65,11 +66,14 @@ void PressureModule::sampleSensor() {
                   ((1.0f - BASELINE_DRIFT_ALPHA) * filteredValue);
   deviationValue = baselineValue - filteredValue;
 
-  float slope = filteredValue - lastFiltered;
+  float deviation = deviationValue;
+
+  float slope = deviation - lastDeviation;
   bool zeroCross = (lastSlope > 0.0f) && (slope <= 0.0f);
   lastSlope = slope;
+  lastDeviation = deviation;
 
-  bool aboveThreshold = filteredValue > (baselineValue + thresholdValue);
+  bool aboveThreshold = deviation > thresholdValue;
   bool spacingOk = (now - lastBreathTime) >= MIN_BREATH_INTERVAL_MS;
 
   if (zeroCross && aboveThreshold && spacingOk) {
@@ -101,6 +105,7 @@ void PressureModule::startCalibration() {
   deviationValue = 0.0f;
   thresholdValue = MIN_PEAK_DELTA;
   lastSlope = 0.0f;
+  lastDeviation = 0.0f;
 
   rawAdc = analogRead(PRESSURE_SENSOR_PIN);
   filteredValue = static_cast<float>(rawAdc);

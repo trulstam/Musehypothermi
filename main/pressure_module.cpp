@@ -17,10 +17,11 @@
 
 PressureModule::PressureModule()
     : breathCount(0), breathsPerMinute(0.0f), breathWindowStart(0),
-      lastRaw(0), filtered(0.0f), lastFiltered(0.0f), lastSlope(0.0f),
+      rawAdc(0), filteredValue(0.0f), lastFiltered(0.0f), lastSlope(0.0f),
       calibrationDone(false), calibrationStart(0), baselineSum(0.0f),
       baselineCount(0), calibrationMin(0.0f), calibrationMax(0.0f),
-      baseline(0.0f), minPeakDelta(MIN_PEAK_DELTA), lastBreathTime(0) {}
+      baselineValue(0.0f), deviationValue(0.0f), thresholdValue(MIN_PEAK_DELTA),
+      lastBreathTime(0), lastBreathDetectedFlag(false) {}
 
 void PressureModule::begin() {
   breathCount = 0;
@@ -35,20 +36,22 @@ void PressureModule::update() {
 
 void PressureModule::sampleSensor() {
   unsigned long now = millis();
-  lastRaw = analogRead(PRESSURE_SENSOR_PIN);
+  lastBreathDetectedFlag = false;
+  rawAdc = analogRead(PRESSURE_SENSOR_PIN);
 
-  lastFiltered = filtered;
-  filtered = (FILTER_ALPHA * filtered) + ((1.0f - FILTER_ALPHA) * static_cast<float>(lastRaw));
+  lastFiltered = filteredValue;
+  filteredValue =
+      (FILTER_ALPHA * filteredValue) + ((1.0f - FILTER_ALPHA) * static_cast<float>(rawAdc));
 
   if (!calibrationDone) {
-    baselineSum += filtered;
+    baselineSum += filteredValue;
     baselineCount++;
     if (baselineCount == 1) {
-      calibrationMin = filtered;
-      calibrationMax = filtered;
+      calibrationMin = filteredValue;
+      calibrationMax = filteredValue;
     } else {
-      if (filtered < calibrationMin) calibrationMin = filtered;
-      if (filtered > calibrationMax) calibrationMax = filtered;
+      if (filteredValue < calibrationMin) calibrationMin = filteredValue;
+      if (filteredValue > calibrationMax) calibrationMax = filteredValue;
     }
 
     if (now - calibrationStart >= CALIBRATION_DURATION_MS) {
@@ -58,18 +61,21 @@ void PressureModule::sampleSensor() {
     return;
   }
 
-  baseline = (BASELINE_DRIFT_ALPHA * baseline) + ((1.0f - BASELINE_DRIFT_ALPHA) * filtered);
+  baselineValue = (BASELINE_DRIFT_ALPHA * baselineValue) +
+                  ((1.0f - BASELINE_DRIFT_ALPHA) * filteredValue);
+  deviationValue = baselineValue - filteredValue;
 
-  float slope = filtered - lastFiltered;
+  float slope = filteredValue - lastFiltered;
   bool zeroCross = (lastSlope > 0.0f) && (slope <= 0.0f);
   lastSlope = slope;
 
-  bool aboveThreshold = filtered > (baseline + minPeakDelta);
+  bool aboveThreshold = filteredValue > (baselineValue + thresholdValue);
   bool spacingOk = (now - lastBreathTime) >= MIN_BREATH_INTERVAL_MS;
 
   if (zeroCross && aboveThreshold && spacingOk) {
     breathCount++;
     lastBreathTime = now;
+    lastBreathDetectedFlag = true;
   }
 
   unsigned long windowElapsed = now - breathWindowStart;
@@ -91,22 +97,23 @@ void PressureModule::startCalibration() {
   baselineCount = 0;
   calibrationMin = 0.0f;
   calibrationMax = 0.0f;
-  baseline = 0.0f;
-  minPeakDelta = MIN_PEAK_DELTA;
+  baselineValue = 0.0f;
+  deviationValue = 0.0f;
+  thresholdValue = MIN_PEAK_DELTA;
   lastSlope = 0.0f;
 
-  lastRaw = analogRead(PRESSURE_SENSOR_PIN);
-  filtered = static_cast<float>(lastRaw);
-  lastFiltered = filtered;
+  rawAdc = analogRead(PRESSURE_SENSOR_PIN);
+  filteredValue = static_cast<float>(rawAdc);
+  lastFiltered = filteredValue;
 }
 
 void PressureModule::completeCalibration() {
   if (baselineCount == 0) {
-    baseline = filtered;
-    calibrationMin = filtered;
-    calibrationMax = filtered;
+    baselineValue = filteredValue;
+    calibrationMin = filteredValue;
+    calibrationMax = filteredValue;
   } else {
-    baseline = baselineSum / static_cast<float>(baselineCount);
+    baselineValue = baselineSum / static_cast<float>(baselineCount);
   }
 
   float amplitude = calibrationMax - calibrationMin;
@@ -117,7 +124,7 @@ void PressureModule::completeCalibration() {
     derivedDelta = MIN_PEAK_DELTA;
   }
 
-  minPeakDelta = derivedDelta;
+  thresholdValue = derivedDelta;
   calibrationDone = true;
 }
 
@@ -131,3 +138,15 @@ void PressureModule::resetBreathMonitor() {
   breathWindowStart = millis();
   startCalibration();
 }
+
+uint16_t PressureModule::getRawAdc() const { return rawAdc; }
+
+float PressureModule::getFiltered() const { return filteredValue; }
+
+float PressureModule::getBaseline() const { return baselineValue; }
+
+float PressureModule::getDeviation() const { return deviationValue; }
+
+float PressureModule::getMinPeakDelta() const { return thresholdValue; }
+
+bool PressureModule::getLastBreathDetected() const { return lastBreathDetectedFlag; }
